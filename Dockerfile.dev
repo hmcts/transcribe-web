@@ -1,0 +1,17 @@
+FROM node:23-alpine
+
+WORKDIR /app
+
+RUN npm i -g pnpm
+
+# Install dependencies
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install
+
+# Copy rest of the application
+COPY . .
+
+EXPOSE 3000
+
+# Run in development mode with hot reload
+CMD ["pnpm", "run", "dev"]

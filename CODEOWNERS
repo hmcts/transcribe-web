@@ -1,0 +1,22 @@
+# Per-directory ownership. Required by the merged-frontend decision: merging into
+# one deployable removes the repository boundary that used to separate review
+# ownership, so it has to be reinstated here.
+#
+# Replace the placeholder teams before this repo goes to a remote.
+
+/app/recording/          @hmcts/transcribe-recording
+/components/recording/   @hmcts/transcribe-recording
+/lib/recording/          @hmcts/transcribe-recording
+/tests/recording/        @hmcts/transcribe-recording
+/app/api/                @hmcts/transcribe-recording
+
+/app/                    @hmcts/transcribe-dictation
+/components/             @hmcts/transcribe-dictation
+/lib/                    @hmcts/transcribe-dictation
+/providers/              @hmcts/transcribe-dictation
+
+# Shared surfaces — both teams review
+/proxy.ts                @hmcts/transcribe-recording @hmcts/transcribe-dictation
+/app/layout.tsx          @hmcts/transcribe-recording @hmcts/transcribe-dictation
+/components/layout/      @hmcts/transcribe-recording @hmcts/transcribe-dictation
+/package.json            @hmcts/transcribe-recording @hmcts/transcribe-dictation

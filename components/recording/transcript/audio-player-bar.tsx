@@ -1,0 +1,146 @@
+"use client";
+
+import { Highlighter, Pause, Play, SkipBack, SkipForward } from "lucide-react";
+import { Button } from "@/components/recording/ui/button";
+import { formatTime } from "@/lib/recording/mock-data";
+import { cn } from "@/lib/recording/utils";
+
+interface AudioPlayerBarProps {
+  duration: number;
+  position: number;
+  playing: boolean;
+  onTogglePlay: () => void;
+  onSeek: (time: number) => void;
+  onSpeedChange: (speed: number) => void;
+  // Whether the per-word "spoken now" highlight tracks playback (DIAAT-246).
+  // Reading a long transcript alongside the audio, that moving highlight can
+  // be tiring or look out of sync, so readers can turn it off here.
+  syncHighlight: boolean;
+  onToggleSyncHighlight: () => void;
+}
+
+export function AudioPlayerBar({
+  duration,
+  position,
+  playing,
+  onTogglePlay,
+  onSeek,
+  onSpeedChange,
+  syncHighlight,
+  onToggleSyncHighlight,
+}: AudioPlayerBarProps) {
+  return (
+    <div className="sticky top-0 z-10 bg-white border-b border-border px-4 py-3 flex items-center gap-3">
+      {/* Skip back 10s */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 gap-1 px-2 text-xs font-medium"
+        onClick={() => onSeek(Math.max(0, position - 10))}
+        aria-label="Skip back 10 seconds"
+      >
+        <SkipBack className="size-4" />
+        <span>−10s</span>
+      </Button>
+
+      {/* Play/pause */}
+      <Button
+        size="icon"
+        className="size-10 rounded-full bg-primary"
+        onClick={onTogglePlay}
+        aria-label={playing ? "Pause" : "Play"}
+      >
+        {playing ? (
+          <Pause className="size-4 fill-white text-white" />
+        ) : (
+          <Play className="size-4 fill-white text-white" />
+        )}
+      </Button>
+
+      {/* Skip forward 10s */}
+      <Button
+        variant="ghost"
+        size="sm"
+        className="h-8 gap-1 px-2 text-xs font-medium"
+        onClick={() => onSeek(Math.min(duration, position + 10))}
+        aria-label="Skip forward 10 seconds"
+      >
+        <span>+10s</span>
+        <SkipForward className="size-4" />
+      </Button>
+
+      {/* Time */}
+      <span className="text-sm font-mono text-muted-foreground w-10">
+        {formatTime(position)}
+      </span>
+
+      {/* Waveform placeholder */}
+      <div
+        className="flex-1 h-8 rounded overflow-hidden bg-muted cursor-pointer relative"
+        onClick={(e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          const pct = (e.clientX - rect.left) / rect.width;
+          onSeek(Math.max(0, Math.min(duration, pct * duration)));
+        }}
+        aria-label="Audio timeline"
+      >
+        <div
+          className="absolute inset-y-0 left-0 bg-primary/20"
+          style={{
+            width: `${duration > 0 ? (position / duration) * 100 : 0}%`,
+          }}
+        />
+        {/* Decorative waveform bars */}
+        <div className="absolute inset-0 flex items-center gap-px px-1">
+          {Array.from({ length: 80 }).map((_, i) => (
+            <div
+              key={i}
+              className="flex-1 rounded-full bg-primary/40"
+              style={{
+                height: `${20 + Math.sin(i * 0.4) * 15 + Math.cos(i * 0.7) * 10}%`,
+              }}
+            />
+          ))}
+        </div>
+      </div>
+
+      {/* Total duration */}
+      <span className="text-sm font-mono text-muted-foreground w-10 text-right">
+        {formatTime(duration)}
+      </span>
+
+      {/* Sync-highlight toggle (DIAAT-246) — turns the per-word "spoken now"
+          highlight on/off. aria-pressed reflects the current state so screen
+          readers announce it as a toggle button. */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className={cn(
+          "h-8 gap-1 px-2 text-xs font-medium",
+          syncHighlight && "bg-primary/10 text-primary"
+        )}
+        onClick={onToggleSyncHighlight}
+        aria-pressed={syncHighlight}
+        aria-label="Highlight words with audio"
+        title="Highlight words with audio"
+      >
+        <Highlighter className="size-4" />
+        <span>Highlight</span>
+      </Button>
+
+      {/* Speed selector */}
+      <select
+        className="text-sm border rounded px-1 py-0.5 bg-background"
+        defaultValue="1"
+        aria-label="Playback speed"
+        onChange={(e) => onSpeedChange(Number(e.target.value))}
+      >
+        <option value="0.5">0.5×</option>
+        <option value="1">1×</option>
+        <option value="1.5">1.5×</option>
+        <option value="2">2×</option>
+      </select>
+    </div>
+  );
+}

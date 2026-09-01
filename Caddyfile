@@ -1,0 +1,39 @@
+{
+	auto_https off
+	admin off
+}
+
+:3000 {
+	route {
+		# Azure Cognitive Speech WebSocket proxy. Caddy transparently handles the
+		# HTTP→WebSocket upgrade — no special config required. Falls through to
+		# Next.js (404) when AZURE_SPEECH_ENDPOINT is unset.
+		@speech path /cognitiveservices/* /speech/* /stt/*
+		handle @speech {
+			reverse_proxy {$AZURE_SPEECH_ENDPOINT:http://localhost:3001} {
+				header_up Host {http.reverse_proxy.upstream.host}
+			}
+		}
+
+		# All /api/* calls go straight to the backend service.
+		@backend_api path /api/*
+		handle @backend_api {
+			reverse_proxy {$BACKEND_INTERNAL_URL:http://localhost:3001} {
+				header_up Host {http.reverse_proxy.upstream.host}
+			}
+		}
+
+		# Blob/storage service paths.
+		@storage path /storage/* /application-data/* /transcription-processing/*
+		handle @storage {
+			reverse_proxy {$INTERNAL_STORAGE_URL:http://localhost:3001} {
+				header_up Host {http.reverse_proxy.upstream.host}
+			}
+		}
+
+		# Everything else goes to Next.js.
+		handle {
+			reverse_proxy localhost:3001
+		}
+	}
+}

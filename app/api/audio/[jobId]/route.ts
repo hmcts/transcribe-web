@@ -1,0 +1,46 @@
+import { type NextRequest, NextResponse } from "next/server";
+import { getJobAudio } from "@/lib/recording/api-client";
+import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+
+interface RouteContext {
+  params: Promise<{ jobId: string }>;
+}
+
+export async function GET(request: NextRequest, { params }: RouteContext) {
+  const { jobId } = await params;
+  const auth = getBackendAuthContext(request);
+  try {
+    // Forward the browser's Range header so <audio> seeking works — without
+    // this, the browser can request a byte range it never receives and
+    // seeking on an unbuffered position silently does nothing.
+    const backendResponse = await getJobAudio(
+      jobId,
+      request.headers.get("range"),
+      auth
+    );
+    // Stream the backend's body through verbatim, for both success and
+    // error statuses (200/206 for real audio, 404/416 otherwise) — building
+    // a separate JSON body for the error case without ever reading or
+    // cancelling backendResponse's own stream can leave the underlying
+    // connection unreleased.
+    const headers: Record<string, string> = {
+      "Content-Type":
+        backendResponse.headers.get("Content-Type") ??
+        "application/octet-stream",
+    };
+    for (const name of ["Accept-Ranges", "Content-Range", "Content-Length"]) {
+      const value = backendResponse.headers.get(name);
+      if (value) headers[name] = value;
+    }
+    return new NextResponse(backendResponse.body, {
+      status: backendResponse.status,
+      headers,
+    });
+  } catch (err) {
+    console.error("Failed to load job audio", err);
+    return NextResponse.json(
+      { error: "Failed to load audio" },
+      { status: 502 }
+    );
+  }
+}

@@ -1,0 +1,518 @@
+"use client";
+
+import { ChevronDown, ChevronLeft, History } from "lucide-react";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { JobProgress } from "@/components/recording/job-status/job-progress";
+import { JobStatusBadge } from "@/components/recording/job-status/job-status-badge";
+import { AudioPlayerBar } from "@/components/recording/transcript/audio-player-bar";
+import { ModificationHistoryTable } from "@/components/recording/transcript/modification-history-table";
+import { NeedsReviewPanel } from "@/components/recording/transcript/needs-review-panel";
+import { TranscriptAccuracy } from "@/components/recording/transcript/transcript-accuracy";
+import { TranscriptSegment } from "@/components/recording/transcript/transcript-segment";
+import { apiPath } from "@/lib/recording/base-path";
+import type { TranscriptionJob } from "@/lib/recording/types";
+import { cn } from "@/lib/recording/utils";
+
+const POLL_INTERVAL_MS = 5000;
+
+// Persists the reader's audio/transcript sync-highlight preference (DIAAT-246)
+// across visits and page reloads.
+const SYNC_HIGHLIGHT_STORAGE_KEY = "batch:syncHighlight";
+
+interface JobDetailViewProps {
+  jobId: string;
+  initialJob: TranscriptionJob;
+}
+
+export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
+  const [job, setJob] = useState(initialJob);
+  const jobRef = useRef(job);
+  jobRef.current = job;
+
+  const audioElRef = useRef<HTMLAudioElement | null>(null);
+  const audioCleanupRef = useRef<(() => void) | null>(null);
+  const [playing, setPlaying] = useState(false);
+  const [position, setPosition] = useState(0);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioAvailable, setAudioAvailable] = useState(true);
+  const [showModificationHistory, setShowModificationHistory] = useState(false);
+  // The per-word "spoken now" highlight can be tiring to read alongside a long
+  // transcript (and can look out of sync), so readers can toggle it off
+  // (DIAAT-246). Defaults ON. Starts from the default rather than reading
+  // localStorage during render, so SSR and the first client render agree
+  // (no hydration mismatch); the stored choice is applied in an effect below.
+  const [syncHighlight, setSyncHighlight] = useState(true);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(SYNC_HIGHLIGHT_STORAGE_KEY);
+      if (stored !== null) setSyncHighlight(stored === "true");
+    } catch {
+      // Private-mode / storage-disabled browsers: just keep the default.
+    }
+  }, []);
+
+  const toggleSyncHighlight = useCallback(() => {
+    setSyncHighlight((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SYNC_HIGHLIGHT_STORAGE_KEY, String(next));
+      } catch {
+        // Ignore storage failures — the in-memory toggle still works.
+      }
+      return next;
+    });
+  }, []);
+
+  // A callback ref (rather than an effect) so listeners attach exactly when
+  // the <audio> element mounts — which happens on first render if the job is
+  // already COMPLETED, or later, whenever polling flips it to COMPLETED.
+  // Stabilised with useCallback (empty deps): this component re-renders
+  // frequently (timeupdate -> setPosition), and a ref callback recreated
+  // every render makes React detach/reattach these listeners on every one.
+  const attachAudioRef = useCallback((el: HTMLAudioElement | null) => {
+    audioCleanupRef.current?.();
+    audioCleanupRef.current = null;
+    audioElRef.current = el;
+    if (!el) return;
+
+    const onTimeUpdate = () => setPosition(el.currentTime);
+    const onLoadedMetadata = () => setAudioDuration(el.duration);
+    const onPlay = () => setPlaying(true);
+    const onPause = () => setPlaying(false);
+    const onError = () => setAudioAvailable(false);
+
+    el.addEventListener("timeupdate", onTimeUpdate);
+    el.addEventListener("loadedmetadata", onLoadedMetadata);
+    el.addEventListener("play", onPlay);
+    el.addEventListener("pause", onPause);
+    el.addEventListener("error", onError);
+
+    audioCleanupRef.current = () => {
+      el.removeEventListener("timeupdate", onTimeUpdate);
+      el.removeEventListener("loadedmetadata", onLoadedMetadata);
+      el.removeEventListener("play", onPlay);
+      el.removeEventListener("pause", onPause);
+      el.removeEventListener("error", onError);
+    };
+  }, []);
+
+  const togglePlay = () => {
+    const audio = audioElRef.current;
+    if (!audio) return;
+    if (audio.paused) {
+      // play() returns a promise that can reject (e.g. a pause() interrupts
+      // it, or the browser blocks autoplay) — the "error" listener already
+      // handles genuine load failures, so this just avoids an unhandled
+      // rejection showing up in the console.
+      audio.play().catch((err) => {
+        console.warn("Audio playback failed to start", err);
+      });
+    } else {
+      audio.pause();
+    }
+  };
+
+  const seekTo = (time: number) => {
+    const audio = audioElRef.current;
+    if (!audio) return;
+    audio.currentTime = time;
+    setPosition(time);
+  };
+
+  // Stable reference (reads the ref, not React state) so the active
+  // segment's rAF-driven word-highlight loop can poll real playback
+  // position at animation-frame precision instead of waiting on the
+  // <audio> element's much coarser timeupdate event.
+  const getCurrentTime = useCallback(
+    () => audioElRef.current?.currentTime ?? 0,
+    []
+  );
+
+  // "Needs review" items live in a separate sidebar list — jumping to one
+  // should also bring its actual transcript segment into view, not just
+  // move the audio position.
+  const seekAndScrollToSegment = (time: number) => {
+    seekTo(time);
+    const segment = job.segments?.find(
+      (s) => time >= s.startTime && time < s.startTime + s.duration
+    );
+    if (segment) {
+      document
+        .getElementById(segment.id)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  };
+
+  const correctSegment = async (index: number, correctedText: string) => {
+    const response = await fetch(
+      apiPath(`/api/jobs/${jobId}/segments/${index}`),
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correctedText }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to save correction: ${response.status}`);
+    }
+    const body = await response.json();
+    setJob(body.job as TranscriptionJob);
+  };
+
+  const correctWordRange = async (
+    index: number,
+    startWordIndex: number,
+    endWordIndex: number,
+    correctedText: string
+  ) => {
+    const response = await fetch(
+      apiPath(`/api/jobs/${jobId}/segments/${index}/words`),
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ startWordIndex, endWordIndex, correctedText }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to save correction: ${response.status}`);
+    }
+    const body = await response.json();
+    setJob(body.job as TranscriptionJob);
+  };
+
+  const rollbackSegment = async (index: number) => {
+    const response = await fetch(
+      apiPath(`/api/jobs/${jobId}/segments/${index}/rollback`),
+      { method: "POST" }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to roll back segment: ${response.status}`);
+    }
+    const body = await response.json();
+    setJob(body.job as TranscriptionJob);
+  };
+
+  const acceptSegment = async (index: number) => {
+    const response = await fetch(
+      apiPath(`/api/jobs/${jobId}/segments/${index}/accept`),
+      { method: "POST" }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to accept segment: ${response.status}`);
+    }
+    const body = await response.json();
+    setJob(body.job as TranscriptionJob);
+  };
+
+  const rollbackToHistoryEntry = async (
+    index: number,
+    historyIndex: number
+  ) => {
+    const response = await fetch(
+      apiPath(
+        `/api/jobs/${jobId}/segments/${index}/history/${historyIndex}/rollback`
+      ),
+      { method: "POST" }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to roll back: ${response.status}`);
+    }
+    const body = await response.json();
+    setJob(body.job as TranscriptionJob);
+  };
+
+  const uploadBaseline = async (file: File) => {
+    const form = new FormData();
+    form.append("file", file, file.name);
+    const response = await fetch(apiPath(`/api/jobs/${jobId}/baseline`), {
+      method: "POST",
+      body: form,
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(
+        body?.error ??
+          `Failed to upload baseline transcript: ${response.status}`
+      );
+    }
+    const body = await response.json();
+    setJob(body.job as TranscriptionJob);
+  };
+
+  useEffect(() => {
+    const id = setInterval(async () => {
+      if (
+        jobRef.current.status !== "PENDING" &&
+        jobRef.current.status !== "PROCESSING"
+      ) {
+        return;
+      }
+      try {
+        const response = await fetch(apiPath(`/api/jobs/${jobId}`), {
+          cache: "no-store",
+        });
+        if (!response.ok) return;
+        const body = await response.json();
+        setJob(body.job as TranscriptionJob);
+      } catch (err) {
+        console.error("Failed to refresh job status", err);
+      }
+    }, POLL_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [jobId]);
+
+  const backLink = (
+    <Link
+      href="/"
+      className="inline-flex items-center gap-1 text-sm text-primary hover:underline mb-4"
+    >
+      <ChevronLeft className="size-4" />
+      Back to hearing list
+    </Link>
+  );
+
+  if (job.status === "COMPLETED" && job.segments) {
+    const totalDuration = job.segments.reduce(
+      (max, s) => Math.max(max, s.startTime + s.duration),
+      0
+    );
+    // Cheap count — just sum the per-segment history lengths. Avoids the
+    // full flatten+sort (buildModificationHistory) on every render, since
+    // this runs even while the section is collapsed and the transcript page
+    // re-renders frequently (audio position updates).
+    const modificationCount = job.segments.reduce(
+      (n, s) => n + (s.correctionHistory?.length ?? 0),
+      0
+    );
+
+    // Whether the transcript actually renders at least one low-confidence
+    // highlight, mirroring TranscriptSegment's own gating: a segment only
+    // highlights words when it renders word-by-word (no whole-segment
+    // correctedText), hasn't been accepted as-is, and has a word below the
+    // threshold. Gate the "review" caption on this — not merely on job.accuracy
+    // — so it never shows when nothing is highlighted (segments without words,
+    // or all highlights cleared/accepted/corrected) (DIAAT-249 review).
+    const highlightThreshold = job.accuracy
+      ? job.accuracy.confidenceThreshold / 100
+      : undefined;
+    const hasLowConfidenceHighlights =
+      highlightThreshold !== undefined &&
+      job.segments.some(
+        (s) =>
+          s.correctedText === undefined &&
+          !s.accepted &&
+          (s.words?.some((w) => w.confidence < highlightThreshold) ?? false)
+      );
+
+    return (
+      <main className="min-h-screen bg-background">
+        <audio
+          ref={attachAudioRef}
+          src={apiPath(`/api/audio/${job.id}`)}
+          preload="metadata"
+          className="hidden"
+        >
+          <track kind="captions" />
+        </audio>
+
+        {audioAvailable ? (
+          <AudioPlayerBar
+            duration={audioDuration || totalDuration}
+            position={position}
+            playing={playing}
+            onTogglePlay={togglePlay}
+            onSeek={seekTo}
+            onSpeedChange={(speed) => {
+              if (audioElRef.current) audioElRef.current.playbackRate = speed;
+            }}
+            syncHighlight={syncHighlight}
+            onToggleSyncHighlight={toggleSyncHighlight}
+          />
+        ) : (
+          <div className="bg-white border-b border-border px-4 py-3 text-sm text-muted-foreground">
+            Audio playback is unavailable for this recording.
+          </div>
+        )}
+
+        <div className="max-w-5xl mx-auto px-4 py-6">
+          {backLink}
+
+          <p className="text-sm text-primary mb-1">{job.tribunal}</p>
+          <h1 className="text-3xl font-bold mb-6">{job.caseReference}</h1>
+
+          <div className="flex gap-6 items-start">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-1">
+                <h2 className="text-lg font-semibold">Transcript</h2>
+                <p className="text-sm text-muted-foreground">
+                  {job.segments.length} segments
+                </p>
+              </div>
+              {/* Reframe the highlighting as "review", not "error" (DIAAT-249):
+                  a highlighted word had lower recognition confidence, not a
+                  confirmed mistake. Only shown when the transcript actually
+                  renders at least one low-confidence highlight, so clean/older
+                  transcripts (or ones where every highlight was cleared) don't
+                  show a caption referring to highlights that aren't there. */}
+              {hasLowConfidenceHighlights && (
+                <p className="text-sm text-muted-foreground mb-3">
+                  Highlighted words had lower recognition confidence — review
+                  and confirm or edit.
+                </p>
+              )}
+              <div className="border border-border rounded-lg divide-y divide-border">
+                {job.segments.map((segment, index) => {
+                  const isActive =
+                    playing &&
+                    position >= segment.startTime &&
+                    position < segment.startTime + segment.duration;
+                  return (
+                    <TranscriptSegment
+                      key={segment.id}
+                      segment={segment}
+                      onSeek={audioAvailable ? seekTo : undefined}
+                      onCorrect={(text) => correctSegment(index, text)}
+                      onCorrectRange={(start, end, text) =>
+                        correctWordRange(index, start, end, text)
+                      }
+                      onRollback={() => rollbackSegment(index)}
+                      onRollbackToHistory={(historyIndex) =>
+                        rollbackToHistoryEntry(index, historyIndex)
+                      }
+                      onAccept={() => acceptSegment(index)}
+                      isActive={isActive}
+                      getCurrentTime={getCurrentTime}
+                      syncHighlight={syncHighlight}
+                      // Backend threshold is a 0-100 percent; the per-word
+                      // highlight compares against a 0-1 ratio. Keep them in
+                      // sync so highlights match the backend "needs review"
+                      // list even under an env override.
+                      lowConfidenceThreshold={highlightThreshold}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Sidebar (right) — omitted when the backend hasn't returned
+                any confidence-scored segments (e.g. an older job predating
+                this feature). Sticky so it stays in view while scrolling a
+                long transcript (potentially ~15,000 words): the `top`
+                offset clears the sticky audio player bar above it, and
+                `max-h`/`overflow-y-auto` keep the panel itself from
+                spilling past the bottom of the viewport if it ever has more
+                content than fits (e.g. many low-confidence segments). It
+                naturally un-sticks once its flex-row parent (as tall as the
+                transcript column) runs out, so it doesn't float past the
+                end of the transcript. */}
+            {job.accuracy && (
+              <aside className="w-72 shrink-0 space-y-4 sticky top-20 max-h-[calc(100vh-6rem)] overflow-y-auto">
+                <TranscriptAccuracy
+                  accuracy={job.accuracy}
+                  onUploadBaseline={uploadBaseline}
+                />
+                {job.lowConfidenceSegments &&
+                  job.lowConfidenceSegments.length > 0 && (
+                    <NeedsReviewPanel
+                      items={job.lowConfidenceSegments}
+                      threshold={job.accuracy.confidenceThreshold}
+                      onSeek={seekAndScrollToSegment}
+                    />
+                  )}
+              </aside>
+            )}
+          </div>
+
+          {/* Job-level modification history — every correction, rollback and
+              accept-all action across all segments in one auditable table
+              (DIAAT-230), so the whole transcript's edit history can be
+              scanned in one place rather than segment by segment. Collapsed
+              by default to keep the transcript the focus. */}
+          <section className="mt-8">
+            <button
+              type="button"
+              onClick={() => setShowModificationHistory((v) => !v)}
+              aria-expanded={showModificationHistory}
+              className="flex items-center gap-2 text-lg font-semibold hover:text-primary"
+            >
+              <History className="size-5" />
+              Modification history
+              <span className="text-sm font-normal text-muted-foreground">
+                ({modificationCount})
+              </span>
+              <ChevronDown
+                className={cn(
+                  "size-4 transition-transform",
+                  showModificationHistory && "rotate-180"
+                )}
+              />
+            </button>
+            {showModificationHistory && (
+              <div className="mt-3">
+                <p className="text-sm text-muted-foreground mb-3">
+                  All correction, rollback and accept-all actions taken on this
+                  transcript, newest first.
+                </p>
+                <ModificationHistoryTable
+                  job={job}
+                  onSeekToSegment={
+                    audioAvailable ? seekAndScrollToSegment : undefined
+                  }
+                />
+              </div>
+            )}
+          </section>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-background">
+      <div className="max-w-3xl mx-auto px-4 py-6">
+        {backLink}
+
+        <p className="text-sm text-primary mb-1">{job.tribunal}</p>
+        <h1 className="text-3xl font-bold mb-4">{job.caseReference}</h1>
+
+        <div className="flex items-center gap-3 mb-6">
+          <JobStatusBadge status={job.status} />
+          <span className="text-sm text-muted-foreground">
+            {job.audioFileName}
+          </span>
+        </div>
+
+        {(job.status === "PENDING" || job.status === "PROCESSING") && (
+          <div className="border border-border rounded-lg p-6 space-y-4">
+            <p className="text-muted-foreground">
+              Transcription is still in progress. This page updates
+              automatically — no need to refresh.
+            </p>
+            <JobProgress job={job} />
+          </div>
+        )}
+
+        {job.status === "FAILED" && (
+          <div className="border border-destructive/30 bg-destructive/5 rounded-lg p-6">
+            <p className="font-medium text-destructive mb-2">
+              Transcription failed
+            </p>
+            <p className="text-sm text-muted-foreground">
+              {job.errorMessage ?? "An unknown error occurred."}
+            </p>
+          </div>
+        )}
+
+        {job.status === "COMPLETED" && !job.segments && (
+          <div className="border border-border rounded-lg p-6">
+            <p className="text-muted-foreground">
+              This transcript has no content to display.
+            </p>
+          </div>
+        )}
+      </div>
+    </main>
+  );
+}
