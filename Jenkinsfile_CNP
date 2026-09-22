@@ -1,0 +1,38 @@
+#!groovy
+
+@Library("Infrastructure@2.5.2")
+
+def type = "nodejs"
+def product = "transcribe"
+def component = "web"
+
+// Build-time secret injection. The frontend holds no runtime Key Vault
+// secrets of its own — everything sensitive lives behind the backend — but the
+// App Insights connection string has to reach the container as an environment
+// variable, so it is substituted into values.{env}.template.yaml.
+def secrets = [
+  'transcribe-${env}': [
+    secret('AppInsightsConnectionString', 'APP_INSIGHTS_CONNECTION_STRING'),
+  ]
+]
+
+static LinkedHashMap<String, Object> secret(String secretName, String envVar) {
+  [ $class: 'AzureKeyVaultSecret',
+    secretType: 'Secret',
+    name: secretName,
+    version: '',
+    envVariable: envVar
+  ]
+}
+
+// docs:
+// 1. https://github.com/hmcts/cnp-jenkins-library
+// 2. https://hmcts.github.io/ways-of-working/common-pipeline/common-pipeline.html#common-pipeline
+withPipeline(type, product, component) {
+  loadVaultSecrets(secrets)
+
+  // AKS only. There is no App Service deployment for this product.
+  disableLegacyDeployment()
+
+  syncBranchesWithMaster(['demo', 'ithc', 'perftest'])
+}

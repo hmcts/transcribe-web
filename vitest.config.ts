@@ -10,7 +10,15 @@ export default defineConfig({
     // Its own scripts scoped vitest to tests/unit; the merged script runs the
     // whole tree, so exclude them here instead — vitest cannot run @playwright
     // specs. They run via "pnpm test:e2e".
-    exclude: ["**/node_modules/**", "**/dist/**", "**/e2e/**"],
+    // .claude/worktrees holds throwaway copies of the whole repo from local
+    // agent sessions. They are untracked, so CI never sees them, but locally
+    // vitest would otherwise collect every test twice over against stale code.
+    exclude: [
+      "**/node_modules/**",
+      "**/dist/**",
+      "**/e2e/**",
+      "**/.claude/**",
+    ],
     globals: true,
     // Both suites arrived with their own setup file; both are needed.
     setupFiles: ["./tests/setup.ts", "./tests/recording/setup.ts"],

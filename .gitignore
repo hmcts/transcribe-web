@@ -8,3 +8,7 @@ next-env.d.ts
 coverage/
 playwright-report/
 test-results/
+
+# Helm dependency artefacts — resolved by the pipeline at deploy time
+charts/**/charts/
+charts/**/Chart.lock

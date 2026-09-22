@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1.7
-FROM node:24-alpine AS base
+# REGISTRY_NAME is supplied by the CNP pipeline (az acr build --build-arg);
+# the default lets the image build locally and on a developer machine.
+ARG REGISTRY_NAME=hmctsprod
+FROM ${REGISTRY_NAME}.azurecr.io/base/node:24-alpine AS base
+
+# The HMCTS base image drops to the unprivileged `hmcts` user. corepack, apk
+# and the chown/adduser steps below all need root; the final stage drops back
+# to an unprivileged user before the app runs.
+USER root
 
 # Enable corepack for pnpm support
 RUN corepack enable && corepack prepare pnpm@10 --activate
@@ -62,7 +70,6 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/CHANGELOG.md ./CHANGELOG.md
 
 RUN mkdir .next
 RUN chown nextjs:nodejs .next

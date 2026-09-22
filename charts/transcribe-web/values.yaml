@@ -1,0 +1,35 @@
+nodejs:
+  # Caddy fronts the container on 3000 and reverse-proxies to the Next.js
+  # standalone server on 3001 (see Caddyfile / supervisord.conf).
+  applicationPort: 3000
+  image: 'hmctsprod.azurecr.io/transcribe/web:latest'
+  ingressHost: transcribe-web-{{ .Values.global.environment }}.service.core-compute-{{ .Values.global.environment }}.internal
+
+  # The base chart defaults to /health/liveness and /health/readiness, which
+  # this app does not serve. app/health/route.ts does, and it sits outside the
+  # /api/* prefix so Caddy passes it through to Next.js rather than proxying it
+  # to the backend. It is also outside the areas proxy.ts gates, so the probe
+  # is not answered with an Easy Auth redirect.
+  readinessPath: /health
+  livenessPath: /health
+  startupPath: /health
+
+  environment:
+    # Server-side only: where Caddy sends everything under /api/*.
+    BACKEND_INTERNAL_URL: http://transcribe-api-{{ .Values.global.environment }}.service.core-compute-{{ .Values.global.environment }}.internal
+
+    # Browser-side. start.js writes every NEXT_PUBLIC_* var into
+    # public/env-config.js at container start and lib/env.ts reads
+    # window.__ENV first, so this is genuinely runtime configuration despite
+    # the NEXT_PUBLIC_ prefix — one image serves every environment.
+    #
+    # It deliberately points at this app's own origin, not the backend's:
+    # lib/api-client.ts builds `${NEXT_PUBLIC_API_URL}/api`, so browser calls
+    # land back on Caddy and are proxied onward server-side. That keeps every
+    # request same-origin and sidesteps both CORS and the CSP connect-src rule
+    # in proxy.ts, which is fixed at build time and so cannot know the
+    # per-environment backend host.
+    NEXT_PUBLIC_API_URL: https://transcribe-web-{{ .Values.global.environment }}.service.core-compute-{{ .Values.global.environment }}.internal
+
+    # proxy.ts gates /admin and /recording behind Easy Auth when this is true.
+    EASY_AUTH_ENABLED: 'true'

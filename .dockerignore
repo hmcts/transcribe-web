@@ -1,0 +1,24 @@
+# Without this file the whole working tree is sent to the builder, which is
+# both slow and unsafe: Next.js picks up a developer's .env.local during
+# `next build` and bakes those values into the bundle.
+.env
+.env.*
+!.env.example
+
+.git
+.gitignore
+node_modules
+.next
+out
+coverage
+playwright-report
+test-results
+tsconfig.tsbuildinfo
+
+Dockerfile*
+.dockerignore
+README.md
+ACCESSIBILITY.md
+charts
+scripts-import.sh
+scripts-rewrite-imports.mjs

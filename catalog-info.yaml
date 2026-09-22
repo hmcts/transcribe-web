@@ -1,0 +1,21 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: "transcribe-web"
+  description: HMCTS Transcribe frontend — the single application surface for dictation and uploaded recordings
+  annotations:
+    # Must match folder-name/job-name in Jenkins.
+    jenkins.io/job-full-name: cft:HMCTS_j_to_z/transcribe-web
+    github.com/project-slug: 'hmcts/transcribe-web'
+  tags:
+    - nodejs
+    - nextjs
+  links:
+    - url: https://hmcts-reform.slack.com/app_redirect?channel=platops-help
+      title: platops-help on Slack
+      icon: chat
+spec:
+  type: website
+  system: transcribe
+  lifecycle: experimental
+  owner: group:default/ai-enablement
