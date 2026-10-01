@@ -9,7 +9,7 @@ export default defineConfig({
     // MERGE NOTE: recording ships Playwright specs under tests/recording/e2e.
     // Its own scripts scoped vitest to tests/unit; the merged script runs the
     // whole tree, so exclude them here instead — vitest cannot run @playwright
-    // specs. They run via "pnpm test:e2e".
+    // specs. They run via "yarn test:e2e".
     // .claude/worktrees holds throwaway copies of the whole repo from local
     // agent sessions. They are untracked, so CI never sees them, but locally
     // vitest would otherwise collect every test twice over against stale code.

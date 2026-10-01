@@ -33,3 +33,7 @@ coverage
 # Charts and infra are deployed, not built into the image
 charts
 infrastructure
+
+# Yarn local state (the image installs fresh)
+.yarn
+.pnp.*

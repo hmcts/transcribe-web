@@ -9,7 +9,7 @@ import { expect, test } from "@playwright/test";
 // backend (see transcript.spec.ts), so this test is opt-in: point it at a
 // seeded/known COMPLETED job via E2E_REVIEW_PANEL_JOB_ID. Locally, seed a
 // long job directly in the DB and export that id before running
-// `pnpm run test:e2e`. Without the env var the test skips, so it never
+// `yarn test:e2e`. Without the env var the test skips, so it never
 // fails the CI e2e run (which has no such job).
 const JOB_ID = process.env.E2E_REVIEW_PANEL_JOB_ID;
 

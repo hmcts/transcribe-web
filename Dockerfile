@@ -9,8 +9,10 @@ FROM ${REGISTRY_NAME}.azurecr.io/base/node:24-alpine AS base
 # to an unprivileged user before the app runs.
 USER root
 
-# Enable corepack for pnpm support
-RUN corepack enable && corepack prepare pnpm@10 --activate
+# Yarn, not pnpm: the CNP nodejs pipeline runs `yarn install` directly, and a
+# "packageManager": "pnpm@..." field makes that fail outright under corepack.
+# The version comes from package.json's packageManager field.
+RUN corepack enable
 
 # Install dependencies only when needed
 FROM base AS deps
@@ -18,13 +20,13 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Install dependencies based on the preferred package manager.
-# The cache mount preserves pnpm's content-addressable store across
-# builds, so re-installs only re-fetch packages that genuinely changed
-# in the lockfile rather than the whole graph.
-COPY package.json pnpm-lock.yaml ./
-RUN --mount=type=cache,id=pnpm-store,target=/pnpm-store \
-    pnpm install --frozen-lockfile --store-dir=/pnpm-store
+# The cache mount preserves yarn's global cache across builds, so a re-install
+# only re-fetches packages that genuinely changed in the lockfile.
+# --immutable is yarn's equivalent of --frozen-lockfile: it fails rather than
+# silently rewriting yarn.lock, which is what we want in CI.
+COPY package.json yarn.lock .yarnrc.yml ./
+RUN --mount=type=cache,id=yarn-cache,target=/yarn-cache \
+    YARN_GLOBAL_FOLDER=/yarn-cache yarn install --immutable
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -54,7 +56,7 @@ ENV APP_VERSION=$VERSION
 # .next/standalone and .next/static — which the runner stage copies —
 # are still written to the real layer.
 RUN --mount=type=cache,id=next-cache,target=/app/.next/cache \
-    pnpm run build
+    yarn run build
 
 # Production image, copy all the files and run next
 FROM base AS runner

@@ -5,10 +5,10 @@ import { expect, type Page, test } from "@playwright/test";
 // There's no fixed job id and no mock data, so this test discovers a
 // COMPLETED job from the dashboard and drives its transcript player. When
 // the environment has no completed job available (e.g. the backend-less
-// `pnpm run start` used by the E2E Tests workflow), it skips rather than
+// `yarn start` used by the E2E Tests workflow), it skips rather than
 // failing — matching the opt-in pattern the other specs use.
 //
-// Run with: pnpm run test:e2e (app must already be running; see
+// Run with: yarn test:e2e (app must already be running; see
 // playwright.config.ts — there is no webServer).
 
 const SEEK_STEP = 10;
@@ -47,7 +47,7 @@ test.describe("Audio skip controls (-10s / +10s)", () => {
     // The dashboard fetches jobs client-side, so wait for the list to
     // settle before deciding whether a completed job exists. Skip cleanly
     // if none is available in this environment (nothing to seek through) —
-    // e.g. the backend-less `pnpm run start` used by the E2E workflow.
+    // e.g. the backend-less `yarn start` used by the E2E workflow.
     const viewLink = page
       .getByRole("link", { name: /view transcript/i })
       .first();

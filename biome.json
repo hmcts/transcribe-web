@@ -122,7 +122,8 @@
       "!coverage",
       "!public",
       "!*.config.js",
-      "!*.config.ts"
+      "!*.config.ts",
+      "!**/.claude"
     ]
   },
   "javascript": {
@@ -159,7 +160,8 @@
       "!coverage",
       "!public",
       "!*.min.js",
-      "!*.d.ts"
+      "!*.d.ts",
+      "!**/.claude"
     ]
   }
 }

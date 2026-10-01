@@ -11,7 +11,7 @@ import { expect, test } from "@playwright/test";
 // intercept that route in the browser and return a fixed PROCESSING job in
 // the frontend's TranscriptionJob shape, so the progress UI can be asserted
 // deterministically without a live backend or a real Azure batch job.
-// Run with: pnpm run test:e2e (app must already be running).
+// Run with: yarn test:e2e (app must already be running).
 
 // Built fresh inside the test (not at module load) with `uploadedAt` relative
 // to the moment the test runs, so elapsed time is deterministic regardless of

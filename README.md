@@ -47,7 +47,7 @@ docker-compose up -d              # in ../transcribe-api — postgres + azurite
 cd ../transcribe-api && ./run-local.sh
 cd ../transcribe-web
 cp .env.example .env.local
-pnpm install && pnpm run build && pnpm run start
+yarn install && yarn build && yarn start
 ```
 
 The backend serves both surfaces: `/api/*` (dictation) and `/api/v1/*` (recording).
@@ -59,9 +59,9 @@ value in `TRANSCRIPTION_API_KEY`.
 ## Tests
 
 ```bash
-pnpm run test:unit    # vitest — 765 tests
-pnpm run test:e2e     # playwright (recording e2e specs)
-pnpm run type-check
+yarn test:unit    # vitest — 765 tests
+yarn test:e2e     # playwright (recording e2e specs)
+yarn type-check
 ```
 
 ## Outstanding

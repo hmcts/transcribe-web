@@ -1,17 +1,18 @@
-FROM node:23-alpine
+# Local development image. The production image is Dockerfile; this one keeps
+# the dev server and source mounts.
+ARG REGISTRY_NAME=hmctsprod
+FROM ${REGISTRY_NAME}.azurecr.io/base/node:24-alpine
+
+USER root
+RUN corepack enable
 
 WORKDIR /app
 
-RUN npm i -g pnpm
+COPY package.json yarn.lock .yarnrc.yml ./
+RUN yarn install --immutable
 
-# Install dependencies
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install
-
-# Copy rest of the application
 COPY . .
 
 EXPOSE 3000
 
-# Run in development mode with hot reload
-CMD ["pnpm", "run", "dev"]
+CMD ["yarn", "dev"]

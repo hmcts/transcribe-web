@@ -6,7 +6,7 @@ import { expect, test } from "@playwright/test";
 // E2E_BASELINE_JOB_ID to a seeded, SUCCEEDED job's id — the test skips
 // otherwise, so it never breaks environments without a backend (e.g. the
 // container-only e2e workflow).
-// Run with: pnpm run test:e2e (not included in pnpm run test:unit)
+// Run with: yarn test:e2e (not included in yarn test:unit)
 const BASELINE_JOB_ID = process.env.E2E_BASELINE_JOB_ID;
 
 test.describe("Baseline transcript WER", () => {

@@ -3,9 +3,9 @@ import path from "node:path";
 import { expect, test } from "@playwright/test";
 
 // These E2E tests require a running server with a real backend behind it
-// (docker-compose, or `pnpm dev` + the transcription_svc API) — there is no
+// (docker-compose, or `yarn dev` + the transcription_svc API) — there is no
 // more mock data to fall back on.
-// Run with: pnpm run test:e2e (not included in pnpm run test:unit)
+// Run with: yarn test:e2e (not included in yarn test:unit)
 // Set PLAYWRIGHT_BASE_URL env var to target a deployed environment.
 
 // Opt-in only: no default path, since a real audio file is developer/CI
@@ -36,7 +36,7 @@ test.describe("Dashboard", () => {
 
   test("shows an empty state when there are no jobs yet", async ({ page }) => {
     // Gated on E2E_EXPECT_EMPTY (DIAAT-241): only meaningful against an empty
-    // backend. Local `pnpm dev` and the backend-less CI e2e run start empty,
+    // backend. Local `yarn dev` and the backend-less CI e2e run start empty,
     // so it asserts by default. The post-deploy dev run sets
     // E2E_EXPECT_EMPTY=false because dev has real jobs, so this test skips
     // there rather than failing.

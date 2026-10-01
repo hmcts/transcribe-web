@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 // These E2E tests require a running server with a real backend.
-// Run with: pnpm run test:e2e (not included in pnpm run test:unit)
+// Run with: yarn test:e2e (not included in yarn test:unit)
 // Set PLAYWRIGHT_BASE_URL env var to target a deployed environment.
 //
 // Tests that navigate to a specific job require E2E_JOB_ID to be set to an
