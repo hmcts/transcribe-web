@@ -27,7 +27,24 @@ export function proxy(request: NextRequest) {
   const nonce = btoa(crypto.randomUUID());
 
   // Include the backend API origin so fetch() calls aren't blocked by CSP.
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  //
+  // This MUST NOT use process.env.NEXT_PUBLIC_API_URL. Next inlines
+  // NEXT_PUBLIC_* at build time, and CNP builds one image for every
+  // environment, so that value is frozen to whatever the build machine had —
+  // in practice the "http://localhost:8000" fallback below. Emitting that into
+  // a deployed CSP is at best noise and at worst a trap: the header would look
+  // like it permits the API while actually permitting nothing useful, and any
+  // genuinely cross-origin API URL set at runtime would be blocked with only a
+  // console error to show for it.
+  //
+  // Deployed environments are same-origin by design: the Helm chart points
+  // NEXT_PUBLIC_API_URL at this app's own ingress host and Caddy proxies
+  // /api/* onward to the backend, so 'self' already covers every call. Only
+  // local development talks to a separate origin, and CSP is not applied there
+  // (see the isDevelopment guard below).
+  const apiUrl = isDevelopment
+    ? process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+    : "";
 
   const csp = [
     `script-src 'nonce-${nonce}' 'self' https://*.googletagmanager.com`,
@@ -43,7 +60,7 @@ export function proxy(request: NextRequest) {
     // silence period, silently killing the transcription session.
     `worker-src blob: data: 'self'`,
     `img-src 'self' https://*.googletagmanager.com https://*.google-analytics.com https://*.g.doubleclick.net`,
-    `connect-src 'self' ${apiUrl} https://*.googletagmanager.com https://www.google.com https://*.google-analytics.com https://*.g.doubleclick.net`,
+    `connect-src ${["'self'", apiUrl].filter(Boolean).join(" ")} https://*.googletagmanager.com https://www.google.com https://*.google-analytics.com https://*.g.doubleclick.net`,
     `frame-src https://*.googletagmanager.com`,
     `object-src 'none'`,
     `base-uri 'none'`,

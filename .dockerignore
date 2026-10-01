@@ -1,24 +1,35 @@
-# Without this file the whole working tree is sent to the builder, which is
-# both slow and unsafe: Next.js picks up a developer's .env.local during
-# `next build` and bakes those values into the bundle.
+# Without this file `COPY . .` drags the whole working tree into the image.
+# That is not just slow: next build picks up .env.local from the build context
+# and bakes a developer's local values (API URLs, keys) into the bundle, which
+# is exactly how a build ends up serving localhost URLs in a real environment.
+
+# Local environment — must never reach a build
 .env
 .env.*
 !.env.example
 
-.git
-.gitignore
+# Build and dependency output, rebuilt inside the image
 node_modules
 .next
 out
-coverage
-playwright-report
-test-results
 tsconfig.tsbuildinfo
 
+# VCS, CI and tooling
+.git
+.gitignore
+.github
+.claude
 Dockerfile*
 .dockerignore
-README.md
-ACCESSIBILITY.md
+docker-compose*.yml
+
+# Tests and local-only assets
+tests
+playwright-report
+test-results
+coverage
+*.log
+
+# Charts and infra are deployed, not built into the image
 charts
-scripts-import.sh
-scripts-rewrite-imports.mjs
+infrastructure
