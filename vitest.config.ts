@@ -24,7 +24,8 @@ export default defineConfig({
     setupFiles: ["./tests/setup.ts", "./tests/recording/setup.ts"],
     coverage: {
       provider: "v8",
-      reporter: ["text", "json", "html"],
+      // lcov is what Sonar reads (sonar-project.properties).
+      reporter: ["text", "json", "html", "lcov"],
       include: [
         "app/**/*.{ts,tsx}",
         "components/**/*.{ts,tsx}",
