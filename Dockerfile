@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.7
 # REGISTRY_NAME is supplied by the CNP pipeline (az acr build --build-arg);
 # the default lets the image build locally and on a developer machine.
 ARG REGISTRY_NAME=hmctsprod
@@ -20,13 +19,15 @@ FROM base AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# The cache mount preserves yarn's global cache across builds, so a re-install
-# only re-fetches packages that genuinely changed in the lockfile.
 # --immutable is yarn's equivalent of --frozen-lockfile: it fails rather than
 # silently rewriting yarn.lock, which is what we want in CI.
+#
+# No BuildKit cache mounts in this file (RUN --mount=type=cache). The CNP
+# pipeline builds with `az acr build`, which uses the legacy builder and rejects
+# --mount outright ("the --mount option requires BuildKit"). Layer caching on
+# the COPY above still avoids re-installing when the lockfile is unchanged.
 COPY package.json yarn.lock .yarnrc.yml ./
-RUN --mount=type=cache,id=yarn-cache,target=/yarn-cache \
-    YARN_GLOBAL_FOLDER=/yarn-cache yarn install --immutable
+RUN yarn install --immutable
 
 # Rebuild the source code only when needed
 FROM base AS builder
@@ -51,12 +52,7 @@ ENV NEXT_PUBLIC_MAX_RECORDING_MINUTES=$NEXT_PUBLIC_MAX_RECORDING_MINUTES
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV APP_VERSION=$VERSION
 
-# Cache .next/cache (webpack/SWC/babel-loader incremental output)
-# across builds. The mount only exists during this RUN, so
-# .next/standalone and .next/static — which the runner stage copies —
-# are still written to the real layer.
-RUN --mount=type=cache,id=next-cache,target=/app/.next/cache \
-    yarn run build
+RUN yarn run build
 
 # Production image, copy all the files and run next
 FROM base AS runner
