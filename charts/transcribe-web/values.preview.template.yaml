@@ -5,6 +5,9 @@ nodejs:
     BACKEND_INTERNAL_URL: https://transcribe-api-pr-${CHANGE_ID}.preview.platform.hmcts.net
     NEXT_PUBLIC_API_URL: https://transcribe-web-pr-${CHANGE_ID}.preview.platform.hmcts.net
     APPLICATIONINSIGHTS_CONNECTION_STRING: ${APP_INSIGHTS_CONNECTION_STRING}
+    # Preview environments have no Speech account of their own; they use aat's,
+    # as they use aat's Key Vault.
+    AZURE_SPEECH_ENDPOINT: https://transcribe-speech-aat.cognitiveservices.azure.com
     # Preview environments have no Easy Auth in front of them, so gating
     # /recording and /admin on it would make both areas unreachable.
     EASY_AUTH_ENABLED: 'false'

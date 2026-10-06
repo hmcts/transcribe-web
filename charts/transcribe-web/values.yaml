@@ -31,5 +31,18 @@ nodejs:
     # per-environment backend host.
     NEXT_PUBLIC_API_URL: https://transcribe-web-{{ .Values.global.environment }}.service.core-compute-{{ .Values.global.environment }}.internal
 
+    # Live dictation. The Speech account is private (Azure Policy), so the
+    # browser never connects to it: the API hands the Speech SDK this app's
+    # own URL (DIRECT_SDK_ACCESS=false, the default), and the Caddyfile proxies
+    # /cognitiveservices/*, /speech/* and /stt/* — including the websocket —
+    # to this endpoint over the private endpoint. Without it Caddy falls
+    # through to Next.js and live dictation 404s. This is the same arrangement
+    # courtstranscribe runs in production.
+    #
+    # The custom subdomain is the account name, set in
+    # transcribe-shared-infrastructure/ai-services.tf. Caddy rejects an
+    # upstream with a path, so no trailing slash.
+    AZURE_SPEECH_ENDPOINT: https://transcribe-speech-{{ .Values.global.environment }}.cognitiveservices.azure.com
+
     # proxy.ts gates /admin and /recording behind Easy Auth when this is true.
     EASY_AUTH_ENABLED: 'true'
