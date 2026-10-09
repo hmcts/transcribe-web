@@ -127,14 +127,6 @@ function backendUrl(): string {
   return process.env.BACKEND_INTERNAL_URL ?? "http://localhost:8001";
 }
 
-function apiKey(): string {
-  const key = process.env.TRANSCRIPTION_API_KEY;
-  if (!key) {
-    throw new Error("TRANSCRIPTION_API_KEY is not configured");
-  }
-  return key;
-}
-
 // Raw fetch against the backend — returns the Response as-is regardless of
 // status, so a caller that needs to forward non-2xx statuses verbatim (e.g.
 // audio range requests, where 206/404/416 all need to reach the browser
@@ -143,31 +135,28 @@ function apiKey(): string {
 // instead, which throws on non-2xx for the common "this should always
 // succeed" case.
 //
-// Route handlers that have an Azure Easy Auth context available should pass it
-// as `auth` (see frontend/lib/auth-utils.ts → getBackendAuthContext).
-// When accessToken is present it is used as the Bearer token; when absent the
-// service API key is used as a fallback (local dev / non-Easy-Auth
-// environments). The clientPrincipal, when present, is forwarded so the
-// backend's hmcts_azure_auth dependency can validate the caller's identity.
+// Route handlers and server components pass the context from
+// lib/recording/auth-utils.ts. With a session, its bearer token is sent; the
+// backend authenticates from that token alone. Without one, no Authorization
+// header is sent and the backend answers 401 (or, in local development, uses
+// its mock identity).
 async function rawBackendFetch(
   path: string,
   init: RequestInit | undefined,
   auth: BackendAuthContext | null
 ): Promise<Response> {
-  const token = auth?.accessToken ?? apiKey();
-  const extraHeaders: Record<string, string> = {};
-  if (auth?.clientPrincipal) {
-    extraHeaders["x-ms-client-principal"] = auth.clientPrincipal;
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  // Never let a caller-supplied header stand in for the session's token.
+  delete headers.Authorization;
+  delete headers.authorization;
+  if (auth?.bearerToken) {
+    headers.Authorization = `Bearer ${auth.bearerToken}`;
   }
   return fetch(`${backendUrl()}${path}`, {
     ...init,
-    // Authorization is spread last so a caller-supplied header (present or
-    // future) can never accidentally override the backend bearer token.
-    headers: {
-      ...init?.headers,
-      ...extraHeaders,
-      Authorization: `Bearer ${token}`,
-    },
+    headers,
     cache: "no-store",
   });
 }

@@ -18,10 +18,10 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
-// The page reads request headers via getServerComponentAuthContext (next/headers)
-// to forward the Easy Auth identity to the backend; stub it in this render test.
+// The page reads the session cookie via getServerComponentAuthContext
+// (next/headers) to send the session's token to the backend; stub it here.
 vi.mock("next/headers", () => ({
-  headers: vi.fn(async () => ({ get: () => null })),
+  cookies: vi.fn(async () => ({ get: () => undefined })),
 }));
 
 const { mockGetJob } = vi.hoisted(() => ({ mockGetJob: vi.fn() }));

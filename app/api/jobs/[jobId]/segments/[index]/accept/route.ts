@@ -16,7 +16,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
   try {
     const job = await acceptSegment(jobId, segmentIndex, auth);
     return NextResponse.json({ job });

@@ -1,53 +1,54 @@
 import "server-only";
-import type { NextRequest } from "next/server";
+import { bearerForSession, SESSION_COOKIE } from "@/lib/auth/session";
 
+/**
+ * What a recording route handler or server component sends to the backend.
+ *
+ * Previously this forwarded App Service Easy Auth's headers
+ * (x-ms-client-principal and x-ms-token-aad-access-token) and fell back to a
+ * service API key. On CNP there is no Easy Auth: the token comes from this
+ * app's own server-side session, and the backend authenticates from that
+ * token alone. Without a session there is no token, and the backend answers
+ * 401 — there is no service-key fallback for user routes.
+ */
 export interface BackendAuthContext {
-  accessToken: string | null;
-  clientPrincipal: string | null;
+  bearerToken: string | null;
+}
+
+/** Read our session cookie from a Cookie header. */
+function sessionIdFrom(cookieHeader: string | null): string | undefined {
+  if (!cookieHeader) return undefined;
+  for (const part of cookieHeader.split(";")) {
+    const [name, ...value] = part.trim().split("=");
+    if (name === SESSION_COOKIE) return decodeURIComponent(value.join("="));
+  }
+  return undefined;
 }
 
 /**
- * Build the backend auth context from any Headers-like source.
- *
- * Only trust x-ms-client-principal when Easy Auth is active at the platform
- * layer (EASY_AUTH_ENABLED=true in deployed environments). Without this gate,
- * a caller in local dev — where the Next.js auth middleware is bypassed — could
- * inject the header and have it forwarded to the backend alongside a valid
- * service API key, enabling user impersonation.
+ * Route handlers: resolve from the request's session cookie. Takes any
+ * Request (reads the Cookie header) rather than relying on NextRequest's
+ * cookies helper.
  */
-function authContextFromHeaders(
-  source: Pick<Headers, "get">
-): BackendAuthContext {
-  const easyAuthEnabled = process.env.EASY_AUTH_ENABLED === "true";
+export async function getBackendAuthContext(
+  request: Pick<Request, "headers">
+): Promise<BackendAuthContext> {
   return {
-    accessToken: source.get("x-ms-token-aad-access-token"),
-    clientPrincipal: easyAuthEnabled
-      ? source.get("x-ms-client-principal")
-      : null,
+    bearerToken: await bearerForSession(
+      sessionIdFrom(request.headers.get("cookie"))
+    ),
   };
 }
 
 /**
- * Route handlers: derive the backend auth context from the NextRequest.
- */
-export function getBackendAuthContext(
-  request: NextRequest
-): BackendAuthContext {
-  return authContextFromHeaders(request.headers);
-}
-
-/**
- * React Server Components have no NextRequest, so they must read the incoming
- * request headers from next/headers. Use this in server-rendered pages (e.g.
- * the transcript page) so they forward the Easy Auth identity to the backend
- * exactly like the route handlers do — otherwise the backend, which requires
- * the X-Ms-Client-Principal header, rejects the call with 401.
- *
- * next/headers is imported dynamically so this module stays usable from route
- * handlers (and their tests) without pulling the RSC-only headers() API into
- * every import.
+ * React Server Components have no NextRequest, so read the cookie through
+ * next/headers. Imported dynamically so this module stays usable from route
+ * handlers (and their tests) without pulling in the RSC-only API.
  */
 export async function getServerComponentAuthContext(): Promise<BackendAuthContext> {
-  const { headers } = await import("next/headers");
-  return authContextFromHeaders(await headers());
+  const { cookies } = await import("next/headers");
+  const store = await cookies();
+  return {
+    bearerToken: await bearerForSession(store.get(SESSION_COOKIE)?.value),
+  };
 }

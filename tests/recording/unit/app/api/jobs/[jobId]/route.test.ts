@@ -34,10 +34,7 @@ describe("DELETE /api/jobs/[jobId]", () => {
     const response = await DELETE(makeRequest(), context);
 
     expect(response.status).toBe(204);
-    expect(mockDeleteJob).toHaveBeenCalledWith("job-1", {
-      accessToken: null,
-      clientPrincipal: null,
-    });
+    expect(mockDeleteJob).toHaveBeenCalledWith("job-1", { bearerToken: null });
   });
 
   it("maps a backend 404 to 404", async () => {

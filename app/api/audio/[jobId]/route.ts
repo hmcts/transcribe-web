@@ -8,7 +8,7 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const { jobId } = await params;
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
   try {
     // Forward the browser's Range header so <audio> seeking works — without
     // this, the browser can request a byte range it never receives and

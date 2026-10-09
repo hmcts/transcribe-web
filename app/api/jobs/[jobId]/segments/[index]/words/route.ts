@@ -16,7 +16,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     );
   }
 
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
   try {
     const { startWordIndex, endWordIndex, correctedText } =
       await request.json();

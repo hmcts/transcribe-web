@@ -1,4 +1,3 @@
-import { jwtDecode } from "jwt-decode";
 import { getEnv } from "@/lib/env";
 import { isLocalDevelopment } from "@/lib/environment";
 import type { User } from "@/src/api/generated";
@@ -18,223 +17,41 @@ export interface ApiResponse<T> {
 class ApiClient {
   private baseUrl: string;
 
-  private tokenCache: { token: string | null; expires: number } = {
-    token: null,
-    expires: 0,
-  };
-
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
   }
 
   /**
-   * Build authentication URL with return URL parameter
-   * Made public for testing purposes
+   * Login URL that returns the user to the current page afterwards.
+   * Made public for testing purposes.
    */
   public static buildAuthUrl(): string {
-    const returnUrl = encodeURIComponent(window.location.href);
-    return `/.auth/login/aad?post_login_redirect_uri=${returnUrl}`;
+    const returnTo = `${window.location.pathname}${window.location.search}`;
+    return `/auth/login?returnTo=${encodeURIComponent(returnTo)}`;
   }
 
   /**
-   * Force refresh the authentication session by redirecting to Easy Auth refresh endpoint
+   * The browser holds no token to refresh. The frontend server refreshes the
+   * session's token on every API call (Caddy forward_auth -> /auth/forward),
+   * so a 401 means the session itself has ended: sign in again.
    */
-  private async refreshAuthSession(): Promise<void> {
-    if (isLocalDevelopment()) {
-      return;
-    }
-
-    try {
-      // Clear token cache first
-      this.tokenCache = { token: null, expires: 0 };
-
-      // Try to refresh the session using Easy Auth refresh endpoint
-      const refreshResponse = await fetch("/.auth/refresh", {
-        method: "POST",
-        credentials: "include",
-      });
-
-      if (!refreshResponse.ok) {
-        console.warn("⚠️ Session refresh failed, redirecting to login");
-        // If refresh fails, redirect to login with return URL
-        window.location.href = ApiClient.buildAuthUrl();
-      }
-    } catch (error) {
-      console.error("❌ Failed to refresh auth session:", error);
-      // Fallback: redirect to login with return URL
-      window.location.href = ApiClient.buildAuthUrl();
-    }
+  private redirectToLogin(): void {
+    window.location.href = ApiClient.buildAuthUrl();
   }
 
   /**
-   * Check if token is expired or expiring soon
-   */
-  private isTokenExpiringSoon(token: string, bufferSeconds: number): boolean {
-    try {
-      const payload = jwtDecode<{ exp: number }>(token);
-      const expiresAt = payload.exp * 1000; // Convert to milliseconds
-      const now = Date.now();
-      const timeUntilExpiry = expiresAt - now;
-      return timeUntilExpiry <= bufferSeconds * 1000;
-    } catch {
-      // If we can't parse the token, treat it as expired
-      return true;
-    }
-  }
-
-  /**
-   * Get JWT token from Easy Auth with refresh strategy
-   *
-   * Strategy:
-   * 1. Check cache first (expires 10min before JWT expiry)
-   * 2. On cache miss, fetch from /.auth/me
-   * 3. Validate token expiration (check 'exp' claim)
-   * 4. If expired or expiring soon (< 10min), refresh then retry
-   * 5. Cache valid tokens until 10min before expiry
+   * Always null. On CNP the browser never holds an access token: Caddy attaches
+   * the server-side session's bearer token to every /api/* call. Kept so
+   * callers that add `Authorization` only when a token exists keep working.
    */
   private async getAuthToken(): Promise<string | null> {
-    if (isLocalDevelopment()) {
-      return null;
-    }
-
-    // Check if we have a valid cached token
-    const now = Date.now();
-    if (this.tokenCache.token && now < this.tokenCache.expires) {
-      return this.tokenCache.token;
-    }
-
-    try {
-      // Try fetching current token first (don't refresh unnecessarily)
-      const response = await fetch("/.auth/me", {
-        credentials: "include",
-        cache: "no-store",
-      });
-
-      if (response.ok) {
-        const authInfo = await response.json();
-        if (authInfo && authInfo.length > 0) {
-          const provider = authInfo[0];
-
-          if (provider.id_token) {
-            // Check if token is expired or expiring soon (within 10 minutes)
-            if (this.isTokenExpiringSoon(provider.id_token, 10 * 60)) {
-              console.warn("Token expiring soon, refreshing from Easy Auth...");
-
-              // Token is expiring - refresh it
-              const refreshResponse = await fetch("/.auth/refresh", {
-                credentials: "include",
-              });
-
-              if (!refreshResponse.ok) {
-                throw new Error(
-                  `Token refresh failed: ${refreshResponse.status}`
-                );
-              }
-
-              // Fetch the refreshed token
-              const refreshedResponse = await fetch("/.auth/me", {
-                credentials: "include",
-                cache: "no-store",
-              });
-
-              if (refreshedResponse.ok) {
-                const refreshedAuthInfo = await refreshedResponse.json();
-
-                if (refreshedAuthInfo && refreshedAuthInfo.length > 0) {
-                  const refreshedProvider = refreshedAuthInfo[0];
-
-                  if (refreshedProvider?.id_token) {
-                    // Cache until 10 minutes before token expiry
-                    const payload = jwtDecode<{ exp: number }>(
-                      refreshedProvider.id_token
-                    );
-                    const tokenExpiresAt = payload.exp * 1000; // Convert to ms
-                    const safeExpiryTime = tokenExpiresAt - 10 * 60 * 1000; // 10 min buffer
-
-                    this.tokenCache = {
-                      token: refreshedProvider.id_token,
-                      expires: safeExpiryTime,
-                    };
-                    return refreshedProvider.id_token;
-                  }
-                }
-              }
-
-              // Refresh succeeded but couldn't get refreshed token - don't return expiring token
-              throw new Error(
-                "Token refresh succeeded but failed to retrieve refreshed token"
-              );
-            }
-
-            // Token is still valid - cache until 10 min before expiry
-            const payload = jwtDecode<{ exp: number }>(provider.id_token);
-            const tokenExpiresAt = payload.exp * 1000; // Convert to ms
-            const safeExpiryTime = tokenExpiresAt - 10 * 60 * 1000; // 10 min buffer
-
-            this.tokenCache = {
-              token: provider.id_token,
-              expires: safeExpiryTime,
-            };
-            return provider.id_token;
-          }
-
-          console.warn("⚠️ No id_token found in auth response");
-        }
-      }
-    } catch (error) {
-      console.error("Failed to get auth token:", error);
-
-      // If fetching fails, try refreshing as a recovery strategy
-      try {
-        console.warn("Attempting token refresh as recovery...");
-        const refreshResponse = await fetch("/.auth/refresh", {
-          credentials: "include",
-        });
-
-        if (refreshResponse.ok) {
-          const response = await fetch("/.auth/me", {
-            credentials: "include",
-            cache: "no-store",
-          });
-
-          if (response.ok) {
-            const authInfo = await response.json();
-
-            if (authInfo && authInfo.length > 0) {
-              const provider = authInfo[0];
-
-              if (provider?.id_token) {
-                // Cache until 10 min before token expiry
-                const payload = jwtDecode<{ exp: number }>(provider.id_token);
-                const tokenExpiresAt = payload.exp * 1000; // Convert to ms
-                const safeExpiryTime = tokenExpiresAt - 10 * 60 * 1000; // 10 min buffer
-
-                this.tokenCache = {
-                  token: provider.id_token,
-                  expires: safeExpiryTime,
-                };
-                return provider.id_token;
-              }
-            }
-          }
-        }
-      } catch (refreshError) {
-        console.error("Token refresh recovery failed:", refreshError);
-      }
-    }
-
-    // Clear cache on failure
-    this.tokenCache = { token: null, expires: 0 };
     return null;
   }
 
   async request<T>(
     endpoint: string,
-    options: RequestInit = {},
-    retryCount = 0
+    options: RequestInit = {}
   ): Promise<ApiResponse<T>> {
-    const MAX_RETRIES = 1;
-
     try {
       const url = `${this.baseUrl}${endpoint}`;
 
@@ -260,7 +77,7 @@ class ApiClient {
         requestOptions.mode = "cors";
         requestOptions.credentials = "omit";
       } else {
-        // In production, include credentials for Easy Auth
+        // Same-origin in deployed environments: send the session cookie.
         requestOptions.credentials = "include";
       }
 
@@ -268,21 +85,9 @@ class ApiClient {
 
       if (!response.ok) {
         const requestId = response.headers.get("X-Request-Id") || undefined;
-        if (
-          response.status === 401 &&
-          !isLocalDevelopment() &&
-          retryCount < MAX_RETRIES
-        ) {
-          console.warn(
-            "🔄 Received 401, attempting to refresh session and retry..."
-          );
-
-          // Clear token cache and refresh session
-          this.tokenCache = { token: null, expires: 0 };
-          await this.refreshAuthSession();
-
-          // Retry the request
-          return await this.request(endpoint, options, retryCount + 1);
+        if (response.status === 401 && !isLocalDevelopment()) {
+          // Session ended (expired, signed out elsewhere, or never existed).
+          this.redirectToLogin();
         }
 
         if (response.status === 401) {
@@ -346,24 +151,6 @@ class ApiClient {
       };
     } catch (error) {
       console.error("API request failed:", error);
-
-      // If this was a retry attempt and it still failed, provide a more helpful error message
-      if (
-        retryCount > 0 &&
-        error instanceof Error &&
-        error.message.includes("Authentication failed")
-      ) {
-        const apiError = error as Error & {
-          requestId?: string;
-          status?: number;
-        };
-        return {
-          error:
-            "Session expired and automatic refresh failed. Please refresh the page to log in again.",
-          status: apiError.status,
-          requestId: apiError.requestId,
-        };
-      }
 
       if (error instanceof Error) {
         const apiError = error as Error & {

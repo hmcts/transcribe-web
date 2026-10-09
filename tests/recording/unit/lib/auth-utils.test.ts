@@ -1,98 +1,96 @@
-import type { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { __resetStoreForTests, writeSession } from "@/lib/auth/session-store";
 
-const { mockHeaders } = vi.hoisted(() => ({ mockHeaders: vi.fn() }));
+const { mockCookies } = vi.hoisted(() => ({ mockCookies: vi.fn() }));
+vi.mock("next/headers", () => ({ cookies: mockCookies }));
 
-vi.mock("next/headers", () => ({ headers: mockHeaders }));
+const SESSION_ID = "session-abc";
 
-function headerBag(map: Record<string, string>): Pick<Headers, "get"> {
-  return { get: (name: string) => map[name.toLowerCase()] ?? null };
+async function seedSession(idToken = "id-token-for-user") {
+  await writeSession(SESSION_ID, {
+    idToken,
+    refreshToken: "refresh",
+    idTokenExpiresAt: Date.now() + 60 * 60 * 1000, // well clear of the refresh window
+    user: {
+      oid: "oid-1",
+      name: "Judge",
+      email: "judge@justice.gov.uk",
+      roles: [],
+    },
+    createdAt: Date.now(),
+  });
 }
 
-describe("auth-utils", () => {
-  const original = process.env.EASY_AUTH_ENABLED;
+function requestWith(headers: Record<string, string>) {
+  return { headers: new Headers(headers) };
+}
 
+describe("recording auth-utils", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    __resetStoreForTests(); // in-memory store: no REDIS_URL, NODE_ENV=test
   });
-
-  afterEach(() => {
-    // Restore precisely: assigning `undefined` would leak the string
-    // "undefined" into the env for later tests that expect it unset.
-    if (original === undefined) {
-      delete process.env.EASY_AUTH_ENABLED;
-    } else {
-      process.env.EASY_AUTH_ENABLED = original;
-    }
-  });
+  afterEach(() => vi.clearAllMocks());
 
   describe("getBackendAuthContext", () => {
-    it("forwards the client principal and token when Easy Auth is enabled", async () => {
-      process.env.EASY_AUTH_ENABLED = "true";
-      const { getBackendAuthContext } = await import("@/lib/recording/auth-utils");
+    it("returns the session's token for a request carrying the session cookie", async () => {
+      await seedSession();
+      const { getBackendAuthContext } = await import(
+        "@/lib/recording/auth-utils"
+      );
+      await expect(
+        getBackendAuthContext(
+          requestWith({ cookie: `other=1; transcribe_session=${SESSION_ID}` })
+        )
+      ).resolves.toEqual({ bearerToken: "id-token-for-user" });
+    });
 
-      const request = {
-        headers: headerBag({
-          "x-ms-token-aad-access-token": "tok",
-          "x-ms-client-principal": "principal",
-        }),
-      } as unknown as NextRequest;
-
-      expect(getBackendAuthContext(request)).toEqual({
-        accessToken: "tok",
-        clientPrincipal: "principal",
+    it("returns no token without a session cookie", async () => {
+      const { getBackendAuthContext } = await import(
+        "@/lib/recording/auth-utils"
+      );
+      await expect(getBackendAuthContext(requestWith({}))).resolves.toEqual({
+        bearerToken: null,
       });
     });
 
-    it("drops the client principal when Easy Auth is disabled", async () => {
-      process.env.EASY_AUTH_ENABLED = "false";
-      const { getBackendAuthContext } = await import("@/lib/recording/auth-utils");
+    it("returns no token for an unknown session id", async () => {
+      const { getBackendAuthContext } = await import(
+        "@/lib/recording/auth-utils"
+      );
+      await expect(
+        getBackendAuthContext(
+          requestWith({ cookie: "transcribe_session=forged" })
+        )
+      ).resolves.toEqual({ bearerToken: null });
+    });
 
-      const request = {
-        headers: headerBag({
-          "x-ms-token-aad-access-token": "tok",
-          "x-ms-client-principal": "principal",
-        }),
-      } as unknown as NextRequest;
-
-      expect(getBackendAuthContext(request)).toEqual({
-        accessToken: "tok",
-        clientPrincipal: null,
-      });
+    it("ignores forged Easy Auth headers entirely", async () => {
+      const { getBackendAuthContext } = await import(
+        "@/lib/recording/auth-utils"
+      );
+      await expect(
+        getBackendAuthContext(
+          requestWith({
+            "x-ms-client-principal": "base64-principal",
+            "x-ms-token-aad-access-token": "attacker-token",
+          })
+        )
+      ).resolves.toEqual({ bearerToken: null });
     });
   });
 
   describe("getServerComponentAuthContext", () => {
-    it("reads request headers from next/headers and forwards the principal when enabled", async () => {
-      process.env.EASY_AUTH_ENABLED = "true";
-      mockHeaders.mockResolvedValue(
-        headerBag({
-          "x-ms-token-aad-access-token": "tok",
-          "x-ms-client-principal": "principal",
-        })
-      );
-      const { getServerComponentAuthContext } = await import(
-        "@/lib/recording/auth-utils"
-      );
-
-      await expect(getServerComponentAuthContext()).resolves.toEqual({
-        accessToken: "tok",
-        clientPrincipal: "principal",
+    it("reads the session cookie through next/headers", async () => {
+      await seedSession("rsc-token");
+      mockCookies.mockResolvedValue({
+        get: (name: string) =>
+          name === "transcribe_session" ? { value: SESSION_ID } : undefined,
       });
-    });
-
-    it("drops the client principal when Easy Auth is disabled", async () => {
-      process.env.EASY_AUTH_ENABLED = "false";
-      mockHeaders.mockResolvedValue(
-        headerBag({ "x-ms-client-principal": "principal" })
-      );
       const { getServerComponentAuthContext } = await import(
         "@/lib/recording/auth-utils"
       );
-
       await expect(getServerComponentAuthContext()).resolves.toEqual({
-        accessToken: null,
-        clientPrincipal: null,
+        bearerToken: "rsc-token",
       });
     });
   });

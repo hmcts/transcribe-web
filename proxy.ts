@@ -1,21 +1,43 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 /**
- * Next.js 16 proxy — runs on every non-static request.
+ * Next.js 16 proxy — runs on every non-static request (always on the Node.js
+ * runtime in Next 16, so process.env is read per request).
  *
  * Responsibilities:
  *  1. Generate a per-response CSP nonce for Google Tag Manager and forward
  *     it to Server Components via the x-nonce request header.
- *  2. Protect the /admin route with Azure Easy Auth in production.
+ *  2. Send anyone without a session to the login (/auth/login).
  *
- * In production (Azure Easy Auth), the presence of the
- * `AppServiceAuthSession` cookie proves the user has authenticated.
- * The actual admin authorization check is enforced server-side with
- * JWT role checks. The admin layout also verifies access before rendering.
- *
- * In local development (`NODE_ENV === "development"`) the admin gate is
- * skipped so developers can work without Azure AD.
+ * The session cookie's presence is only a routing hint. What protects data is
+ * the API: every backend call carries the session's bearer token (Caddy's
+ * forward_auth, or the recording route handlers), and the API verifies it.
  */
+// Kept in step with lib/auth/session.ts. Duplicated rather than imported:
+// that module is server-only and pulls in Redis and the OIDC client.
+const SESSION_COOKIE = "transcribe_session";
+
+// Paths reachable without a session. Mirrors what courtstranscribe excluded
+// from Easy Auth (static assets, health), plus the login routes themselves.
+// /cognitiveservices, /speech and /stt are handled by Caddy before Next.js.
+const PUBLIC_PATHS = new Set([
+  "/health",
+  "/manifest.json",
+  "/favicon.ico",
+  "/service-worker.js",
+  "/register-sw.js",
+  "/env-config.js",
+]);
+const PUBLIC_ASSET = /\.(png|jpe?g|gif|svg|webp|ico|woff2?|txt)$/i;
+
+export function isPublicPath(pathname: string): boolean {
+  return (
+    PUBLIC_PATHS.has(pathname) ||
+    pathname.startsWith("/auth/") ||
+    PUBLIC_ASSET.test(pathname)
+  );
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
@@ -70,43 +92,27 @@ export function proxy(request: NextRequest) {
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set("x-nonce", nonce);
 
-  // ── 2. Auth guard for gated areas (production only) ────────────────────────
+  // ── 2. Login gate ─────────────────────────────────────────────────────────
   //
-  // MERGE NOTE: the recording frontend had its own middleware.ts that gated
-  // EVERY route whenever EASY_AUTH_ENABLED=true. In Next.js 16 proxy.ts
-  // supersedes middleware.ts, so only one edge handler can exist — and adopting
-  // the blanket gate would have forced an Easy Auth login on dictation's public
-  // pages (/cookies, /privacy, /help, /coming-soon), a regression.
-  //
-  // Resolution: keep this single edge handler and gate the recording area
-  // explicitly alongside /admin. Both areas keep the behaviour they had; the
-  // public pages stay public. Real authorization remains server-side.
-  if (pathname.startsWith("/admin") || pathname.startsWith("/recording")) {
-    // MERGE NOTE: the two areas gated on different signals. Dictation used
-    // NODE_ENV; recording used EASY_AUTH_ENABLED, which Terraform sets false on
-    // dev so Playwright e2e and manual checks can run without an AAD login.
-    // Collapsing to NODE_ENV alone would have silently started gating the
-    // recording area on dev and broken that. EASY_AUTH_ENABLED therefore still
-    // wins where it is set explicitly.
-    const easyAuthFlag = process.env.EASY_AUTH_ENABLED;
-    const gateEnabled =
-      easyAuthFlag !== undefined
-        ? easyAuthFlag === "true"
-        : process.env.NODE_ENV !== "development";
-
-    if (gateEnabled) {
-      const authCookie =
-        request.cookies.get("AppServiceAuthSession") ??
-        request.cookies.get(".AspNetCore.Cookies");
-
-      if (!authCookie) {
-        const loginUrl = new URL("/.auth/login/aad", request.url);
-        loginUrl.searchParams.set(
-          "post_login_redirect_uri",
-          request.nextUrl.pathname
-        );
-        return NextResponse.redirect(loginUrl);
+  // On App Service, Easy Auth sat in front of the whole app and required a
+  // login for everything except a short list of excluded paths; this file only
+  // gated /admin and /recording on top. On CNP there is no Easy Auth, so this
+  // is now the only gate and it covers every page, matching what production
+  // users experience today. AUTH_ENABLED is false for local development and
+  // preview environments.
+  if (process.env.AUTH_ENABLED === "true" && !isPublicPath(pathname)) {
+    if (!request.cookies.get(SESSION_COOKIE)) {
+      // Fetches from the recording area to its own /api/* route handlers get
+      // a 401 they can act on, not an HTML redirect.
+      if (pathname.startsWith("/api/")) {
+        return new NextResponse(null, { status: 401 });
       }
+      const loginUrl = new URL("/auth/login", request.url);
+      loginUrl.searchParams.set(
+        "returnTo",
+        `${request.nextUrl.pathname}${request.nextUrl.search}`
+      );
+      return NextResponse.redirect(loginUrl);
     }
   }
 

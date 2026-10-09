@@ -15,26 +15,33 @@ vi.mock("@/lib/recording/api-client", () => ({
 function requestWithFile(
   file: Blob | null,
   durationSeconds?: string,
-  easyAuthToken?: string,
-  clientPrincipal?: string
+  extraHeaders: Record<string, string> = {}
 ) {
   const fields: Record<string, unknown> = { file };
   if (durationSeconds !== undefined) {
     fields.audio_duration_seconds = durationSeconds;
   }
   return {
-    headers: {
-      get: (name: string) => {
-        if (name === "x-ms-token-aad-access-token")
-          return easyAuthToken ?? null;
-        if (name === "x-ms-client-principal") return clientPrincipal ?? null;
-        return null;
-      },
-    },
+    headers: new Headers(extraHeaders),
     formData: async () => ({
       get: (key: string) => fields[key] ?? null,
     }),
   } as unknown as NextRequest;
+}
+
+async function seedSession(id: string, idToken: string) {
+  const { writeSession } = await import("@/lib/auth/session-store");
+  await writeSession(id, {
+    idToken,
+    idTokenExpiresAt: Date.now() + 60 * 60 * 1000,
+    user: {
+      oid: "oid-1",
+      name: "Judge",
+      email: "judge@justice.gov.uk",
+      roles: [],
+    },
+    createdAt: Date.now(),
+  });
 }
 
 function audioBlob() {
@@ -58,7 +65,7 @@ describe("POST /api/upload", () => {
       expect.any(Blob),
       "audio",
       undefined,
-      { accessToken: null, clientPrincipal: null }
+      { bearerToken: null }
     );
   });
 
@@ -72,7 +79,7 @@ describe("POST /api/upload", () => {
       expect.any(Blob),
       "audio",
       9360.5,
-      { accessToken: null, clientPrincipal: null }
+      { bearerToken: null }
     );
   });
 
@@ -86,7 +93,7 @@ describe("POST /api/upload", () => {
       expect.any(Blob),
       "audio",
       undefined,
-      { accessToken: null, clientPrincipal: null }
+      { bearerToken: null }
     );
   });
 
@@ -101,43 +108,45 @@ describe("POST /api/upload", () => {
       expect.any(Blob),
       "audio",
       undefined,
-      { accessToken: null, clientPrincipal: null }
+      { bearerToken: null }
     );
   });
 
-  it("forwards both Easy Auth headers to uploadAndSubmit when present", async () => {
-    vi.stubEnv("EASY_AUTH_ENABLED", "true");
+  it("sends the session's token to uploadAndSubmit", async () => {
+    await seedSession("sess-up", "user-id-token");
     mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
     const { POST } = await import("@/app/api/upload/route");
 
     await POST(
-      requestWithFile(
-        audioBlob(),
-        undefined,
-        "user-jwt-token",
-        "base64principal"
-      )
+      requestWithFile(audioBlob(), undefined, {
+        cookie: "transcribe_session=sess-up",
+      })
     );
 
     expect(mockUploadAndSubmit).toHaveBeenCalledWith(
       expect.any(Blob),
       "audio",
       undefined,
-      { accessToken: "user-jwt-token", clientPrincipal: "base64principal" }
+      { bearerToken: "user-id-token" }
     );
   });
 
-  it("forwards only the access token when clientPrincipal is absent", async () => {
+  it("ignores forged Easy Auth headers", async () => {
     mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
     const { POST } = await import("@/app/api/upload/route");
 
-    await POST(requestWithFile(audioBlob(), undefined, "user-jwt-token"));
+    await POST(
+      requestWithFile(audioBlob(), undefined, {
+        "x-ms-token-aad-access-token": "attacker-token",
+        "x-ms-client-principal": "base64principal",
+      })
+    );
 
     expect(mockUploadAndSubmit).toHaveBeenCalledWith(
       expect.any(Blob),
       "audio",
       undefined,
-      { accessToken: "user-jwt-token", clientPrincipal: null }
+      { bearerToken: null }
     );
   });
 

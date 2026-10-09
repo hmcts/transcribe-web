@@ -1,5 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { BackendApiError, rollbackToHistoryEntry } from "@/lib/recording/api-client";
+import {
+  BackendApiError,
+  rollbackToHistoryEntry,
+} from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
 
 interface RouteContext {
@@ -22,7 +25,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     );
   }
 
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
   try {
     const job = await rollbackToHistoryEntry(
       jobId,

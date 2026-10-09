@@ -52,14 +52,29 @@ yarn install && yarn build && yarn start
 
 The backend serves both surfaces: `/api/*` (dictation) and `/api/v1/*` (recording).
 
-Recording's BFF route handlers authenticate to the backend with a machine API
-key. Seed one with `../transcribe-api/scripts-seed-local.py` and put the printed
-value in `TRANSCRIPTION_API_KEY`.
+## Sign-in
+
+On CNP there is no App Service Easy Auth, so this app runs the Entra ID login
+itself — the CNP pattern for internal users (DARTS does the same):
+
+- `app/auth/login` and `app/auth/callback` run an OIDC authorization-code flow
+  with PKCE against the MoJ tenant app registration, as a confidential client.
+- Tokens are kept in a server-side session in Redis (`lib/auth`). The browser
+  only ever holds an opaque, httpOnly `transcribe_session` cookie.
+- Caddy attaches the session's bearer token to every backend `/api/*` call via
+  `forward_auth` (`/auth/forward`), after discarding any `Authorization` or
+  Easy Auth header the client sent. The recording area's own `/api/*` route
+  handlers attach it themselves (`lib/recording/auth-utils.ts`).
+- `proxy.ts` sends anyone without a session to the login. The API verifies
+  the token on every call; the cookie check is only a routing hint.
+
+Locally, leave `AUTH_ENABLED=false`: nothing is gated, and the backend uses its
+mock identity with `ENVIRONMENT=local`.
 
 ## Tests
 
 ```bash
-yarn test:unit    # vitest — 765 tests
+yarn test:unit    # vitest — 779 tests
 yarn test:e2e     # playwright (recording e2e specs)
 yarn type-check
 ```

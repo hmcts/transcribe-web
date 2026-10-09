@@ -8,7 +8,7 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const { jobId } = await params;
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
   try {
     const job = await getJob(jobId, auth);
     if (!job) {
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
 
 export async function DELETE(request: NextRequest, { params }: RouteContext) {
   const { jobId } = await params;
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
   try {
     await deleteJob(jobId, auth);
     return new NextResponse(null, { status: 204 });

@@ -7,6 +7,21 @@ vi.mock("@/lib/recording/api-client", () => ({
   listJobs: mockListJobs,
 }));
 
+async function seedSession(id: string, idToken: string) {
+  const { writeSession } = await import("@/lib/auth/session-store");
+  await writeSession(id, {
+    idToken,
+    idTokenExpiresAt: Date.now() + 60 * 60 * 1000,
+    user: {
+      oid: "oid-1",
+      name: "Judge",
+      email: "judge@justice.gov.uk",
+      roles: [],
+    },
+    createdAt: Date.now(),
+  });
+}
+
 function makeRequest(url = "http://localhost/api/jobs") {
   return new NextRequest(url);
 }
@@ -41,8 +56,8 @@ describe("GET /api/jobs", () => {
     expect(response.status).toBe(502);
   });
 
-  it("forwards the Easy Auth context to listJobs when headers are present", async () => {
-    vi.stubEnv("EASY_AUTH_ENABLED", "true");
+  it("sends the session's token to listJobs", async () => {
+    await seedSession("sess-1", "user-id-token");
     mockListJobs.mockResolvedValue({
       jobs: [],
       total: 0,
@@ -51,21 +66,18 @@ describe("GET /api/jobs", () => {
     });
     const { GET } = await import("@/app/api/jobs/route");
 
-    const request = new NextRequest("http://localhost/api/jobs", {
-      headers: {
-        "x-ms-token-aad-access-token": "user-jwt-token",
-        "x-ms-client-principal": "base64principal",
-      },
-    });
-    await GET(request);
+    await GET(
+      new NextRequest("http://localhost/api/jobs", {
+        headers: { cookie: "transcribe_session=sess-1" },
+      })
+    );
 
     expect(mockListJobs).toHaveBeenCalledWith(undefined, {
-      accessToken: "user-jwt-token",
-      clientPrincipal: "base64principal",
+      bearerToken: "user-id-token",
     });
   });
 
-  it("passes a BackendAuthContext with nulls when Easy Auth headers are absent", async () => {
+  it("passes no token without a session, even with forged Easy Auth headers", async () => {
     mockListJobs.mockResolvedValue({
       jobs: [],
       total: 0,
@@ -74,11 +86,15 @@ describe("GET /api/jobs", () => {
     });
     const { GET } = await import("@/app/api/jobs/route");
 
-    await GET(makeRequest());
+    await GET(
+      new NextRequest("http://localhost/api/jobs", {
+        headers: {
+          "x-ms-token-aad-access-token": "attacker-token",
+          "x-ms-client-principal": "base64principal",
+        },
+      })
+    );
 
-    expect(mockListJobs).toHaveBeenCalledWith(undefined, {
-      accessToken: null,
-      clientPrincipal: null,
-    });
+    expect(mockListJobs).toHaveBeenCalledWith(undefined, { bearerToken: null });
   });
 });

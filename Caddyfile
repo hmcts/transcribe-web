@@ -5,9 +5,31 @@
 
 :3000 {
 	route {
-		# Azure Cognitive Speech WebSocket proxy. Caddy transparently handles the
-		# HTTP→WebSocket upgrade — no special config required. Falls through to
-		# Next.js (404) when AZURE_SPEECH_ENDPOINT is unset.
+		# Identity is never taken from the client. The backend authenticates
+		# from a verified bearer token only and ignores these App Service Easy
+		# Auth headers anyway; stripping them keeps it that way for anything
+		# that might read them later.
+		request_header -X-Ms-Client-Principal
+		request_header -X-Ms-Client-Principal-Id
+		request_header -X-Ms-Client-Principal-Name
+		request_header -X-Ms-Client-Principal-Idp
+		request_header -X-Ms-Token-Aad-Access-Token
+		request_header -X-Ms-Token-Aad-Id-Token
+
+		# forward_auth's target answers with the session's bearer token in a
+		# response header. Only Caddy's own subrequest (straight to Next.js on
+		# :3001) may reach it, never a browser on this public port.
+		@auth_forward path /auth/forward
+		handle @auth_forward {
+			respond 404
+		}
+
+		# Azure Cognitive Speech WebSocket proxy. The Speech account is private,
+		# so the browser's Speech SDK connects here and Caddy forwards it over
+		# the private endpoint. Unauthenticated at this layer, as in production:
+		# the SDK carries a short-lived Speech token minted for a signed-in user
+		# by the API, and Speech validates it. Falls through to Next.js (404)
+		# when AZURE_SPEECH_ENDPOINT is unset.
 		@speech path /cognitiveservices/* /speech/* /stt/*
 		handle @speech {
 			reverse_proxy {$AZURE_SPEECH_ENDPOINT:http://localhost:3001} {
@@ -15,11 +37,33 @@
 			}
 		}
 
-		# All /api/* calls go straight to the backend service.
+		# The recording area's own route handlers. They call the backend
+		# themselves with the session's token (lib/recording/api-client.ts).
+		# Exact paths: a prefix such as /api/upload* would also capture the
+		# backend's /api/upload-audio.
+		@next_api path /api/jobs /api/jobs/* /api/upload /api/audio/* /api/version
+		handle @next_api {
+			reverse_proxy localhost:3001
+		}
+
+		# Everything else under /api/* goes to the backend, with the session's
+		# bearer token attached by forward_auth. A `route` block keeps these in
+		# the written order: in a plain `handle`, Caddy sorts directives and
+		# runs forward_auth BEFORE request_header, so the strip would remove the
+		# token forward_auth had just added.
 		@backend_api path /api/*
 		handle @backend_api {
-			reverse_proxy {$BACKEND_INTERNAL_URL:http://localhost:3001} {
-				header_up Host {http.reverse_proxy.upstream.host}
+			route {
+				# Whatever the client sent is discarded; only the session's
+				# token is ever forwarded.
+				request_header -Authorization
+				forward_auth localhost:3001 {
+					uri /auth/forward
+					copy_headers Authorization
+				}
+				reverse_proxy {$BACKEND_INTERNAL_URL:http://localhost:3001} {
+					header_up Host {http.reverse_proxy.upstream.host}
+				}
 			}
 		}
 

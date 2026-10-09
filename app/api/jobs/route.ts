@@ -3,7 +3,7 @@ import { listJobs } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
 
 export async function GET(request: NextRequest) {
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
   try {
     const result = await listJobs(undefined, auth);
     return NextResponse.json(result);

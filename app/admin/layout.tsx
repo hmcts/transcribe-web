@@ -4,6 +4,7 @@ import { Loader2, ShieldAlert } from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
 import { getAdminAccessStatus } from "@/lib/admin-access";
+import { loginUrl } from "@/lib/auth-utils";
 
 type AdminGateState = "checking" | "authorised" | "forbidden" | "error";
 
@@ -26,12 +27,7 @@ export default function AdminLayout({
         if (cancelled) return;
 
         if (accessStatus === "unauthenticated") {
-          const loginUrl = new URL("/.auth/login/aad", window.location.origin);
-          loginUrl.searchParams.set(
-            "post_login_redirect_uri",
-            `${window.location.pathname}${window.location.search}`
-          );
-          window.location.href = loginUrl.toString();
+          window.location.href = loginUrl();
           return;
         }
 

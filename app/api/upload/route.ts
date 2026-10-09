@@ -20,7 +20,7 @@ function isBodyParseError(err: unknown): boolean {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = getBackendAuthContext(request);
+  const auth = await getBackendAuthContext(request);
 
   let form: FormData;
   try {

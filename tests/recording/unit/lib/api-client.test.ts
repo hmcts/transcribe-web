@@ -113,7 +113,7 @@ describe("listJobs", () => {
     expect(jobs[0].modelDisplayName).toBeUndefined();
   });
 
-  it("sends the bearer token from TRANSCRIPTION_API_KEY", async () => {
+  it("sends no Authorization header without a session (no service-key fallback)", async () => {
     const fetchMock = mockFetchOnce({
       jobs: [],
       total: 0,
@@ -123,73 +123,36 @@ describe("listJobs", () => {
     await listJobs(undefined, null);
 
     const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers.Authorization).toBe("Bearer test-api-key");
+    expect(init.headers.Authorization).toBeUndefined();
   });
 });
 
 describe("rawBackendFetch header assembly", () => {
-  it("uses the accessToken as the Bearer token when provided", async () => {
-    const fetchMock = mockFetchOnce({
-      jobs: [],
-      total: 0,
-      limit: 20,
-      offset: 0,
-    });
-    await listJobs(undefined, {
-      accessToken: "user-token",
-      clientPrincipal: null,
-    });
+  const emptyList = { jobs: [], total: 0, limit: 20, offset: 0 };
+
+  it("sends the session's token as the Bearer token", async () => {
+    const fetchMock = mockFetchOnce(emptyList);
+    await listJobs(undefined, { bearerToken: "user-token" });
 
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers.Authorization).toBe("Bearer user-token");
   });
 
-  it("forwards clientPrincipal as x-ms-client-principal when set", async () => {
-    const fetchMock = mockFetchOnce({
-      jobs: [],
-      total: 0,
-      limit: 20,
-      offset: 0,
-    });
-    await listJobs(undefined, {
-      accessToken: "user-token",
-      clientPrincipal: "base64principal",
-    });
+  it("sends no Authorization header when the session has no token", async () => {
+    const fetchMock = mockFetchOnce(emptyList);
+    await listJobs(undefined, { bearerToken: null });
 
     const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers["x-ms-client-principal"]).toBe("base64principal");
+    expect(init.headers.Authorization).toBeUndefined();
   });
 
-  it("omits x-ms-client-principal entirely when clientPrincipal is null", async () => {
-    const fetchMock = mockFetchOnce({
-      jobs: [],
-      total: 0,
-      limit: 20,
-      offset: 0,
-    });
-    await listJobs(undefined, {
-      accessToken: "user-token",
-      clientPrincipal: null,
-    });
+  it("never sends Easy Auth identity headers", async () => {
+    const fetchMock = mockFetchOnce(emptyList);
+    await listJobs(undefined, { bearerToken: "user-token" });
 
     const [, init] = fetchMock.mock.calls[0];
     expect(init.headers["x-ms-client-principal"]).toBeUndefined();
-  });
-
-  it("forwards x-ms-client-principal even when accessToken is null (token store disabled)", async () => {
-    const fetchMock = mockFetchOnce({
-      jobs: [],
-      total: 0,
-      limit: 20,
-      offset: 0,
-    });
-    await listJobs(undefined, {
-      accessToken: null,
-      clientPrincipal: "base64principal",
-    });
-
-    const [, init] = fetchMock.mock.calls[0];
-    expect(init.headers["x-ms-client-principal"]).toBe("base64principal");
+    expect(init.headers["x-ms-token-aad-access-token"]).toBeUndefined();
   });
 });
 
