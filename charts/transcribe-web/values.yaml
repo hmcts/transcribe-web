@@ -3,7 +3,11 @@ nodejs:
   # standalone server on 3001 (see Caddyfile / supervisord.conf).
   applicationPort: 3000
   image: 'hmctsprod.azurecr.io/transcribe/web:latest'
-  ingressHost: transcribe-web-{{ .Values.global.environment }}.service.core-compute-{{ .Values.global.environment }}.internal
+  # The public hostname. Front Door (hmcts/azure-platform-terraform) sends it
+  # through the CFT Palo Alto to the cluster ingress with the Host header
+  # intact, so the ingress must answer to this name; the public and private
+  # CNAMEs live in hmcts/azure-public-dns and hmcts/azure-private-dns.
+  ingressHost: benchnotes.{{ .Values.global.environment }}.platform.hmcts.net
 
   # The base chart defaults to /health/liveness and /health/readiness, which
   # this app does not serve. app/health/route.ts does, and it sits outside the
@@ -29,7 +33,7 @@ nodejs:
     # request same-origin and sidesteps both CORS and the CSP connect-src rule
     # in proxy.ts, which is fixed at build time and so cannot know the
     # per-environment backend host.
-    NEXT_PUBLIC_API_URL: https://transcribe-web-{{ .Values.global.environment }}.service.core-compute-{{ .Values.global.environment }}.internal
+    NEXT_PUBLIC_API_URL: https://benchnotes.{{ .Values.global.environment }}.platform.hmcts.net
 
     # Live dictation. The Speech account is private (Azure Policy), so the
     # browser never connects to it: the API hands the Speech SDK this app's
@@ -45,16 +49,20 @@ nodejs:
     AZURE_SPEECH_ENDPOINT: https://transcribe-speech-{{ .Values.global.environment }}.cognitiveservices.azure.com
 
     # This app's own public origin: the login redirect URI is
-    # ${APP_URL}/auth/callback, and users return here after signing out.
-    # Entra ID only accepts https redirect URIs, so login works only once this
-    # is the public HTTPS hostname (Front Door, a PlatOps request). The
-    # .internal ingress host is a placeholder until then; the API's APP_URL
-    # and NEXT_PUBLIC_API_URL above must move with it.
-    APP_URL: https://transcribe-web-{{ .Values.global.environment }}.service.core-compute-{{ .Values.global.environment }}.internal
+    # ${APP_URL}/auth/callback, and users return here after signing out. That
+    # redirect URI must be registered on the app registration below. The API's
+    # APP_URL and NEXT_PUBLIC_API_URL above move with it.
+    APP_URL: https://benchnotes.{{ .Values.global.environment }}.platform.hmcts.net
 
     # This app runs the Entra ID login itself — there is no App Service Easy
     # Auth on CNP (lib/auth, app/auth, proxy.ts, Caddyfile).
     AUTH_ENABLED: 'true'
+
+    # Users sign in with the same MoJ-tenant (JusticeUK) app registrations as
+    # courtstranscribe and batch-audio-transcription. The IDs are not secret,
+    # so they live here rather than in the vault; the client ID differs per
+    # environment (values.<env>.template.yaml), only its secret is in the vault.
+    AZURE_AD_TENANT_ID: c6874728-71e6-41fe-a9e1-2e8c36776ad8
 
   keyVaults:
     # Resolves to Key Vault "transcribe-{env}". The CSI driver mounts each
@@ -63,11 +71,8 @@ nodejs:
     # exist in the vault, or none are mounted and the pod does not start.
     transcribe:
       secrets:
-        # The MoJ tenant app registration this app signs users in with.
-        - name: entra-client-id
-          alias: AZURE_AD_CLIENT_ID
-        - name: entra-tenant-id
-          alias: AZURE_AD_TENANT_ID
+        # Client secret of the app registration above. Hand-seeded: it is
+        # courtstranscribe's microsoft-provider-authentication-secret.
         - name: entra-client-secret
           alias: AZURE_AD_CLIENT_SECRET
         # Session store, from infrastructure/redis.tf.
