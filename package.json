@@ -21,6 +21,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
+    "test:smoke": "vitest run --config vitest.deployed.config.ts tests/deployed/smoke.test.ts --reporter=default --reporter=junit --outputFile.junit=smoke-output/smoke-result.xml",
+    "test:functional": "vitest run --config vitest.deployed.config.ts tests/deployed/functional.test.ts --reporter=default --reporter=junit --outputFile.junit=functional-output/functional-result.xml",
     "test:a11y": "echo 'No automated accessibility tests yet. ACCESSIBILITY.md holds the manual WCAG 2.1 AA audit; automating it is an open follow-up.'"
   },
   "dependencies": {

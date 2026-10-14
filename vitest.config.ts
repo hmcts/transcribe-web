@@ -18,6 +18,8 @@ export default defineConfig({
       "**/dist/**",
       "**/e2e/**",
       "**/.claude/**",
+      // Run against a deployed app by yarn test:smoke / test:functional.
+      "tests/deployed/**",
     ],
     globals: true,
     // Both suites arrived with their own setup file; both are needed.

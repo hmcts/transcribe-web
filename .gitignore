@@ -18,3 +18,7 @@ charts/**/Chart.lock
 !.yarn/patches
 !.yarn/releases
 .pnp.*
+
+# Reports from yarn test:smoke / test:functional
+smoke-output/
+functional-output/
