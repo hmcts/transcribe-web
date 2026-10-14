@@ -1,5 +1,5 @@
 nodejs:
-  image: 'hmctsprod.azurecr.io/transcribe/web:pr-${CHANGE_ID}'
+  image: ${IMAGE_NAME}
   ingressHost: transcribe-web-pr-${CHANGE_ID}.preview.platform.hmcts.net
   environment:
     BACKEND_INTERNAL_URL: https://transcribe-api-pr-${CHANGE_ID}.preview.platform.hmcts.net

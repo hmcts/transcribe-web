@@ -1,4 +1,7 @@
 nodejs:
+  # The image this build pushed; the pipeline substitutes IMAGE_NAME. Without
+  # it the chart's default ':latest' tag is pulled, which is never published.
+  image: ${IMAGE_NAME}
   environment:
     APPLICATIONINSIGHTS_CONNECTION_STRING: ${APP_INSIGHTS_CONNECTION_STRING}
     # courtstranscribe's dev app registration (its environments/dev/dev.tfvars
