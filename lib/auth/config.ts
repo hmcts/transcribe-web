@@ -24,6 +24,12 @@ export interface AuthConfig {
   /** Only for a local mock identity provider served over http. Never set in charts. */
   allowInsecureIssuer: boolean;
   sessionTtlSeconds: number;
+  /**
+   * Entra app role a user must hold to use this app. The app registration is
+   * shared with other apps, so signing in to it is not enough on its own.
+   * Unset or blank: no check.
+   */
+  accessRole: string | undefined;
 }
 
 export const AUTH_SCOPES = "openid profile email offline_access";
@@ -41,6 +47,7 @@ export function getAuthConfig(): AuthConfig {
     redisUrl: env.REDIS_URL || undefined,
     allowInsecureIssuer: env.AUTH_ALLOW_INSECURE_ISSUER === "true",
     sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS ?? 12 * 60 * 60),
+    accessRole: env.AUTH_ACCESS_ROLE?.trim() || undefined,
   };
 }
 

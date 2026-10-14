@@ -3,6 +3,7 @@ import { getAuthConfig } from "@/lib/auth/config";
 import { completeLogin } from "@/lib/auth/oidc";
 import {
   cookieOptions,
+  hasAppAccess,
   LOGIN_STATE_COOKIE,
   newSessionId,
   SESSION_COOKIE,
@@ -15,18 +16,19 @@ import {
 
 export const dynamic = "force-dynamic";
 
-function failed(status: number, reason: string): NextResponse {
+function failed(
+  status: number,
+  reason: string,
+  message = "Sign-in could not be completed. Please go back to the service and sign in again."
+): NextResponse {
   console.warn(`[auth] login callback rejected: ${reason}`);
-  return new NextResponse(
-    "Sign-in could not be completed. Please go back to the service and sign in again.",
-    {
-      status,
-      headers: {
-        "Content-Type": "text/plain; charset=utf-8",
-        "Cache-Control": "no-store",
-      },
-    }
-  );
+  return new NextResponse(message, {
+    status,
+    headers: {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Cache-Control": "no-store",
+    },
+  });
 }
 
 /** Entra ID redirects here with an authorization code. */
@@ -73,6 +75,14 @@ export async function GET(request: NextRequest) {
   // fixed onto the authenticated session.
   const previous = request.cookies.get(SESSION_COOKIE)?.value;
   if (previous) await deleteSession(previous);
+
+  if (!hasAppAccess(session)) {
+    return failed(
+      403,
+      `user ${session.user.oid} does not hold the access role`,
+      "You do not have access to BenchNotes. Ask your BenchNotes administrator to add you."
+    );
+  }
   const sessionId = newSessionId();
   await writeSession(sessionId, session);
 

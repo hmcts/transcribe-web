@@ -31,7 +31,8 @@ const APP = "https://transcribe.example";
 function tokens(
   idToken: string,
   expSecondsFromNow = 3600,
-  refresh = "refresh-1"
+  refresh = "refresh-1",
+  roles = ["Judge"]
 ) {
   return {
     id_token: idToken,
@@ -40,7 +41,7 @@ function tokens(
       oid: "oid-1",
       name: "Judge Real",
       preferred_username: "judge.real@justice.gov.uk",
-      roles: ["Judge"],
+      roles,
       exp: Math.floor(Date.now() / 1000) + expSecondsFromNow,
     }),
   };
@@ -275,6 +276,101 @@ describe("GET /auth/forward (Caddy forward_auth)", () => {
     const res = await GET(req("/auth/forward"));
     expect(res.status).toBe(200);
     expect(res.headers.get("authorization")).toBeNull();
+  });
+});
+
+describe("app access role (AUTH_ACCESS_ROLE)", () => {
+  const ROLE = "BenchNotes.AAT";
+
+  async function startLogin() {
+    const { GET } = await import("@/app/auth/login/route");
+    await GET(req("/auth/login?returnTo=%2Frecording"));
+  }
+
+  async function callback(roles: string[]) {
+    await startLogin();
+    oidc.authorizationCodeGrant.mockResolvedValue(
+      tokens("id-token-1", 3600, "refresh-1", roles)
+    );
+    const { GET } = await import("@/app/auth/callback/route");
+    return GET(
+      req("/auth/callback?code=abc&state=state-1", {
+        transcribe_login_state: "state-1",
+      })
+    );
+  }
+
+  async function storedSession(roles: string[], expSecondsFromNow = 3600) {
+    const store = await import("@/lib/auth/session-store");
+    await store.writeSession("sess-1", {
+      idToken: "id-token-1",
+      refreshToken: "refresh-1",
+      idTokenExpiresAt: Date.now() + expSecondsFromNow * 1000,
+      user: { oid: "oid-1", name: "", email: "", roles },
+      createdAt: Date.now(),
+    });
+  }
+
+  async function forward() {
+    const { GET } = await import("@/app/auth/forward/route");
+    return GET(req("/auth/forward", { transcribe_session: "sess-1" }));
+  }
+
+  it("refuses to create a session for a user without the role", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
+    const res = await callback(["Judge"]);
+
+    expect(res.status).toBe(403);
+    expect(res.cookies.get("transcribe_session")).toBeUndefined();
+    expect(await res.text()).toMatch(/do not have access/i);
+  });
+
+  it("signs in a user who holds the role", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
+    const res = await callback(["Judge", ROLE]);
+
+    expect(res.status).toBe(307);
+    expect(res.cookies.get("transcribe_session")?.value).toBeTruthy();
+  });
+
+  it("does not check the role when the setting is empty", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLE", " ");
+    const res = await callback([]);
+    expect(res.status).toBe(307);
+  });
+
+  it("gives no bearer token to an existing session without the role, and ends it", async () => {
+    await storedSession(["Judge"]);
+    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
+
+    const res = await forward();
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("authorization")).toBeNull();
+    const store = await import("@/lib/auth/session-store");
+    await expect(store.readSession("sess-1")).resolves.toBeNull();
+  });
+
+  it("ends the session when a refreshed token no longer carries the role", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
+    await storedSession([ROLE], 60);
+    oidc.refreshTokenGrant.mockResolvedValue(
+      tokens("new-token", 3600, "refresh-2", ["Judge"])
+    );
+
+    const res = await forward();
+
+    expect(res.status).toBe(401);
+    expect(res.headers.get("authorization")).toBeNull();
+  });
+
+  it("forwards the token for a session that holds the role", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
+    await storedSession([ROLE]);
+
+    const res = await forward();
+
+    expect(res.headers.get("authorization")).toBe("Bearer id-token-1");
   });
 });
 

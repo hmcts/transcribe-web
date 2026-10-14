@@ -44,10 +44,17 @@ export function safeReturnTo(value: string | null | undefined): string {
   return value;
 }
 
+/** Whether the session's user holds the app's access role, when one is set. */
+export function hasAppAccess(session: Session): boolean {
+  const { accessRole } = getAuthConfig();
+  return !accessRole || session.user.roles.includes(accessRole);
+}
+
 /**
  * Resolve the session for a cookie value, refreshing the ID token when it is
  * close to expiry. Returns null when there is no usable session; a session
- * that cannot be refreshed is deleted.
+ * that cannot be refreshed, or whose user no longer holds the access role, is
+ * deleted.
  */
 export async function getActiveSession(
   sessionId: string | undefined
@@ -56,7 +63,7 @@ export async function getActiveSession(
   const session = await readSession(sessionId);
   if (!session) return null;
   const current = await refreshIfNeeded(session);
-  if (!current) {
+  if (!current || !hasAppAccess(current)) {
     await deleteSession(sessionId);
     return null;
   }
