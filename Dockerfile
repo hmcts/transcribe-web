@@ -64,25 +64,27 @@ ENV APP_VERSION=$VERSION
 
 RUN apk add --no-cache caddy supervisor
 
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
+# Runtime files belong to uid/gid 1000: the HMCTS chart library runs every pod
+# with securityContext runAsUser: 1000 / fsGroup: 1000 (the base image's
+# `hmcts` user), whatever USER the image sets. With them owned by any other uid
+# the app cannot write public/env-config.js at start (EACCES) and the pod
+# crash-loops. Numeric IDs so ownership matches the chart exactly.
 COPY --from=builder /app/public ./public
 
 RUN mkdir .next
-RUN chown nextjs:nodejs .next
+RUN chown 1000:1000 .next
 
 # Automatically leverage output traces to reduce image size
 # https://nextjs.org/docs/advanced-features/output-file-tracing
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/start.js ./start.js
+COPY --from=builder --chown=1000:1000 /app/.next/standalone ./
+COPY --from=builder --chown=1000:1000 /app/.next/static ./.next/static
+COPY --from=builder --chown=1000:1000 /app/start.js ./start.js
 COPY supervisord.conf /etc/supervisord.conf
 COPY Caddyfile /etc/caddy/Caddyfile
 # Allow the app to write to env-config.js at runtime for dynamic environment variable support
-RUN touch /app/public/env-config.js && chown nextjs:nodejs /app/public/env-config.js && chmod 644 /app/public/env-config.js
+RUN touch /app/public/env-config.js && chown 1000:1000 /app/public/env-config.js && chmod 644 /app/public/env-config.js
 
-USER nextjs
+USER 1000
 
 EXPOSE 3000
 
