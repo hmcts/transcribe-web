@@ -64,11 +64,7 @@ ENV APP_VERSION=$VERSION
 
 RUN apk add --no-cache caddy supervisor
 
-# Runtime files belong to uid/gid 1000: the HMCTS chart library runs every pod
-# with securityContext runAsUser: 1000 / fsGroup: 1000 (the base image's
-# `hmcts` user), whatever USER the image sets. With them owned by any other uid
-# the app cannot write public/env-config.js at start (EACCES) and the pod
-# crash-loops. Numeric IDs so ownership matches the chart exactly.
+# The HMCTS chart runs pods as uid/gid 1000, so runtime files belong to 1000.
 COPY --from=builder /app/public ./public
 
 RUN mkdir .next

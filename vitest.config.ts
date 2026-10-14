@@ -18,7 +18,7 @@ export default defineConfig({
       "**/dist/**",
       "**/e2e/**",
       "**/.claude/**",
-      // Run against a deployed app by yarn test:smoke / test:functional.
+      // Run against a deployed app (vitest.deployed.config.ts).
       "tests/deployed/**",
     ],
     globals: true,
