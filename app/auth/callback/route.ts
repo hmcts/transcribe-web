@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
   if (!hasAppAccess(session)) {
     return failed(
       403,
-      `user ${session.user.oid} does not hold the access role`,
+      `user ${session.user.oid} holds no access role`,
       "You do not have access to BenchNotes. Ask your BenchNotes administrator to add you."
     );
   }

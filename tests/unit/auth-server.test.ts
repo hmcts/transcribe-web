@@ -279,8 +279,8 @@ describe("GET /auth/forward (Caddy forward_auth)", () => {
   });
 });
 
-describe("app access role (AUTH_ACCESS_ROLE)", () => {
-  const ROLE = "BenchNotes.AAT";
+describe("app access roles (AUTH_ACCESS_ROLES)", () => {
+  const ROLES = "Judge,LegalTextManager,SystemAdministrator,Normal";
 
   async function startLogin() {
     const { GET } = await import("@/app/auth/login/route");
@@ -316,32 +316,38 @@ describe("app access role (AUTH_ACCESS_ROLE)", () => {
     return GET(req("/auth/forward", { transcribe_session: "sess-1" }));
   }
 
-  it("refuses to create a session for a user without the role", async () => {
-    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
-    const res = await callback(["Judge"]);
+  it("refuses to create a session for a user holding none of the roles", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLES", ROLES);
+    const res = await callback([]);
 
     expect(res.status).toBe(403);
     expect(res.cookies.get("transcribe_session")).toBeUndefined();
     expect(await res.text()).toMatch(/do not have access/i);
   });
 
-  it("signs in a user who holds the role", async () => {
-    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
-    const res = await callback(["Judge", ROLE]);
+  it("signs in a user holding any one of the roles", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLES", ROLES);
+    const res = await callback(["LegalTextManager"]);
 
     expect(res.status).toBe(307);
     expect(res.cookies.get("transcribe_session")?.value).toBeTruthy();
   });
 
-  it("does not check the role when the setting is empty", async () => {
-    vi.stubEnv("AUTH_ACCESS_ROLE", " ");
+  it("ignores roles outside the list and blank entries", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLES", " Judge, ,LegalTextManager ");
+    const res = await callback(["Normal", "SomethingElse"]);
+    expect(res.status).toBe(403);
+  });
+
+  it("does not check roles when the setting is blank", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLES", " , ");
     const res = await callback([]);
     expect(res.status).toBe(307);
   });
 
-  it("gives no bearer token to an existing session without the role, and ends it", async () => {
-    await storedSession(["Judge"]);
-    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
+  it("gives no bearer token to an existing session without a role, and ends it", async () => {
+    await storedSession([]);
+    vi.stubEnv("AUTH_ACCESS_ROLES", ROLES);
 
     const res = await forward();
 
@@ -351,11 +357,11 @@ describe("app access role (AUTH_ACCESS_ROLE)", () => {
     await expect(store.readSession("sess-1")).resolves.toBeNull();
   });
 
-  it("ends the session when a refreshed token no longer carries the role", async () => {
-    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
-    await storedSession([ROLE], 60);
+  it("ends the session when a refreshed token no longer carries a role", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLES", ROLES);
+    await storedSession(["Judge"], 60);
     oidc.refreshTokenGrant.mockResolvedValue(
-      tokens("new-token", 3600, "refresh-2", ["Judge"])
+      tokens("new-token", 3600, "refresh-2", [])
     );
 
     const res = await forward();
@@ -364,9 +370,9 @@ describe("app access role (AUTH_ACCESS_ROLE)", () => {
     expect(res.headers.get("authorization")).toBeNull();
   });
 
-  it("forwards the token for a session that holds the role", async () => {
-    vi.stubEnv("AUTH_ACCESS_ROLE", ROLE);
-    await storedSession([ROLE]);
+  it("forwards the token for a session that holds a role", async () => {
+    vi.stubEnv("AUTH_ACCESS_ROLES", ROLES);
+    await storedSession(["Judge"]);
 
     const res = await forward();
 

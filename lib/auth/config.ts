@@ -25,11 +25,10 @@ export interface AuthConfig {
   allowInsecureIssuer: boolean;
   sessionTtlSeconds: number;
   /**
-   * Entra app role a user must hold to use this app. The app registration is
-   * shared with other apps, so signing in to it is not enough on its own.
-   * Unset or blank: no check.
+   * App roles of which a user must hold at least one. Backs up "Assignment
+   * required" on the app registration. Empty: no check.
    */
-  accessRole: string | undefined;
+  accessRoles: string[];
 }
 
 export const AUTH_SCOPES = "openid profile email offline_access";
@@ -47,7 +46,10 @@ export function getAuthConfig(): AuthConfig {
     redisUrl: env.REDIS_URL || undefined,
     allowInsecureIssuer: env.AUTH_ALLOW_INSECURE_ISSUER === "true",
     sessionTtlSeconds: Number(env.SESSION_TTL_SECONDS ?? 12 * 60 * 60),
-    accessRole: env.AUTH_ACCESS_ROLE?.trim() || undefined,
+    accessRoles: (env.AUTH_ACCESS_ROLES ?? "")
+      .split(",")
+      .map((role) => role.trim())
+      .filter(Boolean),
   };
 }
 
