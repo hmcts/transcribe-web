@@ -114,7 +114,9 @@ export function checkUploadType(
   declared: string | null,
   allowlist: UploadTypeAllowlist
 ): UploadTypeCheck {
-  const allowed = Object.keys(allowlist).sort().join(", ");
+  const allowed = Object.keys(allowlist)
+    .sort((a, b) => a.localeCompare(b))
+    .join(", ");
   const extension = extensionOf(filename);
   const types = Object.hasOwn(allowlist, extension)
     ? allowlist[extension]
