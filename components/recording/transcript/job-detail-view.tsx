@@ -225,11 +225,17 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   };
 
   const uploadBaseline = async (file: File) => {
-    const form = new FormData();
-    form.append("file", file, file.name);
+    // The raw file, not multipart/form-data: Front Door's WAF blocks
+    // multipart bodies. The route handler builds the multipart request to
+    // the API (app/api/jobs/[jobId]/baseline/route.ts).
     const response = await fetch(apiPath(`/api/jobs/${jobId}/baseline`), {
       method: "POST",
-      body: form,
+      headers: {
+        "Content-Type": "text/plain",
+        "X-Upload-Filename": encodeURIComponent(file.name),
+        "X-Upload-Size": String(file.size),
+      },
+      body: file,
     });
     if (!response.ok) {
       const body = await response.json().catch(() => null);

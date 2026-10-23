@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JobDetailView } from "@/components/recording/transcript/job-detail-view";
 import type { TranscriptionJob } from "@/lib/recording/types";
 
@@ -195,5 +195,51 @@ describe("JobDetailView back link", () => {
     const link = screen.getByRole("link", { name: /back to hearing list/i });
     // The list is app/recording/page.tsx; "/" is the dictation home page.
     expect(link.getAttribute("href")).toBe("/recording");
+  });
+});
+
+describe("JobDetailView baseline transcript upload", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // Front Door's WAF blocks multipart bodies from the browser, so the file
+  // goes as the raw body, with its name and size in headers; the route
+  // handler builds the multipart request to the API.
+  it("sends the .txt file as the raw request body, its name and size in headers", async () => {
+    const job = makeJob();
+    const updated = makeJob({
+      accuracy: {
+        ...(job.accuracy as NonNullable<TranscriptionJob["accuracy"]>),
+        hasBaseline: true,
+        baselineWordErrorRate: 12.5,
+      },
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ job: updated }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    const file = new File(["Judge: Good morning."], "R v Smith – day 2.txt", {
+      type: "text/plain",
+    });
+    await userEvent.upload(
+      screen.getByLabelText(/baseline transcript file input/i),
+      file
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`/api/jobs/${job.id}/baseline`);
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(file);
+    expect(init.headers).toEqual({
+      "Content-Type": "text/plain",
+      "X-Upload-Filename": encodeURIComponent(file.name),
+      "X-Upload-Size": String(file.size),
+    });
+    // The job the route returns replaces the one on screen.
+    expect(await screen.findByText(/baseline wer/i)).toBeDefined();
   });
 });

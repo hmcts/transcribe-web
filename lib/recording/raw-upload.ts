@@ -133,18 +133,22 @@ export type RawUpload =
   | { ok: false; response: NextResponse };
 
 /**
- * Validates a raw upload's metadata headers (400 if missing or malformed,
- * 413 if the declared size is over `maxBytes`) and returns the file with
- * its body as a stream, unread. Nothing is buffered: the caller pipes it on.
+ * Validates a raw upload's metadata headers (400 if missing or malformed, or
+ * the file's extension is not allowed; 413 if the declared size is over
+ * `maxBytes`) and returns the file with its body as a stream, unread.
+ * Nothing is buffered: the caller pipes it on.
  */
 export function readRawUpload(
   request: Request,
   {
     maxBytes,
     defaultContentType,
+    allowedExtensions,
   }: {
     maxBytes: number;
     defaultContentType: string;
+    /** Lower-case, with the dot, e.g. [".txt"]. Any if omitted. */
+    allowedExtensions?: string[];
   }
 ): RawUpload {
   const filename = parseFilename(request.headers.get("x-upload-filename"));
@@ -153,6 +157,19 @@ export function readRawUpload(
       ok: false,
       response: badRequest("Missing or invalid X-Upload-Filename header"),
     };
+  }
+
+  if (allowedExtensions) {
+    const dot = filename.lastIndexOf(".");
+    const extension = dot > 0 ? filename.slice(dot).toLowerCase() : "";
+    if (!allowedExtensions.includes(extension)) {
+      return {
+        ok: false,
+        response: badRequest(
+          `Unsupported file type. Allowed: ${allowedExtensions.join(", ")}`
+        ),
+      };
+    }
   }
 
   const size = parseSize(request.headers.get("x-upload-size"));

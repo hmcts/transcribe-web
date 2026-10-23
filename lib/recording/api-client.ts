@@ -600,18 +600,10 @@ export async function rollbackToHistoryEntry(
 
 export async function uploadBaselineTranscript(
   jobId: string,
-  file: Blob,
-  filename: string,
+  file: UploadFile,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
-  const form = new FormData();
-  form.append("file", file, filename);
-
-  const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/baseline`,
-    { method: "POST", body: form },
-    auth
-  );
+  const response = await postFile(`/api/v1/jobs/${jobId}/baseline`, file, auth);
   const body: BackendJob = await response.json();
   return toTranscriptionJob(body);
 }
