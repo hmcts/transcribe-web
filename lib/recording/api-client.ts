@@ -1,5 +1,6 @@
 import "server-only";
 import type { BackendAuthContext } from "./auth-utils";
+import { multipartFileBody, type UploadFile } from "./multipart";
 import type {
   CorrectionEntry,
   JobStatus,
@@ -438,19 +439,40 @@ export async function getJobAudio(
   );
 }
 
-export async function uploadAudio(
-  file: Blob,
-  filename: string,
+// POSTs `file` as the multipart `file` part the API's upload endpoints take,
+// streamed through as its bytes arrive (lib/recording/multipart.ts).
+function postFile(
+  path: string,
+  file: UploadFile,
   auth: BackendAuthContext | null
-): Promise<BackendUpload> {
-  const form = new FormData();
-  form.append("file", file, filename);
-
-  const response = await backendFetch(
-    "/api/v1/uploads",
-    { method: "POST", body: form },
+): Promise<Response> {
+  const multipart = multipartFileBody("file", file);
+  return backendFetch(
+    path,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": multipart.contentType,
+        "Content-Length": String(multipart.contentLength),
+      },
+      body: multipart.body,
+      // Required by fetch for a streamed request body.
+      duplex: "half",
+      // Otherwise fetch (undici) clones the request to be able to follow a
+      // redirect, teeing the body stream: the unread copy holds every byte
+      // sent until the response arrives, i.e. the whole upload. The API
+      // does not redirect these requests.
+      redirect: "error",
+    } as RequestInit,
     auth
   );
+}
+
+export async function uploadAudio(
+  file: UploadFile,
+  auth: BackendAuthContext | null
+): Promise<BackendUpload> {
+  const response = await postFile("/api/v1/uploads", file, auth);
   return response.json();
 }
 
@@ -595,12 +617,12 @@ export async function uploadBaselineTranscript(
 }
 
 export async function uploadAndSubmit(
-  file: Blob,
-  filename: string,
+  file: UploadFile,
   audioDurationSeconds: number | undefined,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
-  const { audio_url, blob_name } = await uploadAudio(file, filename, auth);
+  const { audio_url, blob_name } = await uploadAudio(file, auth);
+  const filename = file.filename;
   const caseReference = filename.replace(/\.[^.]+$/, "").replace(/_/g, "/");
   return submitJob(
     audio_url,

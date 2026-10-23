@@ -1,8 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 
 /**
- * Next.js 16 proxy — runs on every non-static request (always on the Node.js
- * runtime in Next 16, so process.env is read per request).
+ * Next.js 16 proxy — runs on every non-static request except the recording
+ * upload (see the matcher below; always on the Node.js runtime in Next 16, so
+ * process.env is read per request).
  *
  * Responsibilities:
  *  1. Generate a per-response CSP nonce for Google Tag Manager and forward
@@ -129,8 +130,14 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
-      // Run on all routes except Next.js static assets and the Sentry tunnel.
-      source: "/((?!_next/static|_next/image|favicon.ico|monitoring).*)",
+      // Run on all routes except Next.js static assets, the Sentry tunnel and
+      // the recording upload. Next.js buffers the whole request body of any
+      // request the proxy runs on, and passes at most
+      // experimental.proxyClientMaxBodySize (10 MB) of it on; /api/upload
+      // streams recordings of up to 200 MB to the API instead, and checks the
+      // session itself (app/api/upload/route.ts).
+      source:
+        "/((?!_next/static|_next/image|favicon.ico|monitoring|api/upload$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

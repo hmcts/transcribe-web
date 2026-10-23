@@ -1,11 +1,13 @@
 import type { NextRequest } from "next/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { bytesOf, consumeBody, sentMultipart } from "../../../multipart";
 
 // The browser sends the audio as the raw request body, with its metadata in
 // headers: Front Door's WAF (DRS 2.1) blocks multipart/form-data from the
 // browser. This route builds the multipart request to the API itself, inside
-// the cluster. These tests drive it with a real Request and assert on what
-// reaches the backend at the fetch boundary.
+// the cluster, streaming the body through. These tests drive it with a real
+// Request and assert on what reaches the backend at the fetch boundary; the
+// fetch mock reads a streamed body as a real fetch would.
 
 const BACKEND = "http://localhost:8001";
 const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
@@ -39,9 +41,14 @@ function jsonResponse(body: unknown, status = 200) {
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
+// What each streamed request body turned out to be, by URL.
+let sent: Map<string, Uint8Array<ArrayBuffer>>;
 
 function backendOk() {
-  fetchMock = vi.fn((url: string) => {
+  sent = new Map();
+  fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    const body = await consumeBody(init);
+    if (body) sent.set(url, body);
     if (url === `${BACKEND}/api/v1/uploads`) {
       return Promise.resolve(
         jsonResponse(
@@ -65,6 +72,14 @@ function uploadsCall() {
   return fetchMock.mock.calls.find(
     ([url]) => url === `${BACKEND}/api/v1/uploads`
   ) as [string, RequestInit] | undefined;
+}
+
+// The multipart body sent to POST /api/v1/uploads, parsed.
+async function sentUpload(): Promise<FormData> {
+  const call = uploadsCall();
+  expect(call).toBeDefined();
+  const [url, init] = call as [string, RequestInit];
+  return sentMultipart(init, sent.get(url));
 }
 
 function jobsCall() {
@@ -110,12 +125,6 @@ async function seedSession(id: string, idToken: string) {
   });
 }
 
-// Plain arrays: jsdom and Node each have their own Uint8Array, and toEqual
-// treats the two realms' instances as different even with equal bytes.
-async function bytesOf(blob: Blob): Promise<number[]> {
-  return Array.from(new Uint8Array(await blob.arrayBuffer()));
-}
-
 describe("POST /api/upload", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
@@ -150,8 +159,7 @@ describe("POST /api/upload", () => {
     expect((uploadInit.headers as Record<string, string>).Authorization).toBe(
       "Bearer user-id-token"
     );
-    expect(uploadInit.body).toBeInstanceOf(FormData);
-    const form = uploadInit.body as FormData;
+    const form = await sentUpload();
     expect([...form.keys()]).toEqual(["file"]);
     const part = form.get("file") as File;
     expect(part.name).toBe("PA_05217_2025.wav");
@@ -188,7 +196,8 @@ describe("POST /api/upload", () => {
     );
 
     expect(response.status).toBe(201);
-    const part = (uploadsCall()?.[1].body as FormData).get("file") as File;
+    const form = await sentUpload();
+    const part = form.get("file") as File;
     expect(part.name).toBe(name);
     expect(part.type).toBe("audio/mp4");
   });
@@ -201,8 +210,27 @@ describe("POST /api/upload", () => {
     );
 
     expect(response.status).toBe(201);
-    const part = (uploadsCall()?.[1].body as FormData).get("file") as File;
+    const form = await sentUpload();
+    const part = form.get("file") as File;
     expect(part.type).toBe("application/octet-stream");
+  });
+
+  it("forwards a body over Next's 10 MB proxy limit intact", async () => {
+    // The proxy, which would cut it off, does not run on this route
+    // (tests/recording/unit/upload-body-limit.test.ts); this is the
+    // handler's half: a large body reaches the API byte for byte.
+    const big = new Uint8Array(12 * 1024 * 1024);
+    for (let i = 0; i < big.length; i++) big[i] = i % 251;
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(uploadRequest(big));
+
+    expect(response.status).toBe(201);
+    const form = await sentUpload();
+    const part = form.get("file") as File;
+    expect(part.size).toBe(big.length);
+    const sent = new Uint8Array(await part.arrayBuffer());
+    expect(sent.every((b, i) => b === i % 251)).toBe(true);
   });
 
   it.each([
@@ -277,8 +305,8 @@ describe("POST /api/upload", () => {
     });
   });
 
-  describe("rejects oversized or truncated bodies with 413 without calling the API", () => {
-    it("a declared size over the limit", async () => {
+  describe("rejects oversized or truncated bodies with 413", () => {
+    it("a declared size over the limit, without calling the API", async () => {
       const { POST } = await import("@/app/api/upload/route");
 
       const response = await POST(
@@ -289,6 +317,9 @@ describe("POST /api/upload", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    // The body is streamed to the API as it arrives, so a size mismatch is
+    // only found while it is being sent. The upload is then aborted (its
+    // body stream errors, so fetch fails) and no job is submitted.
     it("a body longer than its declared size", async () => {
       const { POST } = await import("@/app/api/upload/route");
 
@@ -297,13 +328,13 @@ describe("POST /api/upload", () => {
       );
 
       expect(response.status).toBe(413);
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(sent.has(`${BACKEND}/api/v1/uploads`)).toBe(false);
+      expect(jobsCall()).toBeUndefined();
     });
 
-    it("a body shorter than its declared size (truncated on the way in)", async () => {
-      // Next.js cuts request bodies off at experimental.proxyClientMaxBodySize
-      // when the proxy runs. A truncated raw body would otherwise be stored
-      // as a silently shortened recording.
+    it("a body shorter than its declared size (cut off on the way in)", async () => {
+      // A truncated raw body would otherwise be stored as a silently
+      // shortened recording.
       const { POST } = await import("@/app/api/upload/route");
 
       const response = await POST(
@@ -311,7 +342,48 @@ describe("POST /api/upload", () => {
       );
 
       expect(response.status).toBe(413);
+      expect(sent.has(`${BACKEND}/api/v1/uploads`)).toBe(false);
+      expect(jobsCall()).toBeUndefined();
+    });
+  });
+
+  describe("with login enabled (AUTH_ENABLED=true)", () => {
+    // The proxy does not run on this route (proxy.ts), so the route gives
+    // the 401 the proxy gives other /api/* requests without a session.
+    it("answers 401 without a session, without calling the API", async () => {
+      vi.stubEnv("AUTH_ENABLED", "true");
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(401);
       expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("answers 401 for a session cookie with no session behind it", async () => {
+      vi.stubEnv("AUTH_ENABLED", "true");
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { cookie: "transcribe_session=unknown" })
+      );
+
+      expect(response.status).toBe(401);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("uploads with a session", async () => {
+      vi.stubEnv("AUTH_ENABLED", "true");
+      await seedSession("sess-auth", "user-id-token");
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { cookie: "transcribe_session=sess-auth" })
+      );
+
+      expect(response.status).toBe(201);
+      const headers = uploadsCall()?.[1].headers as Record<string, string>;
+      expect(headers.Authorization).toBe("Bearer user-id-token");
     });
   });
 

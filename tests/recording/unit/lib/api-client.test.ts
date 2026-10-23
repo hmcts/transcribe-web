@@ -10,6 +10,7 @@ import {
   uploadAndSubmit,
   uploadAudio,
 } from "@/lib/recording/api-client";
+import { bytesOf, sentMultipart, streamOf } from "../multipart";
 
 beforeEach(() => {
   vi.unstubAllGlobals();
@@ -248,21 +249,57 @@ describe("submitJob", () => {
 });
 
 describe("uploadAudio", () => {
-  it("posts the file as multipart form data", async () => {
+  it("streams the file's bytes to the API as the multipart `file` part", async () => {
     const fetchMock = mockFetchOnce({
       audio_url: "https://storage.example.com/audio.wav?sig=xyz",
       blob_name: "uploads/x/audio.wav",
     });
 
-    const file = new Blob(["fake-bytes"], { type: "audio/wav" });
-    const result = await uploadAudio(file, "hearing.wav", null);
+    const enc = new TextEncoder();
+    const result = await uploadAudio(
+      {
+        content: streamOf(enc.encode("fake-"), enc.encode("bytes")),
+        size: 10,
+        filename: "hearing.wav",
+        contentType: "audio/wav",
+      },
+      null
+    );
 
     expect(result.audio_url).toBe(
       "https://storage.example.com/audio.wav?sig=xyz"
     );
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain("/api/v1/uploads");
-    expect(init.body).toBeInstanceOf(FormData);
+    expect(init.method).toBe("POST");
+    const form = await sentMultipart(init);
+    expect([...form.keys()]).toEqual(["file"]);
+    const part = form.get("file") as File;
+    expect(part.name).toBe("hearing.wav");
+    expect(part.type).toBe("audio/wav");
+    expect(await bytesOf(part)).toEqual(Array.from(enc.encode("fake-bytes")));
+  });
+
+  it.each([
+    ["a double quote", 'R v "Smith".wav'],
+    ["non-ASCII characters", "R v Smith – día 2.wav"],
+  ])("keeps a filename with %s intact in the part header", async (_l, name) => {
+    const fetchMock = mockFetchOnce({ audio_url: "u", blob_name: "b" });
+
+    await uploadAudio(
+      {
+        content: streamOf(new TextEncoder().encode("x")),
+        size: 1,
+        filename: name,
+        contentType: "audio/wav",
+      },
+      null
+    );
+
+    const form = await sentMultipart(fetchMock.mock.calls[0][1]);
+    // Escaped the way FormData itself would send it (a double quote as %22,
+    // per the WHATWG encoding), so a standard parser reads the name back.
+    expect((form.get("file") as File).name).toBe(name);
   });
 });
 
@@ -292,10 +329,13 @@ describe("uploadAndSubmit", () => {
       });
     vi.stubGlobal("fetch", fetchMock);
 
-    const file = new Blob(["fake-bytes"], { type: "audio/wav" });
     const job = await uploadAndSubmit(
-      file,
-      "PA_00003_2026.wav",
+      {
+        content: streamOf(new TextEncoder().encode("fake-bytes")),
+        size: 10,
+        filename: "PA_00003_2026.wav",
+        contentType: "audio/wav",
+      },
       undefined,
       null
     );
