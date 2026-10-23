@@ -3,19 +3,21 @@ import { NextResponse } from "next/server";
 import { getAuthConfig } from "@/lib/auth/config";
 import type { BackendAuthContext } from "./auth-utils";
 import type { UploadFile } from "./multipart";
+import {
+  checkUploadType,
+  UPLOAD_BODY_CONTENT_TYPE,
+  UPLOAD_HEADERS,
+  type UploadTypeAllowlist,
+} from "./upload-contract";
 
 // Reading a file the browser sent as a raw request body, for the route
 // handlers that forward uploads to the API (app/api/upload and
 // app/api/jobs/[jobId]/baseline).
 //
-// The browser does not send multipart/form-data: Front Door's WAF
-// (Microsoft_DefaultRuleSet 2.1) fails to parse multipart bodies (rules
-// 200002/200003/921110) and blocks them with a 403. Instead the body is the
-// file itself and its metadata comes in headers:
-//
-//   Content-Type       the file's type
-//   X-Upload-Filename  the file's name, URL-encoded (required)
-//   X-Upload-Size      the file's size in bytes (required)
+// The browser does not send multipart/form-data, which Front Door's WAF
+// blocks: the body is the file itself, sent as exactly
+// application/octet-stream, and its metadata comes in headers. The contract,
+// and why, is in lib/recording/upload-contract.ts.
 //
 // The route handler then builds the multipart request to the API inside the
 // cluster, where no WAF applies (lib/recording/multipart.ts).
@@ -27,6 +29,15 @@ const UNSAFE_FILENAME_CHARS = /[\u0000-\u001f\u007f/\\]/;
 
 export function badRequest(error: string) {
   return NextResponse.json({ error }, { status: 400 });
+}
+
+export function unsupportedMediaType() {
+  return NextResponse.json(
+    {
+      error: `Uploads must be sent with Content-Type: ${UPLOAD_BODY_CONTENT_TYPE}`,
+    },
+    { status: 415 }
+  );
 }
 
 export function tooLarge() {
@@ -133,50 +144,46 @@ export type RawUpload =
   | { ok: false; response: NextResponse };
 
 /**
- * Validates a raw upload's metadata headers (400 if missing or malformed, or
- * the file's extension is not allowed; 413 if the declared size is over
- * `maxBytes`) and returns the file with its body as a stream, unread.
- * Nothing is buffered: the caller pipes it on.
+ * Validates a raw upload's request headers (415 unless the Content-Type is
+ * exactly application/octet-stream; 400 if the metadata is missing or
+ * malformed, or the file's type is not in `types`; 413 if the declared size
+ * is over `maxBytes`) and returns the file with its body as a stream,
+ * unread, and its type as `types` allows it. Nothing is buffered: the caller
+ * pipes it on.
  */
 export function readRawUpload(
   request: Request,
-  {
-    maxBytes,
-    defaultContentType,
-    allowedExtensions,
-  }: {
-    maxBytes: number;
-    defaultContentType: string;
-    /** Lower-case, with the dot, e.g. [".txt"]. Any if omitted. */
-    allowedExtensions?: string[];
-  }
+  { maxBytes, types }: { maxBytes: number; types: UploadTypeAllowlist }
 ): RawUpload {
-  const filename = parseFilename(request.headers.get("x-upload-filename"));
+  // Exactly, as Front Door's WAF rule matches it (lib/recording/upload-contract.ts).
+  if (request.headers.get("content-type") !== UPLOAD_BODY_CONTENT_TYPE) {
+    return { ok: false, response: unsupportedMediaType() };
+  }
+
+  const filename = parseFilename(request.headers.get(UPLOAD_HEADERS.filename));
   if (filename === null) {
     return {
       ok: false,
-      response: badRequest("Missing or invalid X-Upload-Filename header"),
+      response: badRequest(
+        `Missing or invalid ${UPLOAD_HEADERS.filename} header`
+      ),
     };
   }
 
-  if (allowedExtensions) {
-    const dot = filename.lastIndexOf(".");
-    const extension = dot > 0 ? filename.slice(dot).toLowerCase() : "";
-    if (!allowedExtensions.includes(extension)) {
-      return {
-        ok: false,
-        response: badRequest(
-          `Unsupported file type. Allowed: ${allowedExtensions.join(", ")}`
-        ),
-      };
-    }
+  const type = checkUploadType(
+    filename,
+    request.headers.get(UPLOAD_HEADERS.contentType),
+    types
+  );
+  if (!type.ok) {
+    return { ok: false, response: badRequest(type.error) };
   }
 
-  const size = parseSize(request.headers.get("x-upload-size"));
+  const size = parseSize(request.headers.get(UPLOAD_HEADERS.size));
   if (size === null) {
     return {
       ok: false,
-      response: badRequest("Missing or invalid X-Upload-Size header"),
+      response: badRequest(`Missing or invalid ${UPLOAD_HEADERS.size} header`),
     };
   }
   if (size === 0) {
@@ -193,7 +200,7 @@ export function readRawUpload(
       content,
       size,
       filename,
-      contentType: request.headers.get("content-type") || defaultContentType,
+      contentType: type.contentType,
     },
     sizeMismatch: mismatched,
   };

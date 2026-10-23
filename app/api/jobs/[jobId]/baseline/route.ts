@@ -9,17 +9,19 @@ import {
   tooLarge,
   unauthenticated,
 } from "@/lib/recording/raw-upload";
+import { BASELINE_UPLOAD_TYPES } from "@/lib/recording/upload-contract";
 
-// The transcript page sends the baseline transcript as the raw request body
-// (text/plain), with its name and size in headers, as the recording page
-// does the audio (lib/recording/raw-upload.ts): Front Door's WAF blocks
-// multipart bodies from the browser. This handler streams it on to the API
-// as the multipart `file` part of POST /api/v1/jobs/{id}/baseline.
+// The transcript page sends the baseline transcript as the raw request body,
+// as exactly application/octet-stream, with its name, size and type in
+// headers, as the recording page does the audio
+// (lib/recording/upload-contract.ts): Front Door's WAF blocks multipart
+// bodies from the browser. This handler streams it on to the API as the
+// multipart `file` part (text/plain) of POST /api/v1/jobs/{id}/baseline.
 
-// The API's limits for a baseline (_MAX_BASELINE_BYTES and
-// _ALLOWED_BASELINE_EXTENSIONS in transcribe-api's routes_recording.py).
+// The API's size limit for a baseline (_MAX_BASELINE_BYTES in
+// transcribe-api's routes_recording.py); BASELINE_UPLOAD_TYPES is its
+// _ALLOWED_BASELINE_EXTENSIONS.
 const MAX_BASELINE_BYTES = 5 * 1024 * 1024;
-const ALLOWED_EXTENSIONS = [".txt"];
 
 interface RouteContext {
   params: Promise<{ jobId: string }>;
@@ -33,8 +35,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
   const upload = readRawUpload(request, {
     maxBytes: MAX_BASELINE_BYTES,
-    defaultContentType: "text/plain",
-    allowedExtensions: ALLOWED_EXTENSIONS,
+    types: BASELINE_UPLOAD_TYPES,
   });
   if (!upload.ok) return upload.response;
 

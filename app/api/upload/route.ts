@@ -6,10 +6,15 @@ import {
   tooLarge,
   unauthenticated,
 } from "@/lib/recording/raw-upload";
+import {
+  AUDIO_UPLOAD_TYPES,
+  UPLOAD_HEADERS,
+} from "@/lib/recording/upload-contract";
 
-// The recording page sends the audio as the raw request body, with its
-// metadata in headers (lib/recording/raw-upload.ts), because Front Door's
-// WAF blocks multipart bodies from the browser. One more header here:
+// The recording page sends the audio as the raw request body, as exactly
+// application/octet-stream, with its metadata in headers
+// (lib/recording/upload-contract.ts), because Front Door's WAF blocks
+// multipart bodies from the browser. One more header here:
 //
 //   X-Audio-Duration-Seconds  duration read in the browser (optional)
 //
@@ -43,12 +48,12 @@ export async function POST(request: NextRequest) {
 
   const upload = readRawUpload(request, {
     maxBytes: MAX_UPLOAD_BYTES,
-    defaultContentType: "application/octet-stream",
+    types: AUDIO_UPLOAD_TYPES,
   });
   if (!upload.ok) return upload.response;
 
   const audioDurationSeconds = parseDuration(
-    request.headers.get("x-audio-duration-seconds")
+    request.headers.get(UPLOAD_HEADERS.audioDuration)
   );
 
   try {

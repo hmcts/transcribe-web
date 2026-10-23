@@ -3,8 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { bytesOf, consumeBody, sentMultipart } from "../../../../../multipart";
 
 // Like the audio upload, the browser sends the baseline transcript as the raw
-// request body (text/plain) with its name and size in headers: Front Door's
-// WAF blocks multipart bodies from the browser. This route builds the
+// request body, as exactly application/octet-stream, with its name, size and
+// own type in headers: Front Door's WAF blocks multipart bodies from the
+// browser (lib/recording/upload-contract.ts). This route builds the
 // multipart request to the API (POST /api/v1/jobs/{id}/baseline, field
 // `file`, a .txt of at most 5 MB). These tests assert on what reaches the API
 // at the fetch boundary; the fetch mock reads a streamed body as fetch would.
@@ -73,7 +74,8 @@ function baselineRequest(
   headers: Record<string, string | undefined> = {}
 ): NextRequest {
   const defaults: Record<string, string> = {
-    "content-type": "text/plain",
+    "content-type": "application/octet-stream",
+    "x-upload-content-type": "text/plain",
     "x-upload-filename": "reference.txt",
     "x-upload-size": String(body.length),
   };
@@ -163,9 +165,14 @@ describe("POST /api/jobs/[jobId]/baseline", () => {
     expect((form.get("file") as File).name).toBe(name);
   });
 
-  it("sends text/plain when the browser gives no content type", async () => {
+  it.each([
+    ["no declared type", ""],
+    ["no declared type header", undefined],
+    ["a declared application/octet-stream", "application/octet-stream"],
+    ["text/plain with a charset", "text/plain;charset=UTF-8"],
+  ])("sends text/plain given %s", async (_label, declared) => {
     const response = await post(
-      baselineRequest(TEXT, { "content-type": undefined })
+      baselineRequest(TEXT, { "x-upload-content-type": declared })
     );
 
     expect(response.status).toBe(200);
@@ -174,6 +181,24 @@ describe("POST /api/jobs/[jobId]/baseline", () => {
       sentBody
     );
     expect((form.get("file") as File).type).toBe("text/plain");
+  });
+
+  describe("rejects any Content-Type but application/octet-stream with 415, without calling the API", () => {
+    it.each([
+      ["text/plain", "text/plain"],
+      ["text/plain with a charset", "text/plain;charset=UTF-8"],
+      ["multipart/form-data", "multipart/form-data; boundary=----x"],
+      ["audio/mpeg", "audio/mpeg"],
+      ["missing", undefined],
+    ])("%s", async (_label, contentType) => {
+      const response = await post(
+        baselineRequest(TEXT, { "content-type": contentType })
+      );
+
+      expect(response.status).toBe(415);
+      expect((await response.json()).error).toEqual(expect.any(String));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("rejects bad metadata with 400 without calling the API", () => {
@@ -186,6 +211,18 @@ describe("POST /api/jobs/[jobId]/baseline", () => {
       ["a path separator", { "x-upload-filename": "..%2Fetc%2Fpasswd.txt" }],
       ["a file that is not .txt", { "x-upload-filename": "reference.docx" }],
       ["a file with no extension", { "x-upload-filename": "reference" }],
+      [
+        "an audio file",
+        {
+          "x-upload-filename": "hearing.mp3",
+          "x-upload-content-type": "audio/mpeg",
+        },
+      ],
+      [
+        "a declared type other than text/plain",
+        { "x-upload-content-type": "text/html" },
+      ],
+      ["a .txt declared as audio", { "x-upload-content-type": "audio/mpeg" }],
       ["missing size", { "x-upload-size": undefined }],
       ["non-numeric size", { "x-upload-size": "12abc" }],
     ])("%s", async (_label, headers) => {

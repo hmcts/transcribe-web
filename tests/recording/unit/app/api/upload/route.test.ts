@@ -4,7 +4,8 @@ import { bytesOf, consumeBody, sentMultipart } from "../../../multipart";
 
 // The browser sends the audio as the raw request body, with its metadata in
 // headers: Front Door's WAF (DRS 2.1) blocks multipart/form-data from the
-// browser. This route builds the multipart request to the API itself, inside
+// browser, and raw audio too unless it is sent as exactly
+// application/octet-stream (lib/recording/upload-contract.ts). This route builds the multipart request to the API itself, inside
 // the cluster, streaming the body through. These tests drive it with a real
 // Request and assert on what reaches the backend at the fetch boundary; the
 // fetch mock reads a streamed body as a real fetch would.
@@ -95,7 +96,8 @@ function uploadRequest(
   headers: Record<string, string | undefined> = {}
 ): NextRequest {
   const defaults: Record<string, string> = {
-    "content-type": "audio/wav",
+    "content-type": "application/octet-stream",
+    "x-upload-content-type": "audio/wav",
     "x-upload-filename": "PA_05217_2025.wav",
     "x-upload-size": String(body.length),
   };
@@ -190,7 +192,7 @@ describe("POST /api/upload", () => {
 
     const response = await POST(
       uploadRequest(AUDIO, {
-        "content-type": "audio/mp4",
+        "x-upload-content-type": "audio/mp4",
         "x-upload-filename": encodeURIComponent(name),
       })
     );
@@ -202,17 +204,130 @@ describe("POST /api/upload", () => {
     expect(part.type).toBe("audio/mp4");
   });
 
-  it("falls back to application/octet-stream when no content type is sent", async () => {
+  // The API accepts .mp3 .wav .mp4 .m4a .ogg .flac (_ALLOWED_AUDIO_EXTENSIONS
+  // in transcribe-api's routes_recording.py).
+  it.each([
+    ["hearing.mp3", "audio/mpeg"],
+    ["hearing.wav", "audio/wav"],
+    ["hearing.mp4", "audio/mp4"],
+    ["hearing.m4a", "audio/mp4"],
+    ["hearing.ogg", "audio/ogg"],
+    ["HEARING.FLAC", "audio/flac"],
+  ])("forwards %s as %s when the browser declares no type", async (filename, type) => {
     const { POST } = await import("@/app/api/upload/route");
 
     const response = await POST(
-      uploadRequest(AUDIO, { "content-type": undefined })
+      uploadRequest(AUDIO, {
+        "x-upload-filename": filename,
+        "x-upload-content-type": "",
+      })
     );
 
     expect(response.status).toBe(201);
-    const form = await sentUpload();
-    const part = form.get("file") as File;
-    expect(part.type).toBe("application/octet-stream");
+    const part = (await sentUpload()).get("file") as File;
+    expect(part.name).toBe(filename);
+    expect(part.type).toBe(type);
+  });
+
+  it("treats a declared application/octet-stream as no declared type", async () => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(
+      uploadRequest(AUDIO, {
+        "x-upload-content-type": "application/octet-stream",
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const part = (await sentUpload()).get("file") as File;
+    expect(part.type).toBe("audio/wav");
+  });
+
+  it("relies on the extension when the declared type header is absent", async () => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(
+      uploadRequest(AUDIO, { "x-upload-content-type": undefined })
+    );
+
+    expect(response.status).toBe(201);
+    const part = (await sentUpload()).get("file") as File;
+    expect(part.type).toBe("audio/wav");
+  });
+
+  // What browsers and operating systems really report for these files.
+  it.each([
+    ["hearing.mp3", "audio/mp3", "audio/mp3"],
+    ["hearing.wav", "audio/x-wav", "audio/x-wav"],
+    ["hearing.wav", "audio/wave", "audio/wave"],
+    ["hearing.mp4", "video/mp4", "video/mp4"],
+    ["hearing.m4a", "audio/x-m4a", "audio/x-m4a"],
+    ["hearing.ogg", "audio/ogg; codecs=opus", "audio/ogg"],
+    ["hearing.flac", "audio/x-flac", "audio/x-flac"],
+    ["hearing.wav", "Audio/WAV", "audio/wav"],
+  ])("accepts %s declared as %s, forwarding %s", async (filename, declared, forwarded) => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(
+      uploadRequest(AUDIO, {
+        "x-upload-filename": filename,
+        "x-upload-content-type": declared,
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const part = (await sentUpload()).get("file") as File;
+    expect(part.type).toBe(forwarded);
+  });
+
+  // Front Door's WAF lets a raw upload body through only with exactly this
+  // Content-Type; anything else would be blocked there, so is refused here
+  // too, and the browser's Content-Type is never taken as the file's type.
+  describe("rejects any Content-Type but application/octet-stream with 415, without calling the API", () => {
+    it.each([
+      ["audio/mpeg", "audio/mpeg"],
+      ["audio/wav", "audio/wav"],
+      ["multipart/form-data", "multipart/form-data; boundary=----x"],
+      ["text/plain", "text/plain"],
+      ["with parameters", "application/octet-stream; charset=binary"],
+      ["missing", undefined],
+    ])("%s", async (_label, contentType) => {
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { "content-type": contentType })
+      );
+
+      expect(response.status).toBe(415);
+      expect((await response.json()).error).toEqual(expect.any(String));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("rejects a file type the API does not take with 400, without calling the API", () => {
+    it.each([
+      ["a disallowed extension", "hearing.exe", ""],
+      ["a text file", "notes.txt", "text/plain"],
+      ["no extension", "hearing", "audio/wav"],
+      ["a dotfile name", ".wav", "audio/wav"],
+      ["a disallowed declared type", "hearing.wav", "text/html"],
+      ["a declared type of another audio format", "hearing.wav", "audio/mpeg"],
+      ["an unsupported audio format", "hearing.aac", "audio/aac"],
+      ["a malformed declared type", "hearing.wav", "audio/wav, text/html"],
+    ])("%s", async (_label, filename, declared) => {
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, {
+          "x-upload-filename": filename,
+          "x-upload-content-type": declared,
+        })
+      );
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toEqual(expect.any(String));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
   it("forwards a body over Next's 10 MB proxy limit intact", async () => {

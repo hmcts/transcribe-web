@@ -7,6 +7,10 @@ import { FilterableJobsSection } from "@/components/recording/jobs-table/filtera
 import { readAudioDurationSeconds } from "@/lib/recording/audio-duration";
 import { apiPath } from "@/lib/recording/base-path";
 import type { TranscriptionJob } from "@/lib/recording/types";
+import {
+  rawUploadHeaders,
+  UPLOAD_HEADERS,
+} from "@/lib/recording/upload-contract";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -69,23 +73,19 @@ export default function DashboardPage() {
         // meaningfully delay the upload. Best-effort: undefined simply omits
         // those extras.
         const durationSeconds = await readAudioDurationSeconds(file);
-        // The file goes as the raw request body, never multipart/form-data:
-        // Front Door's WAF (Microsoft_DefaultRuleSet 2.1) fails to parse
-        // multipart audio bodies and blocks them with a 403. The route
-        // handler builds the multipart request to the API inside the
-        // cluster. Metadata travels in headers; the filename is
-        // URL-encoded because header values must be ASCII.
-        const headers: Record<string, string> = {
-          "Content-Type": file.type || "application/octet-stream",
-          "X-Upload-Filename": encodeURIComponent(file.name),
-          "X-Upload-Size": String(file.size),
-        };
-        if (durationSeconds !== undefined) {
-          headers["X-Audio-Duration-Seconds"] = String(durationSeconds);
-        }
+        // The file goes as the raw request body, as exactly
+        // application/octet-stream, never multipart/form-data: the only
+        // shape Front Door's WAF lets through to this path
+        // (lib/recording/upload-contract.ts). The route handler builds the
+        // multipart request to the API inside the cluster.
         const response = await fetch(apiPath("/api/upload"), {
           method: "POST",
-          headers,
+          headers: rawUploadHeaders(
+            file,
+            durationSeconds === undefined
+              ? {}
+              : { [UPLOAD_HEADERS.audioDuration]: String(durationSeconds) }
+          ),
           body: file,
         });
         if (!response.ok) {

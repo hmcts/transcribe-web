@@ -13,6 +13,7 @@ import { TranscriptSegment } from "@/components/recording/transcript/transcript-
 import { apiPath } from "@/lib/recording/base-path";
 import { RECORDING_HOME } from "@/lib/recording/routes";
 import type { TranscriptionJob } from "@/lib/recording/types";
+import { rawUploadHeaders } from "@/lib/recording/upload-contract";
 import { cn } from "@/lib/recording/utils";
 
 const POLL_INTERVAL_MS = 5000;
@@ -225,16 +226,13 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   };
 
   const uploadBaseline = async (file: File) => {
-    // The raw file, not multipart/form-data: Front Door's WAF blocks
-    // multipart bodies. The route handler builds the multipart request to
-    // the API (app/api/jobs/[jobId]/baseline/route.ts).
+    // The raw file, as exactly application/octet-stream, not
+    // multipart/form-data: the only shape Front Door's WAF lets through to
+    // this path (lib/recording/upload-contract.ts). The route handler builds
+    // the multipart request to the API (app/api/jobs/[jobId]/baseline).
     const response = await fetch(apiPath(`/api/jobs/${jobId}/baseline`), {
       method: "POST",
-      headers: {
-        "Content-Type": "text/plain",
-        "X-Upload-Filename": encodeURIComponent(file.name),
-        "X-Upload-Size": String(file.size),
-      },
+      headers: rawUploadHeaders(file),
       body: file,
     });
     if (!response.ok) {

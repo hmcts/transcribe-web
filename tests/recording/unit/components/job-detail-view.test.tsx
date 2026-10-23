@@ -234,8 +234,11 @@ describe("JobDetailView baseline transcript upload", () => {
     expect(url).toBe(`/api/jobs/${job.id}/baseline`);
     expect(init.method).toBe("POST");
     expect(init.body).toBe(file);
+    // Exactly application/octet-stream, as Front Door's WAF exemption for
+    // this path requires; the file's own type goes in X-Upload-Content-Type.
     expect(init.headers).toEqual({
-      "Content-Type": "text/plain",
+      "Content-Type": "application/octet-stream",
+      "X-Upload-Content-Type": "text/plain",
       "X-Upload-Filename": encodeURIComponent(file.name),
       "X-Upload-Size": String(file.size),
     });

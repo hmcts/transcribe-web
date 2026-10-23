@@ -175,8 +175,12 @@ describe("DashboardPage", () => {
       expect(url).toBe("/api/upload");
       expect(init.body).toBe(file);
       expect(init.body).not.toBeInstanceOf(FormData);
+      // Exactly application/octet-stream, no parameters: the only content
+      // type Front Door's WAF exemption for this path lets through. The
+      // file's own type travels in X-Upload-Content-Type instead.
       expect(init.headers).toEqual({
-        "Content-Type": "audio/wav",
+        "Content-Type": "application/octet-stream",
+        "X-Upload-Content-Type": "audio/wav",
         "X-Upload-Filename": encodeURIComponent(name),
         "X-Upload-Size": String(file.size),
         "X-Audio-Duration-Seconds": "9360.5",
@@ -190,8 +194,26 @@ describe("DashboardPage", () => {
       const { init } = await uploadThroughPage(file);
 
       expect(init.headers).toEqual({
-        "Content-Type": "audio/mpeg",
+        "Content-Type": "application/octet-stream",
+        "X-Upload-Content-Type": "audio/mpeg",
         "X-Upload-Filename": "hearing.mp3",
+        "X-Upload-Size": String(file.size),
+      });
+    });
+
+    it("declares the type react-dropzone gives a file the browser has no type for", async () => {
+      // file-selector fills File.type in from the extension (audio/x-flac
+      // here); the route's allowlist (lib/recording/upload-contract.ts) has
+      // to accept what it gives for every audio extension.
+      mockReadAudioDurationSeconds.mockResolvedValue(undefined);
+      const file = new File(["bytes"], "hearing.flac");
+
+      const { init } = await uploadThroughPage(file);
+
+      expect(init.headers).toEqual({
+        "Content-Type": "application/octet-stream",
+        "X-Upload-Content-Type": "audio/x-flac",
+        "X-Upload-Filename": "hearing.flac",
         "X-Upload-Size": String(file.size),
       });
     });
