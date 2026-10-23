@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/recording/ui/button";
+import { RECORDING_HOME } from "@/lib/recording/routes";
 
 export default function NotFound() {
   return (
@@ -9,7 +10,7 @@ export default function NotFound() {
         This job may still be processing or does not exist.
       </p>
       <Button asChild>
-        <Link href="/">Back to dashboard</Link>
+        <Link href={RECORDING_HOME}>Back to dashboard</Link>
       </Button>
     </main>
   );

@@ -181,3 +181,19 @@ describe("JobDetailView sync-highlight toggle", () => {
     });
   });
 });
+
+describe("JobDetailView back link", () => {
+  it.each([
+    ["a completed job", makeJob()],
+    [
+      "a processing job",
+      makeJob({ status: "PROCESSING", segments: undefined }),
+    ],
+    ["a failed job", makeJob({ status: "FAILED", segments: undefined })],
+  ])("returns to the recording list for %s", (_label, job) => {
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    const link = screen.getByRole("link", { name: /back to hearing list/i });
+    // The list is app/recording/page.tsx; "/" is the dictation home page.
+    expect(link.getAttribute("href")).toBe("/recording");
+  });
+});

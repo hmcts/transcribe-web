@@ -62,7 +62,21 @@ describe("JobsTable", () => {
     const completedJob = { ...MOCK_JOBS[0], status: "COMPLETED" as const };
     render(<JobsTable jobs={[completedJob]} />);
     const link = screen.getByRole("link", { name: /view transcript/i });
-    expect(link.getAttribute("href")).toBe(`/jobs/${completedJob.id}`);
+    // The transcript page lives under app/recording/ — a bare /jobs/<id>
+    // has no page and 404s.
+    expect(link.getAttribute("href")).toBe(
+      `/recording/jobs/${completedJob.id}`
+    );
+  });
+
+  it("navigates to the job's transcript page under /recording when a row is clicked", async () => {
+    push.mockClear();
+    const completedJob = { ...MOCK_JOBS[0], status: "COMPLETED" as const };
+    render(<JobsTable jobs={[completedJob]} />);
+
+    await userEvent.click(screen.getByText(completedJob.caseReference));
+
+    expect(push).toHaveBeenCalledWith(`/recording/jobs/${completedJob.id}`);
   });
 
   it("keeps rows queryable by their table row role", () => {

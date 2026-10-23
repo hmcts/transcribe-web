@@ -15,6 +15,7 @@ import {
   hasRunMetadata,
   JobMetadataPopover,
 } from "@/components/recording/jobs-table/job-metadata-popover";
+import { jobPath } from "@/lib/recording/routes";
 import type { JobStatus, TranscriptionJob } from "@/lib/recording/types";
 
 const TRANSCRIPT_LINK_LABEL: Record<JobStatus, string> = {
@@ -133,7 +134,7 @@ export function JobsTable({
               // navigates. Keyboard/assistive-tech users get a real <Link>
               // in the last cell instead (overriding <tr>'s role here would
               // destroy its table-row semantics for the cells within it).
-              onClick={() => router.push(`/jobs/${job.id}`)}
+              onClick={() => router.push(jobPath(job.id))}
               className="hover:bg-muted/30 transition-colors cursor-pointer"
             >
               <td className="px-4 py-3 font-medium">{job.caseReference}</td>
@@ -168,7 +169,7 @@ export function JobsTable({
               </td>
               <td className="px-4 py-3">
                 <Link
-                  href={`/jobs/${job.id}`}
+                  href={jobPath(job.id)}
                   onClick={(e) => e.stopPropagation()}
                   className="text-primary hover:underline font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded"
                 >

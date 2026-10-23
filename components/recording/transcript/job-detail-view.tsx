@@ -11,6 +11,7 @@ import { NeedsReviewPanel } from "@/components/recording/transcript/needs-review
 import { TranscriptAccuracy } from "@/components/recording/transcript/transcript-accuracy";
 import { TranscriptSegment } from "@/components/recording/transcript/transcript-segment";
 import { apiPath } from "@/lib/recording/base-path";
+import { RECORDING_HOME } from "@/lib/recording/routes";
 import type { TranscriptionJob } from "@/lib/recording/types";
 import { cn } from "@/lib/recording/utils";
 
@@ -265,7 +266,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
 
   const backLink = (
     <Link
-      href="/"
+      href={RECORDING_HOME}
       className="inline-flex items-center gap-1 text-sm text-primary hover:underline mb-4"
     >
       <ChevronLeft className="size-4" />
