@@ -19,7 +19,7 @@ test.describe("Low-confidence hover popup", () => {
   test("hovering a low-confidence word explains why it was flagged, and dismisses on mouse-out", async ({
     page,
   }) => {
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
 
     await expect(
       page.getByRole("heading", { name: "Transcript", exact: true })

@@ -19,7 +19,7 @@ test.describe("Audio/transcript sync-highlight toggle", () => {
   test("toggles the sync highlight and persists the choice across reloads", async ({
     page,
   }) => {
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
 
     // The transcript (and therefore the audio player bar) must have rendered.
     await expect(

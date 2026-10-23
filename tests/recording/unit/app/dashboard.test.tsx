@@ -22,9 +22,12 @@ vi.mock("sonner", () => ({
   Toaster: () => null,
 }));
 
-vi.mock("@/lib/recording/base-path", () => ({
-  BASE_PATH: "",
-  apiPath: (path: string) => `http://localhost${path}`,
+const { mockReadAudioDurationSeconds } = vi.hoisted(() => ({
+  mockReadAudioDurationSeconds: vi.fn(),
+}));
+
+vi.mock("@/lib/recording/audio-duration", () => ({
+  readAudioDurationSeconds: mockReadAudioDurationSeconds,
 }));
 
 describe("DashboardPage", () => {
@@ -122,5 +125,75 @@ describe("DashboardPage", () => {
     await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(screen.queryByText("PA/00001/2026")).toBeNull());
+  });
+
+  describe("uploading a recording", () => {
+    // Front Door's WAF (DRS 2.1) blocks multipart/form-data bodies from the
+    // browser, so the file goes as the raw request body with its metadata in
+    // headers; the route handler builds the multipart request in-cluster.
+    async function uploadThroughPage(file: File) {
+      const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
+        if (init?.method === "POST") {
+          return Promise.resolve({
+            ok: true,
+            status: 201,
+            json: () => Promise.resolve({ job: { id: "job-1" } }),
+          });
+        }
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({ jobs: [] }),
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+
+      render(<DashboardPage />);
+      await user.upload(screen.getByLabelText("Audio file input"), file);
+      await user.click(
+        screen.getByRole("button", { name: /upload for transcription/i })
+      );
+
+      await waitFor(() =>
+        expect(
+          fetchMock.mock.calls.some(([, init]) => init?.method === "POST")
+        ).toBe(true)
+      );
+      const [url, init] = fetchMock.mock.calls.find(
+        ([, init]) => init?.method === "POST"
+      ) as [string, RequestInit];
+      return { url, init };
+    }
+
+    it("sends the file as the raw body, not multipart, to /api/upload", async () => {
+      mockReadAudioDurationSeconds.mockResolvedValue(9360.5);
+      const name = "PA_05217_2025 R v O'Brien.wav";
+      const file = new File(["RIFF-audio-bytes"], name, { type: "audio/wav" });
+
+      const { url, init } = await uploadThroughPage(file);
+
+      expect(url).toBe("/api/upload");
+      expect(init.body).toBe(file);
+      expect(init.body).not.toBeInstanceOf(FormData);
+      expect(init.headers).toEqual({
+        "Content-Type": "audio/wav",
+        "X-Upload-Filename": encodeURIComponent(name),
+        "X-Upload-Size": String(file.size),
+        "X-Audio-Duration-Seconds": "9360.5",
+      });
+    });
+
+    it("omits the duration header when the duration can't be read", async () => {
+      mockReadAudioDurationSeconds.mockResolvedValue(undefined);
+      const file = new File(["bytes"], "hearing.mp3", { type: "audio/mpeg" });
+
+      const { init } = await uploadThroughPage(file);
+
+      expect(init.headers).toEqual({
+        "Content-Type": "audio/mpeg",
+        "X-Upload-Filename": "hearing.mp3",
+        "X-Upload-Size": String(file.size),
+      });
+    });
   });
 });

@@ -16,7 +16,7 @@ const REAL_AUDIO_AVAILABLE =
 
 test.describe("Dashboard", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/batch");
+    await page.goto("/recording");
   });
 
   test("page title is correct", async ({ page }) => {
@@ -64,7 +64,7 @@ test.describe("Transcription run metadata popover", () => {
   test("surfaces audio length, transcription time and model on the file name", async ({
     page,
   }) => {
-    await page.goto("/batch");
+    await page.goto("/recording");
 
     // The file name becomes an info trigger only once run metadata exists.
     // Jobs load via a client-side fetch after mount, so wait for the trigger
@@ -98,7 +98,7 @@ test.describe("Transcription run metadata popover", () => {
 
     // Clicking the file name shows metadata rather than navigating to the
     // transcript view.
-    await expect(page).toHaveURL(/\/batch\/?$/);
+    await expect(page).toHaveURL(/\/recording\/?$/);
   });
 
   // DIAAT-243: the Model row must show the server-resolved friendly name, and
@@ -109,7 +109,7 @@ test.describe("Transcription run metadata popover", () => {
   test("shows the friendly model name and never the raw self URL", async ({
     page,
   }) => {
-    await page.goto("/batch");
+    await page.goto("/recording");
 
     const trigger = page
       .getByRole("button", { name: /transcription run details for/i })
@@ -163,7 +163,7 @@ test.describe("Real transcription pipeline", () => {
     test.setTimeout(15 * 60 * 1000); // batch transcription can take a while
 
     const audioPath = REAL_AUDIO_PATH as string;
-    await page.goto("/batch");
+    await page.goto("/recording");
 
     await page.getByLabel("Audio file input").setInputFiles(audioPath);
     const fileName = path.basename(audioPath);
@@ -205,7 +205,7 @@ test.describe("Real transcription pipeline", () => {
     expect(text).toMatch(/view transcript/i);
 
     await row.getByRole("link", { name: /view transcript/i }).click();
-    await expect(page).toHaveURL(/\/batch\/jobs\//);
+    await expect(page).toHaveURL(/\/recording\/jobs\//);
     await expect(page.locator("main")).toContainText(/./); // transcript rendered
   });
 });

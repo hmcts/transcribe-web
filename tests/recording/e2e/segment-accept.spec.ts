@@ -19,7 +19,7 @@ test.describe("Segment accept-all", () => {
   test("accepting a segment clears it from review without editing the text", async ({
     page,
   }) => {
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
 
     // The transcript must have rendered.
     await expect(

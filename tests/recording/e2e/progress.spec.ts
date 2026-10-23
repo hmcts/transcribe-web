@@ -7,7 +7,7 @@ import { expect, test } from "@playwright/test";
 // advance as the live clock ticks.
 //
 // The dashboard fetches its job list client-side from the app's own
-// /batch/api/jobs route (which normally proxies the real backend). We
+// /api/jobs route (which normally proxies the real backend). We
 // intercept that route in the browser and return a fixed PROCESSING job in
 // the frontend's TranscriptionJob shape, so the progress UI can be asserted
 // deterministically without a live backend or a real Azure batch job.
@@ -47,7 +47,7 @@ test.describe("Processing job progress display", () => {
       });
     });
 
-    await page.goto("/batch");
+    await page.goto("/recording");
 
     const row = page.locator("tr", { hasText: "long_hearing.mp3" }).first();
     await expect(row).toBeVisible();

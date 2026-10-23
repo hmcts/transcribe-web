@@ -22,7 +22,7 @@ test.describe("Review panel stays visible while scrolling", () => {
   test("the review panel remains within the viewport after scrolling to the bottom", async ({
     page,
   }) => {
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
 
     // The sidebar only renders once accuracy data is present.
     const panel = page.getByRole("heading", { name: /needs review/i });

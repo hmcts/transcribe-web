@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-// Served under the /batch basePath as GET /batch/api/version. Reports the git
+// Served as GET /api/version (Caddy's @next_api matcher). Reports the git
 // commit SHA baked into the container image at build time (Dockerfile
 // ARG GIT_SHA -> ENV GIT_SHA), read from process.env at request time so the
 // post-deploy version-gated check (DIAAT-241) can confirm the live build.

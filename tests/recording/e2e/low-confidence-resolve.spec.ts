@@ -34,7 +34,7 @@ test.describe("Low-confidence click-to-resolve menu", () => {
       !JOB_ID,
       "Set E2E_RESOLVE_JOB_ID to a job with a low-confidence word that has alternatives"
     );
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
     await expect(
       page.getByRole("heading", { name: "Transcript", exact: true })
     ).toBeVisible();
@@ -69,7 +69,7 @@ test.describe("Low-confidence click-to-resolve menu", () => {
       !JOB_ID,
       "Set E2E_RESOLVE_JOB_ID to a job with a low-confidence word that has alternatives"
     );
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
     await expect(
       page.getByRole("heading", { name: "Transcript", exact: true })
     ).toBeVisible();
@@ -122,7 +122,7 @@ test.describe("Low-confidence click-to-resolve menu", () => {
       !NO_ALT_JOB_ID,
       "Set E2E_RESOLVE_NO_ALT_JOB_ID to a job whose first low-confidence word has no alternatives"
     );
-    await page.goto(`/batch/jobs/${NO_ALT_JOB_ID}`);
+    await page.goto(`/recording/jobs/${NO_ALT_JOB_ID}`);
     await expect(
       page.getByRole("heading", { name: "Transcript", exact: true })
     ).toBeVisible();

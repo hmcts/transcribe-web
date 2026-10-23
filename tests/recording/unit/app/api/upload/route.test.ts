@@ -1,32 +1,98 @@
 import type { NextRequest } from "next/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockUploadAndSubmit } = vi.hoisted(() => ({
-  mockUploadAndSubmit: vi.fn(),
-}));
+// The browser sends the audio as the raw request body, with its metadata in
+// headers: Front Door's WAF (DRS 2.1) blocks multipart/form-data from the
+// browser. This route builds the multipart request to the API itself, inside
+// the cluster. These tests drive it with a real Request and assert on what
+// reaches the backend at the fetch boundary.
 
-vi.mock("@/lib/recording/api-client", () => ({
-  uploadAndSubmit: mockUploadAndSubmit,
-}));
+const BACKEND = "http://localhost:8001";
+const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
 
-// jsdom's FormData/File brand checks are unreliable in this test
-// environment, so stub Request.formData() directly rather than round-
-// tripping a real multipart body through the DOM FormData/File classes.
-function requestWithFile(
-  file: Blob | null,
-  durationSeconds?: string,
-  extraHeaders: Record<string, string> = {}
-) {
-  const fields: Record<string, unknown> = { file };
-  if (durationSeconds !== undefined) {
-    fields.audio_duration_seconds = durationSeconds;
-  }
+const BACKEND_JOB = {
+  job_id: "11111111-1111-1111-1111-111111111111",
+  status: "pending",
+  created_at: "2026-10-23T09:00:00Z",
+  updated_at: null,
+  dialogue_entries: null,
+  accuracy: null,
+  needs_review: null,
+  error_message: null,
+  metadata: {
+    case_reference: "PA/05217/2025",
+    audio_file_name: "PA_05217_2025.wav",
+  },
+  audio_duration_seconds: 9360.5,
+  transcription_duration_seconds: null,
+  model_identifier: null,
+  model_display_name: null,
+};
+
+function jsonResponse(body: unknown, status = 200) {
   return {
-    headers: new Headers(extraHeaders),
-    formData: async () => ({
-      get: (key: string) => fields[key] ?? null,
-    }),
-  } as unknown as NextRequest;
+    ok: status >= 200 && status < 300,
+    status,
+    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(JSON.stringify(body)),
+  };
+}
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
+function backendOk() {
+  fetchMock = vi.fn((url: string) => {
+    if (url === `${BACKEND}/api/v1/uploads`) {
+      return Promise.resolve(
+        jsonResponse(
+          {
+            audio_url: "https://storage.example.com/uploads/u/x.wav",
+            blob_name: "uploads/u/x.wav",
+          },
+          201
+        )
+      );
+    }
+    if (url === `${BACKEND}/api/v1/jobs`) {
+      return Promise.resolve(jsonResponse(BACKEND_JOB, 201));
+    }
+    return Promise.reject(new Error(`unexpected fetch ${url}`));
+  });
+  vi.stubGlobal("fetch", fetchMock);
+}
+
+function uploadsCall() {
+  return fetchMock.mock.calls.find(
+    ([url]) => url === `${BACKEND}/api/v1/uploads`
+  ) as [string, RequestInit] | undefined;
+}
+
+function jobsCall() {
+  return fetchMock.mock.calls.find(
+    ([url]) => url === `${BACKEND}/api/v1/jobs`
+  ) as [string, RequestInit] | undefined;
+}
+
+const AUDIO = new TextEncoder().encode("RIFF....WAVEfmt fake audio bytes");
+
+function uploadRequest(
+  body: Uint8Array<ArrayBuffer>,
+  headers: Record<string, string | undefined> = {}
+): NextRequest {
+  const defaults: Record<string, string> = {
+    "content-type": "audio/wav",
+    "x-upload-filename": "PA_05217_2025.wav",
+    "x-upload-size": String(body.length),
+  };
+  const merged = new Headers();
+  for (const [k, v] of Object.entries({ ...defaults, ...headers })) {
+    if (v !== undefined) merged.set(k, v);
+  }
+  return new Request("http://localhost/api/upload", {
+    method: "POST",
+    body,
+    headers: merged,
+  }) as unknown as NextRequest;
 }
 
 async function seedSession(id: string, idToken: string) {
@@ -44,160 +110,246 @@ async function seedSession(id: string, idToken: string) {
   });
 }
 
-function audioBlob() {
-  return new Blob(["bytes"], { type: "audio/wav" });
+// Plain arrays: jsdom and Node each have their own Uint8Array, and toEqual
+// treats the two realms' instances as different even with equal bytes.
+async function bytesOf(blob: Blob): Promise<number[]> {
+  return Array.from(new Uint8Array(await blob.arrayBuffer()));
 }
 
 describe("POST /api/upload", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    backendOk();
+  });
+
   afterEach(() => {
+    vi.unstubAllGlobals();
     vi.unstubAllEnvs();
   });
-  it("uploads and submits the file, returning the created job", async () => {
-    mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
-    const { POST } = await import("@/app/api/upload/route");
 
-    const response = await POST(requestWithFile(audioBlob()));
-    const body = await response.json();
-
-    expect(response.status).toBe(201);
-    expect(body.job).toEqual({ id: "job-1", status: "PENDING" });
-    expect(mockUploadAndSubmit).toHaveBeenCalledWith(
-      expect.any(Blob),
-      "audio",
-      undefined,
-      { bearerToken: null }
-    );
-  });
-
-  it("forwards a parsed audio duration to uploadAndSubmit", async () => {
-    mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
-    const { POST } = await import("@/app/api/upload/route");
-
-    await POST(requestWithFile(audioBlob(), "9360.5"));
-
-    expect(mockUploadAndSubmit).toHaveBeenCalledWith(
-      expect.any(Blob),
-      "audio",
-      9360.5,
-      { bearerToken: null }
-    );
-  });
-
-  it("omits the duration when it is not a positive number", async () => {
-    mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
-    const { POST } = await import("@/app/api/upload/route");
-
-    await POST(requestWithFile(audioBlob(), "not-a-number"));
-
-    expect(mockUploadAndSubmit).toHaveBeenCalledWith(
-      expect.any(Blob),
-      "audio",
-      undefined,
-      { bearerToken: null }
-    );
-  });
-
-  it("rejects partially-numeric values rather than truncating them", async () => {
-    mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
-    const { POST } = await import("@/app/api/upload/route");
-
-    // parseFloat would have accepted "123abc" as 123; Number() rejects it.
-    await POST(requestWithFile(audioBlob(), "123abc"));
-
-    expect(mockUploadAndSubmit).toHaveBeenCalledWith(
-      expect.any(Blob),
-      "audio",
-      undefined,
-      { bearerToken: null }
-    );
-  });
-
-  it("sends the session's token to uploadAndSubmit", async () => {
+  it("sends the raw body to the API as the multipart `file` part, then submits the job", async () => {
     await seedSession("sess-up", "user-id-token");
-    mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
     const { POST } = await import("@/app/api/upload/route");
 
-    await POST(
-      requestWithFile(audioBlob(), undefined, {
+    const response = await POST(
+      uploadRequest(AUDIO, {
         cookie: "transcribe_session=sess-up",
+        "x-audio-duration-seconds": "9360.5",
       })
     );
 
-    expect(mockUploadAndSubmit).toHaveBeenCalledWith(
-      expect.any(Blob),
-      "audio",
-      undefined,
-      { bearerToken: "user-id-token" }
+    expect(response.status).toBe(201);
+    const body = await response.json();
+    expect(body.job.id).toBe(BACKEND_JOB.job_id);
+    expect(body.job.caseReference).toBe("PA/05217/2025");
+
+    const upload = uploadsCall();
+    expect(upload).toBeDefined();
+    const [, uploadInit] = upload as [string, RequestInit];
+    expect(uploadInit.method).toBe("POST");
+    expect((uploadInit.headers as Record<string, string>).Authorization).toBe(
+      "Bearer user-id-token"
     );
+    expect(uploadInit.body).toBeInstanceOf(FormData);
+    const form = uploadInit.body as FormData;
+    expect([...form.keys()]).toEqual(["file"]);
+    const part = form.get("file") as File;
+    expect(part.name).toBe("PA_05217_2025.wav");
+    expect(part.type).toBe("audio/wav");
+    expect(await bytesOf(part)).toEqual(Array.from(AUDIO));
+
+    const jobs = jobsCall();
+    expect(jobs).toBeDefined();
+    const [, jobsInit] = jobs as [string, RequestInit];
+    expect((jobsInit.headers as Record<string, string>).Authorization).toBe(
+      "Bearer user-id-token"
+    );
+    expect(JSON.parse(jobsInit.body as string)).toEqual({
+      audio_url: "https://storage.example.com/uploads/u/x.wav",
+      blob_name: "uploads/u/x.wav",
+      audio_duration_seconds: 9360.5,
+      metadata: {
+        case_reference: "PA/05217/2025",
+        tribunal: "First-tier Tribunal — Immigration and Asylum Chamber",
+        audio_file_name: "PA_05217_2025.wav",
+      },
+    });
   });
 
-  it("ignores forged Easy Auth headers", async () => {
-    mockUploadAndSubmit.mockResolvedValue({ id: "job-1", status: "PENDING" });
+  it("decodes a URL-encoded filename", async () => {
+    const { POST } = await import("@/app/api/upload/route");
+    const name = "R v Smith & O'Brien – day 2.m4a";
+
+    const response = await POST(
+      uploadRequest(AUDIO, {
+        "content-type": "audio/mp4",
+        "x-upload-filename": encodeURIComponent(name),
+      })
+    );
+
+    expect(response.status).toBe(201);
+    const part = (uploadsCall()?.[1].body as FormData).get("file") as File;
+    expect(part.name).toBe(name);
+    expect(part.type).toBe("audio/mp4");
+  });
+
+  it("falls back to application/octet-stream when no content type is sent", async () => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(
+      uploadRequest(AUDIO, { "content-type": undefined })
+    );
+
+    expect(response.status).toBe(201);
+    const part = (uploadsCall()?.[1].body as FormData).get("file") as File;
+    expect(part.type).toBe("application/octet-stream");
+  });
+
+  it.each([
+    ["not a number", "not-a-number"],
+    ["partially numeric", "123abc"],
+    ["negative", "-5"],
+    ["zero", "0"],
+    ["empty", ""],
+  ])("omits a %s duration rather than rejecting the upload", async (_l, v) => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(
+      uploadRequest(AUDIO, { "x-audio-duration-seconds": v })
+    );
+
+    expect(response.status).toBe(201);
+    const sent = JSON.parse(jobsCall()?.[1].body as string);
+    expect(sent).not.toHaveProperty("audio_duration_seconds");
+  });
+
+  it("sends no Authorization header without a session, ignoring forged Easy Auth headers", async () => {
     const { POST } = await import("@/app/api/upload/route");
 
     await POST(
-      requestWithFile(audioBlob(), undefined, {
+      uploadRequest(AUDIO, {
+        authorization: "Bearer attacker-token",
         "x-ms-token-aad-access-token": "attacker-token",
         "x-ms-client-principal": "base64principal",
       })
     );
 
-    expect(mockUploadAndSubmit).toHaveBeenCalledWith(
-      expect.any(Blob),
-      "audio",
-      undefined,
-      { bearerToken: null }
-    );
+    const headers = uploadsCall()?.[1].headers as Record<string, string>;
+    expect(headers.Authorization).toBeUndefined();
+    expect(headers.authorization).toBeUndefined();
   });
 
-  it("returns 400 when no file is provided", async () => {
-    const { POST } = await import("@/app/api/upload/route");
-    const response = await POST(requestWithFile(null));
-    expect(response.status).toBe(400);
+  describe("rejects bad metadata with 400 without calling the API", () => {
+    it.each([
+      ["missing filename", { "x-upload-filename": undefined }],
+      ["blank filename", { "x-upload-filename": "%20%20" }],
+      [
+        "malformed percent-encoding",
+        { "x-upload-filename": "bad%E0%A4%A.wav" },
+      ],
+      ["a path separator", { "x-upload-filename": "..%2Fetc%2Fpasswd.wav" }],
+      ["a backslash", { "x-upload-filename": "C%3A%5Ca.wav" }],
+      ["a control character", { "x-upload-filename": "a%0Ab.wav" }],
+      [
+        "an over-long filename",
+        { "x-upload-filename": `${"a".repeat(252)}.wav` },
+      ],
+      ["missing size", { "x-upload-size": undefined }],
+      ["non-integer size", { "x-upload-size": "12.5" }],
+      ["non-numeric size", { "x-upload-size": "12abc" }],
+    ])("%s", async (_label, headers) => {
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO, headers));
+
+      expect(response.status).toBe(400);
+      expect((await response.json()).error).toEqual(expect.any(String));
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("an empty body", async () => {
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(new Uint8Array(0)));
+
+      expect(response.status).toBe(400);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
-  it("returns 502 when the backend call fails", async () => {
-    mockUploadAndSubmit.mockRejectedValue(new Error("backend down"));
-    const { POST } = await import("@/app/api/upload/route");
+  describe("rejects oversized or truncated bodies with 413 without calling the API", () => {
+    it("a declared size over the limit", async () => {
+      const { POST } = await import("@/app/api/upload/route");
 
-    const response = await POST(requestWithFile(audioBlob()));
+      const response = await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(MAX_UPLOAD_BYTES + 1) })
+      );
 
-    expect(response.status).toBe(502);
+      expect(response.status).toBe(413);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("a body longer than its declared size", async () => {
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(AUDIO.length - 1) })
+      );
+
+      expect(response.status).toBe(413);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("a body shorter than its declared size (truncated on the way in)", async () => {
+      // Next.js cuts request bodies off at experimental.proxyClientMaxBodySize
+      // when the proxy runs. A truncated raw body would otherwise be stored
+      // as a silently shortened recording.
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(AUDIO.length + 100) })
+      );
+
+      expect(response.status).toBe(413);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
   });
 
-  it("returns 413 when the request body is truncated or unparseable", async () => {
-    // Next.js truncates bodies larger than experimental.proxyClientMaxBodySize,
-    // which corrupts the multipart payload and makes formData() throw. The route
-    // must surface a clear 413 rather than an opaque 500, and must not call the
-    // backend.
-    const { POST } = await import("@/app/api/upload/route");
+  describe("maps upstream failures to 502", () => {
+    it("when the upload is rejected", async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse({ detail: "boom" }, 500))
+      );
+      const { POST } = await import("@/app/api/upload/route");
 
-    const request = {
-      headers: { get: () => null },
-      formData: async () => {
-        throw new TypeError("Failed to parse body as FormData.");
-      },
-    } as unknown as NextRequest;
+      const response = await POST(uploadRequest(AUDIO));
 
-    const response = await POST(request);
+      expect(response.status).toBe(502);
+      expect(jobsCall()).toBeUndefined();
+    });
 
-    expect(response.status).toBe(413);
-    expect(mockUploadAndSubmit).not.toHaveBeenCalled();
-  });
+    it("when the job submission is rejected", async () => {
+      fetchMock.mockImplementation((url: string) =>
+        Promise.resolve(
+          url === `${BACKEND}/api/v1/uploads`
+            ? jsonResponse({ audio_url: "u", blob_name: "b" }, 201)
+            : jsonResponse({ detail: "boom" }, 503)
+        )
+      );
+      const { POST } = await import("@/app/api/upload/route");
 
-  it("rethrows unexpected body errors instead of masking them as 413", async () => {
-    // Only the known FormData truncation/boundary error should become a 413;
-    // an unexpected runtime error must surface as a real 500.
-    const { POST } = await import("@/app/api/upload/route");
+      const response = await POST(uploadRequest(AUDIO));
 
-    const request = {
-      headers: { get: () => null },
-      formData: async () => {
-        throw new Error("unexpected runtime failure");
-      },
-    } as unknown as NextRequest;
+      expect(response.status).toBe(502);
+    });
 
-    await expect(POST(request)).rejects.toThrow("unexpected runtime failure");
-    expect(mockUploadAndSubmit).not.toHaveBeenCalled();
+    it("when the API is unreachable", async () => {
+      fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(502);
+    });
   });
 });

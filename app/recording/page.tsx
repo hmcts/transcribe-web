@@ -69,14 +69,24 @@ export default function DashboardPage() {
         // meaningfully delay the upload. Best-effort: undefined simply omits
         // those extras.
         const durationSeconds = await readAudioDurationSeconds(file);
-        const formData = new FormData();
-        formData.append("file", file);
+        // The file goes as the raw request body, never multipart/form-data:
+        // Front Door's WAF (Microsoft_DefaultRuleSet 2.1) fails to parse
+        // multipart audio bodies and blocks them with a 403. The route
+        // handler builds the multipart request to the API inside the
+        // cluster. Metadata travels in headers; the filename is
+        // URL-encoded because header values must be ASCII.
+        const headers: Record<string, string> = {
+          "Content-Type": file.type || "application/octet-stream",
+          "X-Upload-Filename": encodeURIComponent(file.name),
+          "X-Upload-Size": String(file.size),
+        };
         if (durationSeconds !== undefined) {
-          formData.append("audio_duration_seconds", String(durationSeconds));
+          headers["X-Audio-Duration-Seconds"] = String(durationSeconds);
         }
         const response = await fetch(apiPath("/api/upload"), {
           method: "POST",
-          body: formData,
+          headers,
+          body: file,
         });
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));

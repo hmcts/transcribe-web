@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-describe("GET /batch/api/version", () => {
+describe("GET /api/version", () => {
   const original = process.env.GIT_SHA;
 
   beforeEach(() => {

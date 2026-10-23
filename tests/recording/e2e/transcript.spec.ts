@@ -17,7 +17,7 @@ test.describe("Transcript page — known job", () => {
   );
 
   test.beforeEach(async ({ page }) => {
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
   });
 
   test("shows a heading with the job's case reference", async ({ page }) => {
@@ -40,7 +40,7 @@ test.describe("Transcript page — known job", () => {
 
   test("back link returns to dashboard", async ({ page }) => {
     await page.getByRole("link", { name: /back to hearing list/i }).click();
-    await expect(page).toHaveURL("/batch");
+    await expect(page).toHaveURL("/recording");
   });
 
   test("audio player controls are visible", async ({ page }) => {
@@ -50,7 +50,7 @@ test.describe("Transcript page — known job", () => {
 
 test.describe("Transcript page — error states", () => {
   test("unknown job id shows 404 page", async ({ page }) => {
-    await page.goto("/batch/jobs/does-not-exist");
+    await page.goto("/recording/jobs/does-not-exist");
     await expect(page.getByText(/transcript not found/i)).toBeVisible();
   });
 });

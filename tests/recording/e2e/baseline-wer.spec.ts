@@ -18,7 +18,7 @@ test.describe("Baseline transcript WER", () => {
   test("upload a baseline transcript and see the baseline WER appear", async ({
     page,
   }) => {
-    await page.goto(`/batch/jobs/${BASELINE_JOB_ID}`);
+    await page.goto(`/recording/jobs/${BASELINE_JOB_ID}`);
 
     // The accuracy panel is present and, before any baseline is uploaded,
     // offers the upload action and shows no baseline WER.

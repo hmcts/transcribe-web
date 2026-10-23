@@ -42,7 +42,7 @@ test.describe("Audio skip controls (-10s / +10s)", () => {
   test("skips back and forward by 10s, clamps at bounds, and keeps playing", async ({
     page,
   }) => {
-    await page.goto("/batch");
+    await page.goto("/recording");
 
     // The dashboard fetches jobs client-side, so wait for the list to
     // settle before deciding whether a completed job exists. Skip cleanly
@@ -61,7 +61,7 @@ test.describe("Audio skip controls (-10s / +10s)", () => {
     );
 
     await viewLink.click();
-    await expect(page).toHaveURL(/\/batch\/jobs\//);
+    await expect(page).toHaveURL(/\/recording\/jobs\//);
 
     const back = page.getByRole("button", { name: /skip back 10 seconds/i });
     const forward = page.getByRole("button", {

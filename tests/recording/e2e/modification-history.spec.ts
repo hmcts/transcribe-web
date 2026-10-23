@@ -18,7 +18,7 @@ test.describe("Modification history table", () => {
   test("lists every modification action across the transcript in one table", async ({
     page,
   }) => {
-    await page.goto(`/batch/jobs/${JOB_ID}`);
+    await page.goto(`/recording/jobs/${JOB_ID}`);
 
     // The transcript must have rendered.
     await expect(
