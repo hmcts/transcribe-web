@@ -18,6 +18,7 @@ import {
   defaultFormValues,
   dictationFormSchema,
 } from "@/components/audio/dictation/formData";
+import RecordAlertBanner from "@/components/audio/recording/record-alert-banner";
 import submitHearingToast from "@/components/notifications/submitting-hearing";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -31,9 +32,12 @@ import {
 } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useNoSpeechWatchdog } from "@/hooks/use-no-speech-watchdog";
 import { useRealtimeTranscription } from "@/hooks/use-realtime-transcription";
 import { getAuthToken } from "@/lib/auth-utils";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
+import { describeSpeechAlert } from "@/lib/speech-alerts";
+import { isCapturingSpeech } from "@/lib/speech-session-health";
 import cn, { getJudgeNameFromEmail } from "@/lib/utils";
 import { useUserSettings } from "@/providers/user-settings";
 import TranscriptEditor from "./transcript-editor";
@@ -118,13 +122,20 @@ export default function LiveDictation({
   embedded = false,
   onTranscriptChange,
   initialSectionedTranscript,
+  onSpeechSessionChange,
 }: SpeechDemoProps) {
   const router = useRouter();
   const { user } = useUserSettings();
-  const { status, segments, error, connect, disconnect } =
+  const { segments, error, session, connect, disconnect } =
     useRealtimeTranscription();
-  const isProcessing = status === "connecting";
-  const isListening = status === "connected";
+  // `isListening` drives every "we are recording you" affordance, so it is
+  // derived from session health rather than from the raw SDK connection state.
+  // A session in a reconnect loop reports `connected` between every collapse
+  // (DIAAT-297) and must never be allowed to present as recording.
+  const isCapturing = isCapturingSpeech(session.health);
+  const isListening = isCapturing;
+  /** The user has asked for a session, whatever state it is actually in. */
+  const isSessionRequested = session.health !== "idle";
   const defaultSpeakerName = useMemo(() => {
     const judgeName = user?.email ? getJudgeNameFromEmail(user.email) : "";
     return judgeName ? `Judge ${judgeName}` : DEFAULT_SPEAKER_NAME;
@@ -164,7 +175,7 @@ export default function LiveDictation({
   const processedFinalSegmentIdsRef = useRef<Set<string>>(new Set());
   // Lock each segment to the section where its interim speech started.
   const segmentSectionMapRef = useRef<Record<string, TranscriptSection>>({});
-  const previousStatusRef = useRef(status);
+  const previousIsCapturingRef = useRef(false);
   const shouldRenderHeader = Boolean(onExit || headerSubtitle);
 
   // Keep the ref in sync with state
@@ -190,7 +201,11 @@ export default function LiveDictation({
   }, []);
 
   const startContinuousRecognition = useCallback(() => {
-    if (isListening || isProcessing) return;
+    // The hook owns reconnection once a session exists. Anything other than
+    // "idle" means it is already connecting, connected, or retrying, and
+    // starting again from here would race it â€” that render-effect restart loop
+    // is what produced 37 sessions in 44 minutes (DIAAT-297).
+    if (isSessionRequested) return;
     speakerLabelMapRef.current = {};
     sessionSpeakerNameRef.current = defaultSpeakerName;
     messageStartSectionRef.current = null;
@@ -206,7 +221,7 @@ export default function LiveDictation({
           : "Failed to start transcription."
       );
     });
-  }, [connect, defaultSpeakerName, isListening, isProcessing]);
+  }, [connect, defaultSpeakerName, isSessionRequested]);
 
   const stopContinuousRecognition = useCallback(() => {
     messageStartSectionRef.current = null;
@@ -221,10 +236,90 @@ export default function LiveDictation({
     };
   }, [disconnect]);
 
+  // DIAAT-297: `error` used to be surfaced here with `toast.error(error)`. A
+  // toast auto-dismisses, so a judge speaking to a courtroom never saw it, and
+  // a collapsing session re-raised the same string until it was deduplicated
+  // into invisibility. The error is now logged for diagnostics and reported
+  // through the persistent banner below instead.
   useEffect(() => {
     if (!error) return;
-    toast.error(error);
+    console.error("[speech] session error:", error);
   }, [error]);
+
+  const totalTranscriptEntries =
+    sectionedTranscript.background.length +
+    sectionedTranscript.evidence.length +
+    sectionedTranscript.facts.length;
+  const entriesAtSessionStartRef = useRef<number | null>(null);
+  const [hasCapturedSpeech, setHasCapturedSpeech] = useState(false);
+
+  // "Captured anything" is measured from the point recording started, not from
+  // an empty transcript â€” otherwise a restored draft would mask a dead session
+  // and the no-speech watchdog would never arm.
+  useEffect(() => {
+    if (!isSessionRequested) {
+      entriesAtSessionStartRef.current = null;
+      setHasCapturedSpeech(false);
+      return;
+    }
+    if (entriesAtSessionStartRef.current === null) {
+      entriesAtSessionStartRef.current = totalTranscriptEntries;
+    }
+    if (totalTranscriptEntries > entriesAtSessionStartRef.current) {
+      setHasCapturedSpeech(true);
+    }
+  }, [isSessionRequested, totalTranscriptEntries]);
+
+  const { shouldWarn: noSpeechWarning, thresholdMs: noSpeechThresholdMs } =
+    useNoSpeechWatchdog({
+      active: isSessionRequested,
+      hasCapturedSpeech,
+    });
+
+  const [resumedNoticeDismissed, setResumedNoticeDismissed] = useState(false);
+  useEffect(() => {
+    if (!isSessionRequested) setResumedNoticeDismissed(false);
+  }, [isSessionRequested]);
+  const dismissAlert = useCallback(() => setResumedNoticeDismissed(true), []);
+
+  const speechAlert = useMemo(() => {
+    const alert = describeSpeechAlert({
+      health: session.health,
+      totalCollapses: session.totalCollapses,
+      hasCapturedSpeech,
+      noSpeechWarning,
+      noSpeechThresholdSeconds: Math.round(noSpeechThresholdMs / 1000),
+    });
+    if (alert?.kind === "speech-interrupted" && resumedNoticeDismissed) {
+      return null;
+    }
+    return alert;
+  }, [
+    session.health,
+    session.totalCollapses,
+    hasCapturedSpeech,
+    noSpeechWarning,
+    noSpeechThresholdMs,
+    resumedNoticeDismissed,
+  ]);
+
+  // Detection lives here, in the one component that owns both the SDK session
+  // and the transcript. An embedder gets the finished verdict rather than
+  // re-deriving it â€” running the watchdog twice would double-report it.
+  useEffect(() => {
+    onSpeechSessionChange?.({
+      session,
+      alert: speechAlert,
+      isCapturing,
+      dismissAlert,
+    });
+  }, [onSpeechSessionChange, session, speechAlert, isCapturing, dismissAlert]);
+
+  // When an embedder is listening it renders the banner itself, in a location
+  // where it cannot be scrolled out of view.
+  const speechAlertBanner = onSpeechSessionChange ? null : (
+    <RecordAlertBanner alert={speechAlert} onDismiss={dismissAlert} />
+  );
 
   useEffect(() => {
     if (segments.length === 0) return;
@@ -287,17 +382,18 @@ export default function LiveDictation({
     }
   }, [segments, mapSpeakerLabel]);
 
+  // Drop the in-flight interim line as soon as capture stops for any reason.
+  // Keyed on capture rather than on the raw connection status so a collapsed
+  // session does not leave a half-spoken sentence on screen looking live.
   useEffect(() => {
-    const previousStatus = previousStatusRef.current;
-
-    if (previousStatus === "connected" && status === "disconnected") {
+    if (previousIsCapturingRef.current && !isCapturing) {
       setInterimText("");
       messageStartSectionRef.current = null;
       setInterimTargetSection(null);
     }
 
-    previousStatusRef.current = status;
-  }, [status]);
+    previousIsCapturingRef.current = isCapturing;
+  }, [isCapturing]);
 
   const handleTranscriptUpdate = useCallback(
     (updatedTranscript: SectionedTranscript) => {
@@ -421,17 +517,15 @@ export default function LiveDictation({
       return;
     }
 
-    if (isProcessing && !isListening) {
-      return;
-    }
-    if (isListening) {
+    // Pause must stay available while a session is unhealthy â€” that is exactly
+    // when the user most needs to stop it.
+    if (isSessionRequested) {
       stopContinuousRecognition();
     } else {
       startContinuousRecognition();
     }
   }, [
-    isListening,
-    isProcessing,
+    isSessionRequested,
     onToggleRecording,
     startContinuousRecognition,
     stopContinuousRecognition,
@@ -440,17 +534,16 @@ export default function LiveDictation({
   useEffect(() => {
     if (recordingActive === undefined) return;
 
-    if (recordingActive && !isListening && !isProcessing) {
+    if (recordingActive && !isSessionRequested) {
       startContinuousRecognition();
       return;
     }
 
-    if (!recordingActive && (isListening || isProcessing)) {
+    if (!recordingActive && isSessionRequested) {
       stopContinuousRecognition();
     }
   }, [
-    isListening,
-    isProcessing,
+    isSessionRequested,
     recordingActive,
     startContinuousRecognition,
     stopContinuousRecognition,
@@ -464,6 +557,7 @@ export default function LiveDictation({
     return (
       <div className={cn("min-h-0 w-full", className)}>
         <div className="flex h-full min-h-0 w-full flex-col overflow-hidden">
+          {speechAlertBanner}
           <div className={`min-h-0 flex-1 ${transcriptSectionPadding}`}>
             <TranscriptEditor
               sectionedTranscript={sectionedTranscript}
@@ -516,6 +610,11 @@ export default function LiveDictation({
         {/* Main Content - Transcript */}
         <main className="relative h-full min-w-0 flex-1 bg-white dark:bg-neutral-950">
           <div className="flex h-full w-full min-w-0 flex-col overflow-hidden px-4 py-6 sm:px-6">
+            {speechAlertBanner && (
+              <div className="-mx-4 -mt-6 mb-4 sm:-mx-6">
+                {speechAlertBanner}
+              </div>
+            )}
             <div className="flex-1 overflow-y-auto mb-2">
               <div className={`h-full ${transcriptSectionPadding}`}>
                 <TranscriptEditor
@@ -585,20 +684,23 @@ export default function LiveDictation({
                     {/* Start/Pause button */}
                     <Button
                       onClick={handleMicButtonClick}
-                      disabled={isProcessing && !isListening}
+                      // Only the very first connect blocks the control. Pause
+                      // must stay reachable while a session is unhealthy â€”
+                      // that is when the user most needs to stop it.
+                      disabled={session.health === "starting"}
                       variant="outline"
                       size="lg"
                       className="w-min shrink-0 border-neutral-200 bg-white hover:bg-neutral-100 hover:border-neutral-200 dark:border-neutral-700 dark:bg-neutral-700 dark:hover:border-neutral-900 dark:hover:bg-neutral-900 [&>svg]:text-neutral-900 dark:[&>svg]:text-neutral-100"
                     >
-                      {isListening ? (
+                      {isSessionRequested ? (
                         <Pause className="size-4" />
                       ) : (
                         <Play className="size-4" />
                       )}
                       <span className="text-sm font-semibold text-neutral-800 dark:text-neutral-200">
-                        {isProcessing && !isListening
+                        {session.health === "starting"
                           ? "Preparing..."
-                          : isListening
+                          : isSessionRequested
                             ? "Pause recording"
                             : "Start recording"}
                       </span>

@@ -100,6 +100,58 @@ type EventPropertiesMap = {
     action: "start" | "pause";
     mode: string;
   };
+  // Speech SDK session lifecycle (DIAAT-297). Emitted for every session so a
+  // reconnect loop shows up directly instead of being inferred from the
+  // frequency of backend get-speech-token calls.
+  speech_session_started: {
+    session_index: number;
+    reconnect_attempt: number;
+  };
+  speech_session_stopped: {
+    session_index: number;
+    duration_ms: number;
+    segments_captured: number;
+    user_initiated: boolean;
+  };
+  speech_session_canceled: {
+    session_index: number;
+    reason: string;
+    error_code: string | null;
+    error_details: string | null;
+    collapses_in_window: number;
+  };
+  speech_session_unhealthy: {
+    collapses_in_window: number;
+    window_seconds: number;
+    last_reason: string | null;
+    last_error_code: string | null;
+  };
+  speech_no_content_warning_shown: {
+    elapsed_seconds: number;
+  };
+  // Live-draft autosave (DIAAT-296). The incident was only reconstructible by
+  // inference from a gap in the backend logs, because a write that never
+  // reaches the server leaves no trace at all. These make the gap explicit.
+  live_draft_save_failed: {
+    failure_kind: "network" | "auth" | "server";
+    status: number | null;
+    consecutive_failures: number;
+    seconds_since_last_save: number | null;
+    trigger: "interval" | "pause" | "late-finalisation" | "retry";
+  };
+  live_draft_autosave_stalled: {
+    failure_kind: "network" | "auth" | "server";
+    consecutive_failures: number;
+    seconds_since_last_save: number | null;
+  };
+  live_draft_save_recovered: {
+    failures_before_recovery: number;
+    outage_seconds: number;
+  };
+  live_draft_restore_failed: {
+    failure_kind: "network" | "auth" | "server";
+    status: number | null;
+  };
   file_upload_selected: {
     file_type: string;
     file_size_bytes: number;

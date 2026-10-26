@@ -13,6 +13,8 @@ import {
 import { toast } from "sonner";
 import AnimatedMicrophone from "@/components/audio/animated-microphone";
 import { SpeechDemo } from "@/components/audio/dictation";
+import RecordAlertBanner from "@/components/audio/recording/record-alert-banner";
+import RecordStatusRow from "@/components/audio/recording/record-status-row";
 import DictationForm from "@/components/audio/dictation/dictation-form";
 import {
   type DictationFormValues,
@@ -22,6 +24,7 @@ import {
 import {
   SECTION_CONFIG,
   type SectionedTranscript,
+  type SpeechSessionReport,
   type TranscriptSection,
 } from "@/components/audio/dictation/types";
 import SimpleEditor from "@/components/editor/tiptap-editor";
@@ -29,9 +32,18 @@ import submitHearingToast from "@/components/notifications/submitting-hearing";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
+import { useLiveDraftAutosave } from "@/hooks/use-live-draft-autosave";
 import { track } from "@/lib/analytics";
+import {
+  describeAutosaveAlert,
+  describeDraftExpiryAlert,
+  describeDraftRestoreAlert,
+  describeSaveStatus,
+} from "@/lib/autosave-alerts";
 import { getAuthToken } from "@/lib/auth-utils";
-import { deleteLiveDraft, getLiveDraft, putLiveDraft } from "@/lib/live-draft-api";
+import { deleteLiveDraft, getLiveDraft } from "@/lib/live-draft-api";
+import { LiveDraftError, liveDraftFailureKind } from "@/lib/live-draft-errors";
+import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { fetchUserDocumentContent } from "@/lib/document-content-api";
 import {
   type DocumentContent,
@@ -40,6 +52,11 @@ import {
   normalizeOptionalEditorText,
   submissionErrorResponseSchema,
 } from "@/lib/editor-contracts";
+import {
+  type RecordAlert,
+  selectMostSevereAlert,
+} from "@/lib/record-alerts";
+import { SPEECH_FAILED_EARLIER_ALERT } from "@/lib/speech-alerts";
 import cn from "@/lib/utils";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -90,7 +107,23 @@ export default function RecordPage() {
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
   const [speechDemoKey, setSpeechDemoKey] = useState(0);
+  // Reported up from the dictation component, which owns the Speech SDK
+  // session. Without this the footer indicator could only reflect what the user
+  // asked for, not what was actually happening (DIAAT-297).
+  const [speechReport, setSpeechReport] = useState<SpeechSessionReport | null>(
+    null
+  );
+  const [sessionHadFailure, setSessionHadFailure] = useState(false);
+  const [postSessionNoticeDismissed, setPostSessionNoticeDismissed] =
+    useState(false);
   const [restoredTranscript, setRestoredTranscript] = useState<SectionedTranscript | undefined>();
+  // DIAAT-296: a restore lookup that failed is not the same fact as "you have
+  // no draft", and the two must never look alike on screen again.
+  const [restoreFailureAlert, setRestoreFailureAlert] =
+    useState<RecordAlert | null>(null);
+  const [draftExpiryAlert, setDraftExpiryAlert] = useState<RecordAlert | null>(
+    null
+  );
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formErrors, setFormErrors] = useState<
     Partial<Record<keyof DictationFormValues, string>>
@@ -188,6 +221,12 @@ export default function RecordPage() {
         const draft = await getLiveDraft();
         console.debug("[live-draft] GET result:", draft ? `found (saved_at: ${draft.saved_at})` : "not found");
         if (cancelled || !draft) return;
+        // The backend hard-deletes a draft 24h after its last save, on read.
+        // A judge who cannot get back in within a day loses the work
+        // permanently, so say so while it can still be acted on (DIAAT-296).
+        setDraftExpiryAlert(
+          describeDraftExpiryAlert({ savedAt: draft.saved_at, now: Date.now() })
+        );
         restoreToastIdRef.current = toast(
           `Unsaved transcript found from ${formatDraftDate(draft.saved_at)}`,
           {
@@ -208,8 +247,19 @@ export default function RecordPage() {
             duration: Infinity,
           },
         );
-      } catch {
-        // API unavailable — skip restore silently
+      } catch (error) {
+        // DIAAT-296: this used to be a bare `catch {}` commented "API
+        // unavailable — skip restore silently", which made a failed lookup
+        // indistinguishable from "you have no draft". A judge coming back for
+        // their transcript would have been told, in effect, that it never
+        // existed. Say what actually happened instead.
+        if (cancelled) return;
+        const kind = liveDraftFailureKind(error);
+        liveDraftTelemetry.restoreFailed({
+          kind,
+          status: error instanceof LiveDraftError ? error.status : undefined,
+        });
+        setRestoreFailureAlert(describeDraftRestoreAlert({ kind }));
       }
     })();
 
@@ -254,6 +304,28 @@ export default function RecordPage() {
     isDirtyRef.current = true;
   }, [formData]);
 
+  /**
+   * The current draft, or null when there is nothing worth saving.
+   *
+   * Returning null preserves the existing content gating: the page only writes
+   * once a transcript section is non-empty. That behaviour is deliberate and
+   * was confirmed in scope for DIAAT-297, so it is kept exactly as it was —
+   * only the handling of the *result* of a write changes in DIAAT-296.
+   */
+  const getAutosavePayload = useCallback(() => {
+    const transcript = sectionedTranscriptRef.current;
+    const hasContent =
+      transcript.background.length > 0 ||
+      transcript.evidence.length > 0 ||
+      transcript.facts.length > 0;
+    if (!hasContent) return null;
+    return { transcript, formData: formDataRef.current };
+  }, []);
+
+  const { saveNow: saveDraftNow, state: autosaveState } = useLiveDraftAutosave({
+    getPayload: getAutosavePayload,
+  });
+
   // Save immediately when recording transitions from active → paused/stopped.
   useEffect(() => {
     if (isRecordingActive) {
@@ -269,10 +341,7 @@ export default function RecordPage() {
       sectionedTranscriptRef.current.facts.length > 0;
     if (hasContent) {
       isDirtyRef.current = false;
-      console.debug("[live-draft] PUT /api/live-draft (on pause)");
-      void putLiveDraft(sectionedTranscriptRef.current, formDataRef.current)
-        .then(() => console.debug("[live-draft] PUT succeeded"))
-        .catch(err => console.warn("[live-draft] PUT failed on pause:", err));
+      saveDraftNow("pause");
     } else {
       console.debug("[live-draft] no content at pause — opening late-finalisation window");
     }
@@ -283,7 +352,7 @@ export default function RecordPage() {
     lateFinalisationWindowRef.current = true;
     const t = setTimeout(() => { lateFinalisationWindowRef.current = false; }, 2000);
     return () => clearTimeout(t);
-  }, [isRecordingActive]);
+  }, [isRecordingActive, saveDraftNow]);
 
   // Catch transcript content that arrives after recording stopped (Azure SDK
   // finalises the last utterance asynchronously after stopTranscribingAsync).
@@ -296,11 +365,8 @@ export default function RecordPage() {
     if (!hasContent) return;
     lateFinalisationWindowRef.current = false;
     isDirtyRef.current = false;
-    console.debug("[live-draft] PUT /api/live-draft (late finalisation)");
-    void putLiveDraft(sectionedTranscript, formDataRef.current)
-      .then(() => console.debug("[live-draft] PUT succeeded (late finalisation)"))
-      .catch(err => console.warn("[live-draft] PUT failed (late finalisation):", err));
-  }, [sectionedTranscript]);
+    saveDraftNow("late-finalisation");
+  }, [sectionedTranscript, saveDraftNow]);
 
   // Throttle: save every 10 seconds while actively recording, but only if
   // transcript or formData changed since the last save.
@@ -315,14 +381,11 @@ export default function RecordPage() {
         sectionedTranscriptRef.current.facts.length > 0;
       if (hasContent) {
         isDirtyRef.current = false;
-        console.debug("[live-draft] PUT /api/live-draft (interval)");
-        void putLiveDraft(sectionedTranscriptRef.current, formDataRef.current)
-          .then(() => console.debug("[live-draft] PUT succeeded"))
-          .catch(err => console.warn("[live-draft] PUT failed (interval):", err));
+        saveDraftNow("interval");
       }
     }, 3_000);
     return () => clearInterval(timer);
-  }, [isRecordingActive]);
+  }, [isRecordingActive, saveDraftNow]);
 
   useEffect(() => {
     const hasContent =
@@ -444,6 +507,88 @@ export default function RecordPage() {
     submitHearingToast(submissionPromise);
   }, [formData, sectionedTranscript, router, editorContent, mode]);
 
+  // Only "healthy" counts as recording. `isRecordingActive` is intent; a
+  // session can be collapsing behind it.
+  const isCapturingSpeechNow = Boolean(
+    isRecordingActive && speechReport?.isCapturing
+  );
+
+  // Live warnings clear with the session, so remember that this one went wrong.
+  // See SPEECH_FAILED_EARLIER_ALERT: the incident ended with the judge pausing,
+  // seeing a clean screen, and submitting three empty sections.
+  useEffect(() => {
+    const kind = speechReport?.alert?.kind;
+    if (kind === "speech-failed" || kind === "speech-recovering") {
+      setSessionHadFailure(true);
+    }
+  }, [speechReport?.alert]);
+  useEffect(() => {
+    if (!isRecordingActive) return;
+    setSessionHadFailure(false);
+    setPostSessionNoticeDismissed(false);
+  }, [isRecordingActive]);
+
+  // One banner for the whole page. DIAAT-296 adds its autosave alerts to this
+  // list rather than rendering a second banner.
+  const recordAlert = selectMostSevereAlert([
+    speechReport?.alert,
+    describeAutosaveAlert({ state: autosaveState }),
+    restoreFailureAlert,
+    draftExpiryAlert,
+    sessionHadFailure && !isRecordingActive && !postSessionNoticeDismissed
+      ? SPEECH_FAILED_EARLIER_ALERT
+      : null,
+  ]);
+  const dismissRecordAlert = (() => {
+    switch (recordAlert?.kind) {
+      case "speech-failed-earlier":
+        return () => setPostSessionNoticeDismissed(true);
+      case "draft-restore-failed":
+        return () => setRestoreFailureAlert(null);
+      case "draft-expiring":
+        return () => setDraftExpiryAlert(null);
+      default:
+        return speechReport?.dismissAlert;
+    }
+  })();
+
+  // Put the alarm in the tab title too. A judge who has switched to the bundle
+  // or to another window would otherwise see nothing at all.
+  const isSpeechAlert =
+    recordAlert?.kind === "speech-failed" ||
+    recordAlert?.kind === "speech-recovering" ||
+    recordAlert?.kind === "speech-no-content";
+  const originalTitleRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    if (originalTitleRef.current === null) {
+      originalTitleRef.current = document.title;
+    }
+    const original = originalTitleRef.current;
+    document.title = isSpeechAlert
+      ? "\u26a0 NOT RECORDING \u2014 check now"
+      : original;
+    return () => {
+      document.title = original;
+    };
+  }, [isSpeechAlert]);
+
+  const speechStatusLabel = useMemo(() => {
+    if (!isRecordingActive) return null;
+    switch (speechReport?.session.health) {
+      case "healthy":
+        return "Recording";
+      case "starting":
+        return "Connecting\u2026";
+      case "recovering":
+        return "Reconnecting \u2014 not recording";
+      case "failed":
+        return "Not recording";
+      default:
+        return "Starting\u2026";
+    }
+  }, [isRecordingActive, speechReport?.session.health]);
+
   const handleFormGutterWheel = useCallback(
     (event: WheelEvent<HTMLDivElement>) => {
       const formContainer = formScrollContainerRef.current;
@@ -498,10 +643,23 @@ export default function RecordPage() {
     </div>
   );
 
+  const hasTranscriptContent =
+    sectionedTranscript.background.length > 0 ||
+    sectionedTranscript.evidence.length > 0 ||
+    sectionedTranscript.facts.length > 0;
+
+  const saveStatus = describeSaveStatus({
+    state: autosaveState,
+    hasContent: hasTranscriptContent,
+  });
+
   const recordingControl = (
     <div className="flex items-center gap-2 sm:gap-3">
       <div className="flex size-8 shrink-0 items-center justify-center">
-        <AnimatedMicrophone size={28} isActive={isRecordingActive} />
+        {/* Driven by whether speech is actually being captured, never by
+            intent alone â€” the struck-through mic is the honest state while the
+            SDK session is down (DIAAT-297). */}
+        <AnimatedMicrophone size={28} isActive={isCapturingSpeechNow} />
       </div>
       <Button
         onClick={() =>
@@ -524,13 +682,18 @@ export default function RecordPage() {
         )}
         {isRecordingActive ? "Pause recording" : "Start recording"}
       </Button>
+      {/* Capture state and save state are one row and one live region: they
+          answer a single question between them, and DIAAT-296 asked for the
+          "last saved at" to sit with the DIAAT-297 capture status rather than
+          becoming a second widget. */}
+      <RecordStatusRow
+        speechLabel={speechStatusLabel}
+        isCapturing={isCapturingSpeechNow}
+        saveStatus={saveStatus}
+      />
     </div>
   );
 
-  const hasTranscriptContent =
-    sectionedTranscript.background.length > 0 ||
-    sectionedTranscript.evidence.length > 0 ||
-    sectionedTranscript.facts.length > 0;
   const hasNotesContent =
     normalizeOptionalEditorText(editorContent) !==
     normalizeOptionalEditorText(DEFAULT_NOTES_EDITOR_CONTENT);
@@ -590,6 +753,13 @@ export default function RecordPage() {
         Skip to main content
       </a>
       <div className="flex h-full flex-col">
+        {/* First child of the page shell and outside every scroll container,
+            so it is always on screen while something is wrong. */}
+        <RecordAlertBanner
+          alert={recordAlert}
+          onDismiss={dismissRecordAlert}
+          className="shrink-0"
+        />
         <footer className="order-last border-t border-border bg-background">
           <div className="mx-auto flex w-full max-w-[1280px] flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -727,6 +897,7 @@ export default function RecordPage() {
                               activeSection={activeSection}
                               onActiveSectionChange={setActiveSection}
                               onTranscriptChange={setSectionedTranscript}
+                              onSpeechSessionChange={setSpeechReport}
                               showRecordingControls={false}
                               showSectionTabs={false}
                               embedded
@@ -794,6 +965,7 @@ export default function RecordPage() {
                         activeSection={activeSection}
                         onActiveSectionChange={setActiveSection}
                         onTranscriptChange={setSectionedTranscript}
+                        onSpeechSessionChange={setSpeechReport}
                         showRecordingControls={false}
                         showSectionTabs={false}
                         embedded
