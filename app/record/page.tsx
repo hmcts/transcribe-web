@@ -56,7 +56,10 @@ import {
   type RecordAlert,
   selectMostSevereAlert,
 } from "@/lib/record-alerts";
-import { SPEECH_FAILED_EARLIER_ALERT } from "@/lib/speech-alerts";
+import {
+  SPEECH_FAILED_EARLIER_ALERT,
+  SPEECH_NO_CONTENT_EARLIER_ALERT,
+} from "@/lib/speech-alerts";
 import cn from "@/lib/utils";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -114,6 +117,7 @@ export default function RecordPage() {
     null
   );
   const [sessionHadFailure, setSessionHadFailure] = useState(false);
+  const [sessionHadNoContent, setSessionHadNoContent] = useState(false);
   const [postSessionNoticeDismissed, setPostSessionNoticeDismissed] =
     useState(false);
   const [restoredTranscript, setRestoredTranscript] = useState<SectionedTranscript | undefined>();
@@ -544,12 +548,21 @@ export default function RecordPage() {
     if (kind === "speech-failed" || kind === "speech-recovering") {
       setSessionHadFailure(true);
     }
+    if (kind === "speech-no-content") {
+      setSessionHadNoContent(true);
+    }
   }, [speechReport?.alert]);
   useEffect(() => {
     if (!isRecordingActive) return;
     setSessionHadFailure(false);
+    setSessionHadNoContent(false);
     setPostSessionNoticeDismissed(false);
   }, [isRecordingActive]);
+  const transcriptIsEmpty =
+    sectionedTranscript.background.length === 0 &&
+    sectionedTranscript.evidence.length === 0 &&
+    sectionedTranscript.facts.length === 0;
+  const showPostSessionNotice = !isRecordingActive && !postSessionNoticeDismissed;
 
   // One banner for the whole page. DIAAT-296 adds its autosave alerts to this
   // list rather than rendering a second banner.
@@ -558,13 +571,19 @@ export default function RecordPage() {
     describeAutosaveAlert({ state: autosaveState }),
     restoreFailureAlert,
     draftExpiryAlert,
-    sessionHadFailure && !isRecordingActive && !postSessionNoticeDismissed
+    sessionHadFailure && showPostSessionNotice
       ? SPEECH_FAILED_EARLIER_ALERT
+      : null,
+    // Only while the transcript is still empty: speech that came through after
+    // the warning answers it.
+    sessionHadNoContent && transcriptIsEmpty && showPostSessionNotice
+      ? SPEECH_NO_CONTENT_EARLIER_ALERT
       : null,
   ]);
   const dismissRecordAlert = (() => {
     switch (recordAlert?.kind) {
       case "speech-failed-earlier":
+      case "speech-no-content-earlier":
         return () => setPostSessionNoticeDismissed(true);
       case "draft-restore-failed":
         return () => setRestoreFailureAlert(null);

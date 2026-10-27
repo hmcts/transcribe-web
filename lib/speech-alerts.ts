@@ -129,3 +129,20 @@ export const SPEECH_FAILED_EARLIER_ALERT: RecordAlert = {
     "Check the transcript before you submit. If incomplete, please raise with the Support team for investigation.",
   dismissible: true,
 };
+
+/**
+ * Shown after a session in which the no-speech warning fired and the transcript
+ * is still empty. The live warning clears when recording pauses, which would
+ * leave an empty transcript with no explanation before submission. The cause is
+ * unknown (often a muted or wrong microphone), so it does not say the
+ * connection was lost.
+ */
+export const SPEECH_NO_CONTENT_EARLIER_ALERT: RecordAlert = {
+  kind: "speech-no-content-earlier",
+  severity: "error",
+  heading: "Nothing was recorded during this session",
+  body: "Recording ran without any speech being transcribed, so your transcript is empty.",
+  guidance:
+    "Check that the right microphone is selected and not muted, then start recording again. If this keeps happening, please raise with the Support team.",
+  dismissible: true,
+};

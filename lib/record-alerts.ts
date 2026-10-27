@@ -24,6 +24,8 @@ export type RecordAlertKind =
   | "speech-recovering"
   /** Recording failed earlier in this session; survives the pause. */
   | "speech-failed-earlier"
+  /** Nothing was transcribed in this session; survives the pause. */
+  | "speech-no-content-earlier"
   /** Working again after a drop; the transcript may have a gap. */
   | "speech-interrupted"
   // --- live-draft autosave (DIAAT-296) ---
@@ -60,6 +62,7 @@ export const RECORD_ALERT_PRIORITY: Record<RecordAlertKind, number> = {
   // from "you have no draft".
   "draft-restore-failed": 60,
   "speech-failed-earlier": 50,
+  "speech-no-content-earlier": 48,
   "draft-expiring": 45,
   "speech-interrupted": 40,
 };

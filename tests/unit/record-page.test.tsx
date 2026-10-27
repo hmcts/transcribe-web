@@ -586,6 +586,56 @@ describe("Speech session failure states", () => {
 
     expect(screen.queryByTestId("record-alert-banner")).toBeNull();
   });
+
+  describe("after a session with no speech (PR #14 review)", () => {
+    async function pauseAfterNoSpeechWarning() {
+      render(<RecordPage />);
+      await startRecording();
+      await reportSpeechSession({
+        session: HEALTHY_SESSION,
+        hasCapturedSpeech: false,
+        noSpeechWarning: true,
+      });
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: "Pause recording" })
+        );
+      });
+      await reportSpeechSession({
+        session: { ...HEALTHY_SESSION, health: "idle" as never },
+      });
+    }
+
+    it("keeps explaining the empty transcript after recording is paused", async () => {
+      await pauseAfterNoSpeechWarning();
+
+      const banner = screen.getByTestId("record-alert-banner");
+      expect(banner.getAttribute("data-kind")).toBe(
+        "speech-no-content-earlier"
+      );
+      expect(
+        screen.getByText(/Nothing was recorded during this session/i)
+      ).toBeTruthy();
+      // The cause is unknown, so it must not claim the connection was lost.
+      expect(banner.textContent).not.toMatch(/connection/i);
+    });
+
+    it("lets the user dismiss it", async () => {
+      await pauseAfterNoSpeechWarning();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /dismiss/i }));
+      });
+      expect(screen.queryByTestId("record-alert-banner")).toBeNull();
+    });
+
+    it("does not show it once speech has reached the transcript", async () => {
+      await pauseAfterNoSpeechWarning();
+      await act(async () => {
+        lastSpeechDemoProps.current.onTranscriptChange(TEST_TRANSCRIPT);
+      });
+      expect(screen.queryByTestId("record-alert-banner")).toBeNull();
+    });
+  });
 });
 
 // ---------------------------------------------------------------------------
