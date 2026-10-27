@@ -9,6 +9,7 @@ import { apiPath } from "@/lib/recording/base-path";
 import type { TranscriptionJob } from "@/lib/recording/types";
 import {
   rawUploadHeaders,
+  SERVICE_UNAVAILABLE_ERROR,
   UPLOAD_HEADERS,
 } from "@/lib/recording/upload-contract";
 
@@ -90,7 +91,12 @@ export default function DashboardPage() {
         });
         if (!response.ok) {
           const body = await response.json().catch(() => ({}));
-          throw new Error(body.error ?? `Upload failed: ${response.status}`);
+          throw new Error(
+            body.error ??
+              (response.status === 503
+                ? SERVICE_UNAVAILABLE_ERROR
+                : `Upload failed: ${response.status}`)
+          );
         }
         toast.success(`"${file.name}" submitted for transcription`);
         await refresh();

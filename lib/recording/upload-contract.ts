@@ -31,6 +31,11 @@
 
 export const UPLOAD_BODY_CONTENT_TYPE = "application/octet-stream";
 
+// What the route handlers answer, with a 503, when the API is unavailable
+// for now; the recording page says the same if a 503 has no message.
+export const SERVICE_UNAVAILABLE_ERROR =
+  "The transcription service is temporarily unavailable. Please try again.";
+
 export const UPLOAD_HEADERS = {
   filename: "X-Upload-Filename",
   size: "X-Upload-Size",

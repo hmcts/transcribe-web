@@ -5,6 +5,7 @@ import {
 } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
 import {
+  backendFailed,
   readRawUpload,
   tooLarge,
   unauthenticated,
@@ -54,9 +55,6 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 });
     }
     console.error("Failed to upload baseline transcript", err);
-    return NextResponse.json(
-      { error: "Failed to upload baseline transcript" },
-      { status: 502 }
-    );
+    return backendFailed(err, "Failed to upload baseline transcript");
   }
 }

@@ -287,16 +287,56 @@ describe("POST /api/jobs/[jobId]/baseline", () => {
       expect(response.status).toBe(404);
     });
 
+    // The browser gets a fixed message and the API's request_id, never the
+    // API's own error detail.
     it.each([
       ["a rejected transcript (422)", 422],
+      ["a bad request (400)", 400],
+      ["forbidden (403)", 403],
+    ])("%s to the same status", async (_label, status) => {
+      backendResponds({ detail: "nope", request_id: "req-4xx" }, status);
+
+      const response = await post(baselineRequest(TEXT));
+
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({
+        error: "Failed to upload baseline transcript",
+        request_id: "req-4xx",
+      });
+    });
+
+    it("503 (unavailable) to 503, saying to try again", async () => {
+      backendResponds(
+        { detail: "Service Unavailable", request_id: "req-503" },
+        503
+      );
+
+      const response = await post(baselineRequest(TEXT));
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error:
+          "The transcription service is temporarily unavailable. Please try again.",
+        request_id: "req-503",
+      });
+    });
+
+    it.each([
       ["a server error (500)", 500],
+      ["a gateway timeout (504)", 504],
     ])("%s to 502", async (_label, status) => {
-      backendResponds({ detail: "nope" }, status);
+      backendResponds(
+        { detail: "Internal Server Error", request_id: "req-5xx" },
+        status
+      );
 
       const response = await post(baselineRequest(TEXT));
 
       expect(response.status).toBe(502);
-      expect((await response.json()).error).toEqual(expect.any(String));
+      expect(await response.json()).toEqual({
+        error: "Failed to upload baseline transcript",
+        request_id: "req-5xx",
+      });
     });
 
     it("an unreachable API to 502", async () => {

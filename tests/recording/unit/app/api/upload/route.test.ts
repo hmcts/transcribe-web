@@ -502,8 +502,21 @@ describe("POST /api/upload", () => {
     });
   });
 
-  describe("maps upstream failures to 502", () => {
-    it("when the upload is rejected", async () => {
+  // Every API failure is logged here with the API's whole error; the
+  // browser gets only a fixed message and the API's request_id, to find it
+  // in the logs by.
+  describe("maps upstream failures", () => {
+    function jobsFail(status: number, body: unknown) {
+      fetchMock.mockImplementation((url: string) =>
+        Promise.resolve(
+          url === `${BACKEND}/api/v1/uploads`
+            ? jsonResponse({ audio_url: "u", blob_name: "b" }, 201)
+            : jsonResponse(body, status)
+        )
+      );
+    }
+
+    it("a rejected upload (500) to 502, without submitting a job", async () => {
       fetchMock.mockImplementation(() =>
         Promise.resolve(jsonResponse({ detail: "boom" }, 500))
       );
@@ -515,28 +528,89 @@ describe("POST /api/upload", () => {
       expect(jobsCall()).toBeUndefined();
     });
 
-    it("when the job submission is rejected", async () => {
-      fetchMock.mockImplementation((url: string) =>
-        Promise.resolve(
-          url === `${BACKEND}/api/v1/uploads`
-            ? jsonResponse({ audio_url: "u", blob_name: "b" }, 201)
-            : jsonResponse({ detail: "boom" }, 503)
-        )
-      );
+    // transcribe-api answers 503 when it cannot submit the job to Speech.
+    it("503 (unavailable) to 503, saying to try again", async () => {
+      jobsFail(503, {
+        detail: "Speech batch submission failed: upstream timeout",
+        request_id: "req-503",
+      });
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(503);
+      expect(await response.json()).toEqual({
+        error:
+          "The transcription service is temporarily unavailable. Please try again.",
+        request_id: "req-503",
+      });
+    });
+
+    it.each([
+      ["a server error (500)", 500],
+      ["not implemented (501)", 501],
+      ["a gateway timeout (504)", 504],
+    ])("%s to 502", async (_label, status) => {
+      jobsFail(status, {
+        detail: "Internal Server Error",
+        request_id: "req-5xx",
+      });
       const { POST } = await import("@/app/api/upload/route");
 
       const response = await POST(uploadRequest(AUDIO));
 
       expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({
+        error: "Failed to submit audio for transcription",
+        request_id: "req-5xx",
+      });
     });
 
-    it("when the API is unreachable", async () => {
+    it.each([
+      ["a bad request (400)", 400],
+      ["unauthenticated (401)", 401],
+      ["forbidden (403)", 403],
+      ["too large (413)", 413],
+      ["a validation error (422)", 422],
+      ["rate limited (429)", 429],
+    ])("%s to the same status", async (_label, status) => {
+      jobsFail(status, {
+        detail: [{ loc: ["body", "audio_url"], msg: "internal detail" }],
+        request_id: "req-4xx",
+      });
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(status);
+      expect(await response.json()).toEqual({
+        error: "Failed to submit audio for transcription",
+        request_id: "req-4xx",
+      });
+    });
+
+    it("a failure without a request_id, without one", async () => {
+      jobsFail(500, "<html>Internal Server Error</html>");
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({
+        error: "Failed to submit audio for transcription",
+      });
+    });
+
+    it("an unreachable API to 502", async () => {
       fetchMock.mockRejectedValue(new TypeError("fetch failed"));
       const { POST } = await import("@/app/api/upload/route");
 
       const response = await POST(uploadRequest(AUDIO));
 
       expect(response.status).toBe(502);
+      expect(await response.json()).toEqual({
+        error: "Failed to submit audio for transcription",
+      });
     });
   });
 });
