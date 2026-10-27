@@ -34,5 +34,12 @@ withPipeline(type, product, component) {
   // AKS only. There is no App Service deployment for this product.
   disableLegacyDeployment()
 
+  // Preview runs with AUTH_ENABLED=false (per-PR hostnames cannot be Entra
+  // redirect URIs), so an anonymous /api/jobs call is not refused with a 401
+  // there; tests/deployed/functional.test.ts skips that check when told so.
+  before('functionalTest:preview') {
+    env.AUTH_EXPECTED = 'false'
+  }
+
   syncBranchesWithMaster(['demo', 'ithc', 'perftest'])
 }
