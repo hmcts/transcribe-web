@@ -103,6 +103,12 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
   const collapseWindowMs = useMemo(getCollapseWindowMs, []);
 
   const recognizerRef = useRef<sdk.ConversationTranscriber | null>(null);
+  /**
+   * Recognizers asked to stop whose stop has not completed. The SDK can still
+   * deliver the final result of the utterance in progress while it stops, so
+   * those are accepted from here; every other event from them is stale.
+   */
+  const stoppingRef = useRef<Set<sdk.ConversationTranscriber>>(new Set());
   const streamRef = useRef<MediaStream | null>(null);
   // Monotonic for the lifetime of the hook. Never reset per session: the
   // consumer de-duplicates finalised segments by id, so a session that restarts
@@ -190,10 +196,16 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
     const recognizer = recognizerRef.current;
     recognizerRef.current = null;
     if (recognizer) {
+      const stopping = stoppingRef.current;
+      stopping.add(recognizer);
       recognizer.stopTranscribingAsync(
-        () => recognizer.close(),
+        () => {
+          stopping.delete(recognizer);
+          recognizer.close();
+        },
         (err) => {
           console.error("[speech] Error stopping recognizer:", err);
+          stopping.delete(recognizer);
           recognizer.close();
         }
       );
@@ -217,14 +229,16 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
       });
     }
     recordingIntendedRef.current = false;
+    // Clear before teardown: the stopping recognizer may deliver its final
+    // result during the stop, and that must land after the clear, not before.
+    currentSegmentIdRef.current = null;
+    setSegments([]);
     teardownSession();
     collapseTimestampsRef.current = [];
     totalCollapsesRef.current = 0;
     lastCancellationRef.current = null;
     unhealthyReportedRef.current = false;
-    currentSegmentIdRef.current = null;
     setStatus("disconnected");
-    setSegments([]);
     setSession(IDLE_SESSION);
   }, [teardownSession]);
 
@@ -453,14 +467,29 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         }
       };
 
-      // Final results (when speech segment is complete)
+      // Final results (when speech segment is complete). Also accepted while
+      // this recognizer is stopping, so pausing mid-sentence keeps the last
+      // utterance: the SDK delivers it during stopTranscribingAsync, after
+      // teardown has already cleared recognizerRef.
       transcriber.transcribed = (_s, e) => {
-        if (!isCurrent()) return;
+        const current = isCurrent();
+        if (!current && !stoppingRef.current.has(transcriber)) return;
         if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
           const speaker = e.result.speakerId || "Unknown";
           const text = e.result.text || "";
+          // A stopping recognizer gets a fresh id: currentSegmentIdRef may
+          // already belong to the utterance in progress in a newer session, and
+          // its own interim segment was cleared when it was stopped.
           const segmentId =
-            currentSegmentIdRef.current ?? `seg-${++segmentCounterRef.current}`;
+            (current ? currentSegmentIdRef.current : null) ??
+            `seg-${++segmentCounterRef.current}`;
+          if (!current) {
+            setSegments((prev) => [
+              ...prev,
+              { id: segmentId, speaker, text, isFinal: true },
+            ]);
+            return;
+          }
           sessionSegmentCountRef.current += 1;
 
           // Finalize the current segment; if no interim event fired, create one now.
@@ -479,7 +508,7 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
             return [...prev, { id: segmentId, speaker, text, isFinal: true }];
           });
           currentSegmentIdRef.current = null;
-        } else if (e.result.reason === sdk.ResultReason.NoMatch) {
+        } else if (e.result.reason === sdk.ResultReason.NoMatch && current) {
           console.info("[speech] No match - speech could not be recognized");
           currentSegmentIdRef.current = null;
         }

@@ -332,4 +332,86 @@ describe("useRealtimeTranscription session health", () => {
     expect(result.current.error).toContain("boom");
     expect(result.current.session.health).not.toBe("healthy");
   });
+
+  describe("pausing mid-utterance (PR #14 review)", () => {
+    /** Holds the stop open, as the SDK does while it flushes the last result. */
+    function holdStop(transcriber: FakeTranscriber) {
+      let complete: () => void = () => undefined;
+      transcriber.stopTranscribingAsync = vi.fn((onOk: () => void) => {
+        complete = onOk;
+      });
+      return () => complete();
+    }
+
+    const finalResult = (text: string) => ({
+      result: { reason: 3, speakerId: "Guest-1", text },
+    });
+
+    it("keeps the final result delivered while the recognizer stops", async () => {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      const stopping = latest();
+      const completeStop = holdStop(stopping);
+
+      await act(async () => {
+        result.current.disconnect();
+      });
+      await act(async () => {
+        stopping.transcribed?.(null, finalResult("the last sentence"));
+      });
+
+      expect(result.current.segments).toEqual([
+        expect.objectContaining({ text: "the last sentence", isFinal: true }),
+      ]);
+
+      // Once the stop completes, the recognizer is stale.
+      await act(async () => {
+        completeStop();
+        stopping.transcribed?.(null, finalResult("too late"));
+      });
+      expect(result.current.segments.map((s) => s.text)).toEqual([
+        "the last sentence",
+      ]);
+    });
+
+    it("keeps a final result the SDK delivers inside the stop call", async () => {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      const stopping = latest();
+      stopping.stopTranscribingAsync = vi.fn((onOk: () => void) => {
+        stopping.transcribed?.(null, finalResult("flushed during stop"));
+        onOk();
+      });
+
+      await act(async () => {
+        result.current.disconnect();
+      });
+
+      expect(result.current.segments.map((s) => s.text)).toEqual([
+        "flushed during stop",
+      ]);
+    });
+
+    it("still ignores other events from a stopping recognizer", async () => {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      const stopping = latest();
+      holdStop(stopping);
+
+      await act(async () => {
+        result.current.disconnect();
+      });
+      await act(async () => {
+        stopping.transcribing?.(null, {
+          result: { reason: 2, speakerId: "Guest-1", text: "interim" },
+        });
+        collapseWithError(stopping);
+      });
+
+      expect(result.current.segments).toEqual([]);
+      expect(result.current.session.health).toBe("idle");
+      expect(result.current.session.totalCollapses).toBe(0);
+      expect(telemetry.sessionCanceled).not.toHaveBeenCalled();
+    });
+  });
 });
