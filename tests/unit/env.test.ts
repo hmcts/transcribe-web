@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getEnv } from "@/lib/env";
 
@@ -79,5 +81,23 @@ describe("getEnv", () => {
       (window as any).__ENV = { [HOST_KEY]: "https://custom.posthog.com" };
       expect(getEnv(HOST_KEY)).toBe("https://custom.posthog.com");
     });
+  });
+});
+
+describe("static references for build-time inlining (PR #14 review)", () => {
+  // Next.js inlines only literal process.env.NEXT_PUBLIC_* references into
+  // browser code; getEnv's dynamic process.env[key] is not. Outside start.js's
+  // runtime injection (e.g. `next dev`), a key missing from the preset would
+  // ignore its .env value in the browser.
+  const source = readFileSync(join(__dirname, "../../lib/env.ts"), "utf8");
+
+  it.each([
+    "NEXT_PUBLIC_NO_SPEECH_WARNING_SECONDS",
+    "NEXT_PUBLIC_SPEECH_COLLAPSE_THRESHOLD",
+    "NEXT_PUBLIC_SPEECH_COLLAPSE_WINDOW_SECONDS",
+    "NEXT_PUBLIC_AUTOSAVE_FAILURE_ALERT_THRESHOLD",
+    "NEXT_PUBLIC_LIVE_DRAFT_EXPIRY_WARNING_AFTER_HOURS",
+  ])("references %s literally", (key) => {
+    expect(source).toContain(`process.env.${key}`);
   });
 });
