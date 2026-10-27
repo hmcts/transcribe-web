@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import { uploadAndSubmit } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
 import {
+  backendFailed,
   readRawUpload,
   tooLarge,
   unauthenticated,
@@ -67,9 +68,6 @@ export async function POST(request: NextRequest) {
       return tooLarge();
     }
     console.error("Failed to upload and submit job", err);
-    return NextResponse.json(
-      { error: "Failed to submit audio for transcription" },
-      { status: 502 }
-    );
+    return backendFailed(err, "Failed to submit audio for transcription");
   }
 }

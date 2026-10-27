@@ -437,6 +437,50 @@ describe("deleteJob", () => {
       status: 404,
     });
   });
+
+  // The API's error bodies carry the request_id it logged the failure under
+  // (transcribe-api's runtime/exception_handlers.py).
+  it("carries the API's request_id on the BackendApiError", async () => {
+    mockFetchOnce(
+      { detail: "Internal Server Error", request_id: "req-123" },
+      { ok: false, status: 500 }
+    );
+
+    await expect(deleteJob("job-1", null)).rejects.toMatchObject({
+      status: 500,
+      requestId: "req-123",
+    });
+  });
+
+  it.each([
+    ["a body without one", { detail: "nope" }],
+    ["a non-string one", { request_id: 42 }],
+    ["an empty one", { request_id: "" }],
+    ["a JSON body that is not an object", null],
+  ])("leaves requestId undefined for %s", async (_label, body) => {
+    mockFetchOnce(body, { ok: false, status: 500 });
+
+    const err = await deleteJob("job-1", null).catch((e) => e);
+
+    expect(err).toMatchObject({ name: "BackendApiError", status: 500 });
+    expect(err.requestId).toBeUndefined();
+  });
+
+  it("leaves requestId undefined for a body that is not JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: () => Promise.resolve("<html>Bad Gateway</html>"),
+      })
+    );
+
+    const err = await deleteJob("job-1", null).catch((e) => e);
+
+    expect(err).toMatchObject({ name: "BackendApiError", status: 502 });
+    expect(err.requestId).toBeUndefined();
+  });
 });
 
 describe("alternatives mapping (DIAAT-233)", () => {

@@ -1,10 +1,12 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { getAuthConfig } from "@/lib/auth/config";
+import { BackendApiError } from "./api-client";
 import type { BackendAuthContext } from "./auth-utils";
 import type { UploadFile } from "./multipart";
 import {
   checkUploadType,
+  SERVICE_UNAVAILABLE_ERROR,
   UPLOAD_BODY_CONTENT_TYPE,
   UPLOAD_HEADERS,
   type UploadTypeAllowlist,
@@ -44,6 +46,28 @@ export function tooLarge() {
   return NextResponse.json(
     { error: "Uploaded file is too large or the request body was malformed." },
     { status: 413 }
+  );
+}
+
+/**
+ * The response for an upload the API failed, by the API's status: a 4xx (it
+ * refused the request) or a 503 (it, or a service behind it, is unavailable
+ * for now) passes through; any other 5xx, or no answer at all, is a 502.
+ * The browser gets only `error`, a fixed message, and the API's request_id to
+ * find the failure in its logs by: never the API's own error detail.
+ */
+export function backendFailed(err: unknown, error: string): NextResponse {
+  if (!(err instanceof BackendApiError)) {
+    return NextResponse.json({ error }, { status: 502 });
+  }
+  const { status, requestId } = err;
+  const passThrough = (status >= 400 && status < 500) || status === 503;
+  return NextResponse.json(
+    {
+      error: status === 503 ? SERVICE_UNAVAILABLE_ERROR : error,
+      ...(requestId ? { request_id: requestId } : {}),
+    },
+    { status: passThrough ? status : 502 }
   );
 }
 

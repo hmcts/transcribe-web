@@ -117,11 +117,30 @@ interface BackendUpload {
 export class BackendApiError extends Error {
   constructor(
     message: string,
-    public status: number
+    public status: number,
+    // The id the API logged the failure under, from its error body.
+    public requestId?: string
   ) {
     super(message);
     this.name = "BackendApiError";
   }
+}
+
+// The API's error bodies are {"detail": ..., "request_id": ...}
+// (transcribe-api's runtime/exception_handlers.py).
+function requestIdOf(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && "request_id" in parsed) {
+      const { request_id } = parsed;
+      return typeof request_id === "string" && request_id !== ""
+        ? request_id
+        : undefined;
+    }
+  } catch {
+    // Not JSON: a proxy's error page, say.
+  }
+  return undefined;
 }
 
 function backendUrl(): string {
@@ -173,7 +192,8 @@ async function backendFetch(
     const body = await response.text().catch(() => "");
     throw new BackendApiError(
       `Backend request to ${path} failed: ${response.status} ${body}`,
-      response.status
+      response.status,
+      requestIdOf(body)
     );
   }
 

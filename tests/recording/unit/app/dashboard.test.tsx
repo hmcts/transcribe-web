@@ -1,5 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "@/app/recording/page";
 
@@ -131,14 +132,21 @@ describe("DashboardPage", () => {
     // Front Door's WAF (DRS 2.1) blocks multipart/form-data bodies from the
     // browser, so the file goes as the raw request body with its metadata in
     // headers; the route handler builds the multipart request in-cluster.
-    async function uploadThroughPage(file: File) {
+    async function uploadThroughPage(
+      file: File,
+      uploadResponse: {
+        ok: boolean;
+        status: number;
+        json: () => Promise<unknown>;
+      } = {
+        ok: true,
+        status: 201,
+        json: () => Promise.resolve({ job: { id: "job-1" } }),
+      }
+    ) {
       const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
         if (init?.method === "POST") {
-          return Promise.resolve({
-            ok: true,
-            status: 201,
-            json: () => Promise.resolve({ job: { id: "job-1" } }),
-          });
+          return Promise.resolve(uploadResponse);
         }
         return Promise.resolve({
           ok: true,
@@ -198,6 +206,64 @@ describe("DashboardPage", () => {
         "X-Upload-Content-Type": "audio/mpeg",
         "X-Upload-Filename": "hearing.mp3",
         "X-Upload-Size": String(file.size),
+      });
+    });
+
+    describe("when the upload fails", () => {
+      const file = new File(["bytes"], "hearing.mp3", { type: "audio/mpeg" });
+
+      beforeEach(() => {
+        vi.mocked(toast.error).mockClear();
+      });
+
+      it("shows the route's error message", async () => {
+        mockReadAudioDurationSeconds.mockResolvedValue(undefined);
+
+        await uploadThroughPage(file, {
+          ok: false,
+          status: 503,
+          json: () =>
+            Promise.resolve({
+              error: "The route's own message.",
+              request_id: "req-1",
+            }),
+        });
+
+        await waitFor(() =>
+          expect(toast.error).toHaveBeenCalledWith("The route's own message.")
+        );
+      });
+
+      // A 503 that never reached the route (Front Door's own error page, say)
+      // has no JSON message.
+      it("says the service is unavailable for a 503 without a message", async () => {
+        mockReadAudioDurationSeconds.mockResolvedValue(undefined);
+
+        await uploadThroughPage(file, {
+          ok: false,
+          status: 503,
+          json: () => Promise.reject(new SyntaxError("not JSON")),
+        });
+
+        await waitFor(() =>
+          expect(toast.error).toHaveBeenCalledWith(
+            "The transcription service is temporarily unavailable. Please try again."
+          )
+        );
+      });
+
+      it("gives the status for any other failure without a message", async () => {
+        mockReadAudioDurationSeconds.mockResolvedValue(undefined);
+
+        await uploadThroughPage(file, {
+          ok: false,
+          status: 502,
+          json: () => Promise.reject(new SyntaxError("not JSON")),
+        });
+
+        await waitFor(() =>
+          expect(toast.error).toHaveBeenCalledWith("Upload failed: 502")
+        );
       });
     });
 
