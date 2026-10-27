@@ -846,4 +846,71 @@ describe("Live draft restore failures", () => {
 
     expect(screen.queryByTestId("record-alert-banner")).toBeNull();
   });
+
+  describe("expiry warning after the draft changes (PR #14 review)", () => {
+    const OLD_DRAFT = {
+      transcript: TEST_TRANSCRIPT,
+      form_data: {},
+      saved_at: new Date(Date.now() - 20.5 * 60 * 60 * 1000).toISOString(),
+    };
+
+    async function renderWithExpiringDraft() {
+      mockGetLiveDraft.mockResolvedValue(OLD_DRAFT);
+      mockPutLiveDraft.mockResolvedValue(undefined);
+      mockDeleteLiveDraft.mockResolvedValue(undefined);
+      render(
+        <>
+          <Toaster />
+          <RecordPage />
+        </>
+      );
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("record-alert-banner").getAttribute("data-kind")
+        ).toBe("draft-expiring");
+      });
+    }
+
+    it("clears it once the draft is discarded", async () => {
+      await renderWithExpiringDraft();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /discard/i }));
+      });
+      await waitFor(() => expect(mockDeleteLiveDraft).toHaveBeenCalled());
+      expect(screen.queryByTestId("record-alert-banner")).toBeNull();
+    });
+
+    it("keeps it if the discard failed", async () => {
+      await renderWithExpiringDraft();
+      mockDeleteLiveDraft.mockRejectedValue(new Error("network"));
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /discard/i }));
+      });
+      await waitFor(() => expect(mockDeleteLiveDraft).toHaveBeenCalled());
+      expect(
+        screen.getByTestId("record-alert-banner").getAttribute("data-kind")
+      ).toBe("draft-expiring");
+    });
+
+    it("clears it once a save renews the draft", async () => {
+      await renderWithExpiringDraft();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /restore/i }));
+      });
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: /start recording/i })
+        );
+      });
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole("button", { name: /pause recording/i })
+        );
+      });
+      await waitFor(() => expect(mockPutLiveDraft).toHaveBeenCalled());
+      await waitFor(() =>
+        expect(screen.queryByTestId("record-alert-banner")).toBeNull()
+      );
+    });
+  });
 });

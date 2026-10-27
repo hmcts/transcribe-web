@@ -39,6 +39,17 @@ export interface UseLiveDraftAutosaveResult {
   state: AutosaveState;
   /** Write the current payload now. Safe to call while one is in flight. */
   saveNow: (trigger: AutosaveTrigger) => void;
+  /**
+   * Drop any queued save and scheduled retry, and resolve once the write in
+   * flight (if any) has settled. Call before deleting the draft so no earlier
+   * write lands after the delete. Saving carries on afterwards.
+   */
+  cancelPending: () => Promise<void>;
+  /**
+   * cancelPending, and stop saving for good: no further writes, retries or
+   * flush on unmount. Call before a submission deletes the draft.
+   */
+  stop: () => Promise<void>;
 }
 
 /**
@@ -78,6 +89,9 @@ export function useLiveDraftAutosave({
    * time, so only the trigger needs to be stored — not the data itself.
    */
   const pendingTriggerRef = useRef<AutosaveTrigger | null>(null);
+  /** The write in flight, settled once its handlers have run. */
+  const inFlightPromiseRef = useRef<Promise<void> | null>(null);
+  const stoppedRef = useRef(false);
   const getPayloadRef = useRef(getPayload);
   getPayloadRef.current = getPayload;
 
@@ -93,10 +107,25 @@ export function useLiveDraftAutosave({
     }
   }, []);
 
+  /**
+   * One last write after unmount: no React updates and no retries. The browser
+   * completes the request in the background, which matters when a judge
+   * navigates away during an outage.
+   */
+  const flushAfterUnmount = useCallback(() => {
+    if (stoppedRef.current) return;
+    const payload = getPayloadRef.current();
+    if (!payload) return;
+    void putLiveDraft(payload.transcript, payload.formData).catch(() => {
+      // Best-effort only — component is unmounted, nothing to update.
+    });
+  }, []);
+
   const attemptRef = useRef<((trigger: AutosaveTrigger) => void) | null>(null);
 
   const attempt = useCallback(
     (trigger: AutosaveTrigger) => {
+      if (stoppedRef.current) return;
       const payload = getPayloadRef.current();
       if (!payload) return;
       // A second concurrent PUT could land out of order and persist the older
@@ -113,11 +142,15 @@ export function useLiveDraftAutosave({
       pendingTriggerRef.current = null;
       inFlightRef.current = true;
 
-      void putLiveDraft(payload.transcript, payload.formData)
+      const write = putLiveDraft(payload.transcript, payload.formData)
         .then(() => {
           inFlightRef.current = false;
+          if (stoppedRef.current) return;
           if (!isMountedRef.current) {
+            // A newer save queued behind this one would otherwise be lost.
+            const hadPending = pendingTriggerRef.current !== null;
             pendingTriggerRef.current = null;
+            if (hadPending) flushAfterUnmount();
             return;
           }
 
@@ -143,7 +176,14 @@ export function useLiveDraftAutosave({
         })
         .catch((error: unknown) => {
           inFlightRef.current = false;
-          if (!isMountedRef.current) return;
+          if (stoppedRef.current) return;
+          if (!isMountedRef.current) {
+            // Unmounted while this write was failing: the retry that would
+            // have recovered is gone, so make the one final attempt here.
+            pendingTriggerRef.current = null;
+            flushAfterUnmount();
+            return;
+          }
 
           const kind = liveDraftFailureKind(error);
           const now = Date.now();
@@ -182,8 +222,13 @@ export function useLiveDraftAutosave({
             attemptRef.current?.(retryTrigger);
           }, getAutosaveRetryDelayMs(next.consecutiveFailures));
         });
+      inFlightPromiseRef.current = write;
+      void write.finally(() => {
+        if (inFlightPromiseRef.current === write)
+          inFlightPromiseRef.current = null;
+      });
     },
-    [clearRetry, commit]
+    [clearRetry, commit, flushAfterUnmount]
   );
 
   attemptRef.current = attempt;
@@ -196,33 +241,38 @@ export function useLiveDraftAutosave({
         clearTimeout(retryTimerRef.current);
         retryTimerRef.current = null;
       }
-      // Best-effort: if saves have been failing (the retry timer we just
-      // cancelled was our only recovery path) or a save was queued but never
-      // flushed, fire one final PUT. The response cannot update React state
-      // (the component is gone) but the browser completes the request in the
-      // background — critical when a judge navigates away during an outage.
+      // If saves have been failing (the retry timer we just cancelled was our
+      // only recovery path) or a save was queued but never flushed, write once
+      // more. With a write in flight, its settle handler does this instead,
+      // after it, so the two cannot land out of order.
       if (!inFlightRef.current) {
         const shouldAttempt =
           stateRef.current.consecutiveFailures > 0 ||
           pendingTriggerRef.current !== null;
-        if (shouldAttempt) {
-          const payload = getPayloadRef.current();
-          if (payload) {
-            void putLiveDraft(payload.transcript, payload.formData).catch(
-              () => {
-                // Best-effort only — component is unmounted, nothing to update.
-              }
-            );
-          }
-        }
+        pendingTriggerRef.current = null;
+        if (shouldAttempt) flushAfterUnmount();
       }
     };
-  }, []);
+  }, [flushAfterUnmount]);
 
   const saveNow = useCallback(
     (trigger: AutosaveTrigger) => attemptRef.current?.(trigger),
     []
   );
 
-  return { state, saveNow };
+  const cancelPending = useCallback(async () => {
+    clearRetry();
+    pendingTriggerRef.current = null;
+    await inFlightPromiseRef.current;
+    // A write that failed while we waited has just scheduled its retry.
+    clearRetry();
+    pendingTriggerRef.current = null;
+  }, [clearRetry]);
+
+  const stop = useCallback(async () => {
+    stoppedRef.current = true;
+    await cancelPending();
+  }, [cancelPending]);
+
+  return { state, saveNow, cancelPending, stop };
 }

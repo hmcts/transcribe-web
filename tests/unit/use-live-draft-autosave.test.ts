@@ -239,4 +239,122 @@ describe("useLiveDraftAutosave", () => {
     await flush();
     expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
   });
+
+  describe("unmount and cancellation (PR #14 review)", () => {
+    /** A PUT that stays in flight until the test settles it. */
+    function holdPut() {
+      let settle: { resolve: () => void; reject: (e: unknown) => void } = {
+        resolve: () => undefined,
+        reject: () => undefined,
+      };
+      mockPutLiveDraft.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            settle = { resolve, reject };
+          })
+      );
+      return () => settle;
+    }
+
+    it("writes a save queued behind an in-flight PUT after unmount, once", async () => {
+      const settle = holdPut();
+      const getPayload = payloadGetter();
+      const { result, unmount } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload })
+      );
+
+      act(() => result.current.saveNow("interval"));
+      act(() => result.current.saveNow("pause")); // queued behind the PUT
+      unmount();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+
+      settle().resolve();
+      await flush();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+
+      await act(async () => vi.advanceTimersByTime(30_000));
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    });
+
+    it("writes once more after unmount when the in-flight PUT fails, without retrying", async () => {
+      const settle = holdPut();
+      const { result, unmount } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload: payloadGetter() })
+      );
+
+      act(() => result.current.saveNow("pause"));
+      unmount();
+      mockPutLiveDraft.mockRejectedValue(new LiveDraftError("network", "boom"));
+      settle().reject(new LiveDraftError("network", "boom"));
+      await flush();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+
+      await act(async () => vi.advanceTimersByTime(30_000));
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not write after unmount when the in-flight PUT saved everything", async () => {
+      const settle = holdPut();
+      const { result, unmount } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload: payloadGetter() })
+      );
+
+      act(() => result.current.saveNow("pause"));
+      unmount();
+      settle().resolve();
+      await flush();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it("stop waits for the write in flight, then never writes again", async () => {
+      const settle = holdPut();
+      const { result, unmount } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload: payloadGetter() })
+      );
+
+      act(() => result.current.saveNow("interval"));
+      act(() => result.current.saveNow("pause")); // queued
+      let stopped = false;
+      let stopping: Promise<void> = Promise.resolve();
+      act(() => {
+        stopping = result.current.stop().then(() => {
+          stopped = true;
+        });
+      });
+      await flush();
+      expect(stopped).toBe(false); // still waiting for the PUT
+
+      settle().reject(new LiveDraftError("network", "boom"));
+      await act(async () => {
+        await stopping;
+      });
+      expect(stopped).toBe(true);
+
+      act(() => result.current.saveNow("interval"));
+      unmount();
+      await act(async () => vi.advanceTimersByTime(30_000));
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+    });
+
+    it("cancelPending drops a scheduled retry but keeps saving afterwards", async () => {
+      mockPutLiveDraft.mockRejectedValueOnce(
+        new LiveDraftError("network", "boom")
+      );
+      const { result } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload: payloadGetter() })
+      );
+
+      act(() => result.current.saveNow("interval"));
+      await flush();
+      await act(async () => {
+        await result.current.cancelPending();
+      });
+      await act(async () => vi.advanceTimersByTime(30_000));
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+
+      act(() => result.current.saveNow("interval"));
+      await flush();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    });
+  });
 });

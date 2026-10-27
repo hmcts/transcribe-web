@@ -143,6 +143,47 @@ export default function RecordPage() {
   const lateFinalisationWindowRef = useRef(false);
   const isSmUp = useMediaQuery("(min-width: 640px)");
 
+  /**
+   * The current draft, or null when there is nothing worth saving.
+   *
+   * Returning null preserves the existing content gating: the page only writes
+   * once a transcript section is non-empty. That behaviour is deliberate and
+   * was confirmed in scope for DIAAT-297, so it is kept exactly as it was —
+   * only the handling of the *result* of a write changes in DIAAT-296.
+   */
+  const getAutosavePayload = useCallback(() => {
+    const transcript = sectionedTranscriptRef.current;
+    const hasContent =
+      transcript.background.length > 0 ||
+      transcript.evidence.length > 0 ||
+      transcript.facts.length > 0;
+    if (!hasContent) return null;
+    return { transcript, formData: formDataRef.current };
+  }, []);
+
+  const {
+    saveNow: saveDraftNow,
+    state: autosaveState,
+    cancelPending: cancelPendingDraftSaves,
+    stop: stopDraftSaves,
+  } = useLiveDraftAutosave({ getPayload: getAutosavePayload });
+
+  /**
+   * Delete the server draft once no earlier autosave can land after the delete
+   * and bring it back. Clears the expiry warning, which described that draft.
+   */
+  const deleteDraft = useCallback(async () => {
+    await cancelPendingDraftSaves();
+    await deleteLiveDraft();
+    setDraftExpiryAlert(null);
+  }, [cancelPendingDraftSaves]);
+
+  // A confirmed save renews the draft's 24 hours (and replaces any older draft),
+  // so an expiry warning from the initial lookup no longer applies.
+  useEffect(() => {
+    if (autosaveState.lastSavedAt !== null) setDraftExpiryAlert(null);
+  }, [autosaveState.lastSavedAt]);
+
   const layoutMode = useMemo<LayoutMode>(() => {
     if (isSmUp) return "wide";
     return "mobile";
@@ -242,7 +283,7 @@ export default function RecordPage() {
             },
             cancel: {
               label: "Discard",
-              onClick: () => { void deleteLiveDraft().catch(console.warn); },
+              onClick: () => { void deleteDraft().catch(console.warn); },
             },
             duration: Infinity,
           },
@@ -272,7 +313,7 @@ export default function RecordPage() {
         restoreToastIdRef.current = undefined;
       }
     };
-  }, []);
+  }, [deleteDraft]);
 
   // Delete the server draft immediately when all transcript sections are cleared,
   // so stale drafts don't reappear on the next visit.
@@ -284,14 +325,14 @@ export default function RecordPage() {
 
     if (!hasContent) {
       if (hadDraftContentRef.current) {
-        void deleteLiveDraft().catch(err => console.warn("Failed to delete draft:", err));
+        void deleteDraft().catch(err => console.warn("Failed to delete draft:", err));
       }
       hadDraftContentRef.current = false;
       return;
     }
 
     hadDraftContentRef.current = true;
-  }, [sectionedTranscript]);
+  }, [sectionedTranscript, deleteDraft]);
 
   // Keep refs in sync so interval/pause handlers always read latest values
   // without restarting the interval on every transcript/formData change.
@@ -303,28 +344,6 @@ export default function RecordPage() {
     formDataRef.current = formData;
     isDirtyRef.current = true;
   }, [formData]);
-
-  /**
-   * The current draft, or null when there is nothing worth saving.
-   *
-   * Returning null preserves the existing content gating: the page only writes
-   * once a transcript section is non-empty. That behaviour is deliberate and
-   * was confirmed in scope for DIAAT-297, so it is kept exactly as it was —
-   * only the handling of the *result* of a write changes in DIAAT-296.
-   */
-  const getAutosavePayload = useCallback(() => {
-    const transcript = sectionedTranscriptRef.current;
-    const hasContent =
-      transcript.background.length > 0 ||
-      transcript.evidence.length > 0 ||
-      transcript.facts.length > 0;
-    if (!hasContent) return null;
-    return { transcript, formData: formDataRef.current };
-  }, []);
-
-  const { saveNow: saveDraftNow, state: autosaveState } = useLiveDraftAutosave({
-    getPayload: getAutosavePayload,
-  });
 
   // Save immediately when recording transitions from active → paused/stopped.
   useEffect(() => {
@@ -490,6 +509,10 @@ export default function RecordPage() {
         }
         const data = parsedResponse.data;
         track("hearing_submitted", { mode });
+        // Stop autosave for good first: a pending retry or the flush on leaving
+        // the page would otherwise write the submitted transcript back as a
+        // draft, to be offered for restore on the next visit.
+        await stopDraftSaves();
         await deleteLiveDraft().catch(console.warn);
         router.push("/");
         return data;
@@ -505,7 +528,7 @@ export default function RecordPage() {
     })();
 
     submitHearingToast(submissionPromise);
-  }, [formData, sectionedTranscript, router, editorContent, mode]);
+  }, [formData, sectionedTranscript, router, editorContent, mode, stopDraftSaves]);
 
   // Only "healthy" counts as recording. `isRecordingActive` is intent; a
   // session can be collapsing behind it.
