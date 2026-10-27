@@ -424,6 +424,13 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
 
       /** Ignore late events from a session we have already torn down. */
       const isCurrent = () => recognizerRef.current === transcriber;
+      /**
+       * This recognizer's utterance in progress. Unlike currentSegmentIdRef it
+       * is not reset when the session stops or replaced by a newer session, so
+       * a final flushed during the stop keeps the id (and with it the section)
+       * its interim result was given.
+       */
+      let partialSegmentId: string | null = null;
 
       // ------------------------------------------------------------------
       // Event handlers
@@ -440,6 +447,7 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
             currentSegmentIdRef.current = `seg-${++segmentCounterRef.current}`;
           }
           const segmentId = currentSegmentIdRef.current;
+          partialSegmentId = segmentId;
 
           setSegments((prev) => {
             const idx = prev.findIndex((s) => s.id === segmentId);
@@ -477,12 +485,14 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         if (e.result.reason === sdk.ResultReason.RecognizedSpeech) {
           const speaker = e.result.speakerId || "Unknown";
           const text = e.result.text || "";
-          // A stopping recognizer gets a fresh id: currentSegmentIdRef may
-          // already belong to the utterance in progress in a newer session, and
-          // its own interim segment was cleared when it was stopped.
+          // A stopping recognizer uses its own interim id, never
+          // currentSegmentIdRef, which may already belong to an utterance in a
+          // newer session. Reusing the interim id keeps the final in the section
+          // where the utterance started (dictation.tsx maps ids to sections).
           const segmentId =
-            (current ? currentSegmentIdRef.current : null) ??
+            (current ? currentSegmentIdRef.current : partialSegmentId) ??
             `seg-${++segmentCounterRef.current}`;
+          partialSegmentId = null;
           if (!current) {
             setSegments((prev) => [
               ...prev,
@@ -508,9 +518,12 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
             return [...prev, { id: segmentId, speaker, text, isFinal: true }];
           });
           currentSegmentIdRef.current = null;
-        } else if (e.result.reason === sdk.ResultReason.NoMatch && current) {
-          console.info("[speech] No match - speech could not be recognized");
-          currentSegmentIdRef.current = null;
+        } else if (e.result.reason === sdk.ResultReason.NoMatch) {
+          partialSegmentId = null;
+          if (current) {
+            console.info("[speech] No match - speech could not be recognized");
+            currentSegmentIdRef.current = null;
+          }
         }
       };
 

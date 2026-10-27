@@ -392,6 +392,67 @@ describe("useRealtimeTranscription session health", () => {
       ]);
     });
 
+    const interimResult = (text: string) => ({
+      result: { reason: 2, speakerId: "Guest-1", text },
+    });
+
+    it("gives the flushed final the id of its own interim result", async () => {
+      // dictation.tsx files a segment under the section its id was first seen
+      // in, so a fresh id would move an utterance begun in Background to
+      // whichever section is active when the user pauses.
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      const stopping = latest();
+      holdStop(stopping);
+
+      await act(async () => {
+        stopping.transcribing?.(null, interimResult("the last"));
+      });
+      const interimId = result.current.segments[0].id;
+
+      await act(async () => {
+        result.current.disconnect();
+      });
+      await act(async () => {
+        stopping.transcribed?.(null, finalResult("the last sentence"));
+      });
+
+      expect(result.current.segments).toEqual([
+        expect.objectContaining({ id: interimId, isFinal: true }),
+      ]);
+    });
+
+    it("does not take the id of an utterance in a newer session", async () => {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      const stopping = latest();
+      holdStop(stopping);
+      await act(async () => {
+        stopping.transcribing?.(null, interimResult("old"));
+      });
+      const oldId = result.current.segments[0].id;
+
+      await act(async () => {
+        result.current.disconnect();
+      });
+      await startRecording(result.current.connect);
+      await act(async () => {
+        latest().transcribing?.(null, interimResult("new"));
+      });
+      const newId = result.current.segments[0].id;
+
+      await act(async () => {
+        stopping.transcribed?.(null, finalResult("old sentence"));
+      });
+
+      const flushed = result.current.segments.find((seg) => seg.isFinal);
+      expect(flushed?.id).toBe(oldId);
+      expect(flushed?.id).not.toBe(newId);
+      expect(
+        result.current.segments.find((seg) => seg.id === newId)?.isFinal
+      ).toBe(false);
+    });
+
     it("still ignores other events from a stopping recognizer", async () => {
       const { result } = renderHook(() => useRealtimeTranscription());
       await startRecording(result.current.connect);
