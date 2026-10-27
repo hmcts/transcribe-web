@@ -81,4 +81,50 @@ describe("putLiveDraft", () => {
     const error = await putLiveDraft(TRANSCRIPT, {}).catch((e) => e);
     expect(error.cause).toBe(underlying);
   });
+
+  describe("deadline (PR #14 review)", () => {
+    /** A fetch that never answers until its signal aborts, like a stalled connection. */
+    function stallingFetch() {
+      mockFetch.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError"))
+            );
+          })
+      );
+    }
+
+    it("abandons a stalled save as a network failure after the deadline", async () => {
+      vi.useFakeTimers();
+      try {
+        stallingFetch();
+        const result = putLiveDraft(TRANSCRIPT, {}, 1_000).catch((e) => e);
+        await vi.advanceTimersByTimeAsync(1_000);
+        const error = await result;
+        expect(error).toBeInstanceOf(LiveDraftError);
+        expect(error.kind).toBe("network");
+        expect(error.message).toMatch(/no response in time/);
+        expect(mockFetch.mock.calls[0][1].signal.aborted).toBe(true);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("also ends when the token lookup stalls", async () => {
+      vi.useFakeTimers();
+      try {
+        const { getAuthToken } = await import("@/lib/auth-utils");
+        vi.mocked(getAuthToken).mockReturnValueOnce(
+          new Promise<never>(() => undefined)
+        );
+        const result = putLiveDraft(TRANSCRIPT, {}, 1_000).catch((e) => e);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect((await result).kind).toBe("network");
+        expect(mockFetch).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

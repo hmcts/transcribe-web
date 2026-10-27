@@ -37,11 +37,38 @@ async function liveDraftFetch(
   } catch (error) {
     throw new LiveDraftError(
       "network",
-      `Failed to ${action} live draft: network request did not complete`,
+      init.signal?.aborted
+        ? `Failed to ${action} live draft: no response in time`
+        : `Failed to ${action} live draft: network request did not complete`,
       undefined,
       { cause: error }
     );
   }
+}
+
+/**
+ * How long a save may take before it is abandoned and treated as failed.
+ * Without a deadline a stalled connection holds the single in-flight save
+ * forever: later saves only queue behind it, and no warning or retry runs.
+ */
+export const LIVE_DRAFT_SAVE_TIMEOUT_MS = 15_000;
+
+/** Reject when `signal` aborts, so a step that cannot be aborted still ends. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () =>
+      reject(
+        new LiveDraftError(
+          "network",
+          "Failed to save live draft: no response in time"
+        )
+      );
+    if (signal.aborted) return onAbort();
+    signal.addEventListener("abort", onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
 }
 
 export async function getLiveDraft(): Promise<LiveDraftApiResponse | null> {
@@ -64,23 +91,32 @@ export async function getLiveDraft(): Promise<LiveDraftApiResponse | null> {
 export async function putLiveDraft(
   transcript: SectionedTranscript,
   formData: Partial<DictationFormValues>,
+  timeoutMs: number = LIVE_DRAFT_SAVE_TIMEOUT_MS
 ): Promise<void> {
-  const headers = await authHeaders();
-  const res = await liveDraftFetch(
-    "/api/live-draft",
-    {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...headers },
-      body: JSON.stringify({ transcript, form_data: formData }),
-    },
-    "save"
-  );
-  if (!res.ok) {
-    throw new LiveDraftError(
-      classifyLiveDraftStatus(res.status),
-      `Failed to save live draft: ${res.status}`,
-      res.status
+  // The deadline covers the token lookup too, which can also stall.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers = await untilAborted(authHeaders(), controller.signal);
+    const res = await liveDraftFetch(
+      "/api/live-draft",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...headers },
+        body: JSON.stringify({ transcript, form_data: formData }),
+        signal: controller.signal,
+      },
+      "save"
     );
+    if (!res.ok) {
+      throw new LiveDraftError(
+        classifyLiveDraftStatus(res.status),
+        `Failed to save live draft: ${res.status}`,
+        res.status
+      );
+    }
+  } finally {
+    clearTimeout(timer);
   }
 }
 
