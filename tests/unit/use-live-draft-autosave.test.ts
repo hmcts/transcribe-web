@@ -336,25 +336,135 @@ describe("useLiveDraftAutosave", () => {
       expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
     });
 
-    it("cancelPending drops a scheduled retry but keeps saving afterwards", async () => {
+    /** A delete the test completes by hand, recording what ran meanwhile. */
+    function heldDelete() {
+      let finish: () => void = () => undefined;
+      const callsAtStart = { value: -1 };
+      const operation = vi.fn(
+        () =>
+          new Promise<void>((resolve) => {
+            callsAtStart.value = mockPutLiveDraft.mock.calls.length;
+            finish = resolve;
+          })
+      );
+      return { operation, callsAtStart, finish: () => finish() };
+    }
+
+    it("runExclusive waits for the write in flight and holds new saves until the delete is done", async () => {
+      const settle = holdPut();
+      const { result } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload: payloadGetter() })
+      );
+      const del = heldDelete();
+
+      act(() => result.current.saveNow("interval"));
+      let deleting: Promise<void> = Promise.resolve();
+      act(() => {
+        deleting = result.current.runExclusive(del.operation);
+      });
+      // A save arriving while the delete waits must not start a second PUT.
+      act(() => result.current.saveNow("pause"));
+      await flush();
+      expect(del.operation).not.toHaveBeenCalled();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+
+      settle().resolve();
+      await flush();
+      expect(del.operation).toHaveBeenCalledTimes(1);
+      expect(del.callsAtStart.value).toBe(1);
+
+      // Still nothing written while the delete runs.
+      act(() => result.current.saveNow("interval"));
+      await flush();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+
+      del.finish();
+      await act(async () => {
+        await deleting;
+      });
+      await flush();
+      // The saves that arrived meanwhile are written once, after the delete.
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    });
+
+    it("runExclusive holds a retry that falls due during the delete", async () => {
       mockPutLiveDraft.mockRejectedValueOnce(
         new LiveDraftError("network", "boom")
       );
       const { result } = renderHook(() =>
         useLiveDraftAutosave({ getPayload: payloadGetter() })
       );
+      const del = heldDelete();
 
       act(() => result.current.saveNow("interval"));
       await flush();
-      await act(async () => {
-        await result.current.cancelPending();
+      let deleting: Promise<void> = Promise.resolve();
+      act(() => {
+        deleting = result.current.runExclusive(del.operation);
       });
-      await act(async () => vi.advanceTimersByTime(30_000));
+      await flush();
+      await act(async () => vi.advanceTimersByTime(30_000)); // retry due
       expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
 
-      act(() => result.current.saveNow("interval"));
+      del.finish();
+      await act(async () => {
+        await deleting;
+      });
       await flush();
       expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    });
+
+    it("runExclusive holds the unmount flush until the delete is done", async () => {
+      mockPutLiveDraft.mockRejectedValueOnce(
+        new LiveDraftError("network", "boom")
+      );
+      const { result, unmount } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload: payloadGetter() })
+      );
+      const del = heldDelete();
+
+      act(() => result.current.saveNow("interval"));
+      await flush();
+      let deleting: Promise<void> = Promise.resolve();
+      act(() => {
+        deleting = result.current.runExclusive(del.operation);
+      });
+      await flush();
+      unmount(); // failing saves: the unmount flush is due
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+
+      del.finish();
+      await deleting;
+      await flush();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    });
+
+    it("runExclusive releases held saves even when the delete fails", async () => {
+      const { result } = renderHook(() =>
+        useLiveDraftAutosave({ getPayload: payloadGetter() })
+      );
+      let fail: (e: unknown) => void = () => undefined;
+      let deleting: Promise<unknown> = Promise.resolve();
+      act(() => {
+        deleting = result.current
+          .runExclusive(
+            () =>
+              new Promise<void>((_resolve, reject) => {
+                fail = reject;
+              })
+          )
+          .catch((e) => e);
+      });
+      await flush();
+      act(() => result.current.saveNow("interval"));
+      expect(mockPutLiveDraft).not.toHaveBeenCalled();
+
+      fail(new Error("delete failed"));
+      await act(async () => {
+        await deleting;
+      });
+      await flush();
+      expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
     });
   });
 });

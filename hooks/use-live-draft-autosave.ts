@@ -40,14 +40,18 @@ export interface UseLiveDraftAutosaveResult {
   /** Write the current payload now. Safe to call while one is in flight. */
   saveNow: (trigger: AutosaveTrigger) => void;
   /**
-   * Drop any queued save and scheduled retry, and resolve once the write in
-   * flight (if any) has settled. Call before deleting the draft so no earlier
-   * write lands after the delete. Saving carries on afterwards.
+   * Run `operation` (deleting the draft) with no write in flight or starting:
+   * waits for the write in flight, holds every save that arrives meanwhile
+   * (including retries and the flush on unmount), then writes the latest
+   * content once `operation` has finished. A write can therefore never land
+   * before or alongside the delete, bringing deleted content back or deleting
+   * newer content.
    */
-  cancelPending: () => Promise<void>;
+  runExclusive: <T>(operation: () => Promise<T>) => Promise<T>;
   /**
-   * cancelPending, and stop saving for good: no further writes, retries or
-   * flush on unmount. Call before a submission deletes the draft.
+   * Stop saving for good: drop queued saves and retries, wait for the write in
+   * flight, and never write again, not even on unmount. Call before a
+   * submission deletes the draft.
    */
   stop: () => Promise<void>;
 }
@@ -92,6 +96,10 @@ export function useLiveDraftAutosave({
   /** The write in flight, settled once its handlers have run. */
   const inFlightPromiseRef = useRef<Promise<void> | null>(null);
   const stoppedRef = useRef(false);
+  /** Operations in progress under runExclusive; writes wait while non-zero. */
+  const exclusiveRef = useRef(0);
+  /** The flush on unmount was due while writes were held. */
+  const flushHeldRef = useRef(false);
   const getPayloadRef = useRef(getPayload);
   getPayloadRef.current = getPayload;
 
@@ -114,6 +122,10 @@ export function useLiveDraftAutosave({
    */
   const flushAfterUnmount = useCallback(() => {
     if (stoppedRef.current) return;
+    if (exclusiveRef.current > 0) {
+      flushHeldRef.current = true; // runExclusive writes it afterwards
+      return;
+    }
     const payload = getPayloadRef.current();
     if (!payload) return;
     void putLiveDraft(payload.transcript, payload.formData).catch(() => {
@@ -129,9 +141,10 @@ export function useLiveDraftAutosave({
       const payload = getPayloadRef.current();
       if (!payload) return;
       // A second concurrent PUT could land out of order and persist the older
-      // transcript over the newer one. Queue the trigger so the latest payload
-      // is written once the in-flight request settles.
-      if (inFlightRef.current) {
+      // transcript over the newer one, and a PUT alongside a delete could undo
+      // it. Queue the trigger so the latest payload is written once the
+      // in-flight request or exclusive operation has finished.
+      if (inFlightRef.current || exclusiveRef.current > 0) {
         pendingTriggerRef.current = trigger;
         return;
       }
@@ -260,19 +273,42 @@ export function useLiveDraftAutosave({
     []
   );
 
-  const cancelPending = useCallback(async () => {
-    clearRetry();
-    pendingTriggerRef.current = null;
-    await inFlightPromiseRef.current;
-    // A write that failed while we waited has just scheduled its retry.
-    clearRetry();
-    pendingTriggerRef.current = null;
-  }, [clearRetry]);
+  /** Resolve once no write is in flight. New writes cannot start meanwhile. */
+  const settleInFlight = useCallback(async () => {
+    while (inFlightPromiseRef.current) await inFlightPromiseRef.current;
+  }, []);
+
+  const runExclusive = useCallback(
+    async <T>(operation: () => Promise<T>): Promise<T> => {
+      exclusiveRef.current += 1;
+      try {
+        await settleInFlight();
+        return await operation();
+      } finally {
+        exclusiveRef.current -= 1;
+        if (exclusiveRef.current === 0) {
+          const pending = pendingTriggerRef.current;
+          if (!isMountedRef.current) {
+            const flushHeld = flushHeldRef.current;
+            flushHeldRef.current = false;
+            pendingTriggerRef.current = null;
+            if (flushHeld || pending !== null) flushAfterUnmount();
+          } else if (pending !== null) {
+            pendingTriggerRef.current = null;
+            attemptRef.current?.(pending);
+          }
+        }
+      }
+    },
+    [settleInFlight, flushAfterUnmount]
+  );
 
   const stop = useCallback(async () => {
     stoppedRef.current = true;
-    await cancelPending();
-  }, [cancelPending]);
+    clearRetry();
+    pendingTriggerRef.current = null;
+    await settleInFlight();
+  }, [clearRetry, settleInFlight]);
 
-  return { state, saveNow, cancelPending, stop };
+  return { state, saveNow, runExclusive, stop };
 }

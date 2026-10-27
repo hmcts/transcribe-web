@@ -168,19 +168,19 @@ export default function RecordPage() {
   const {
     saveNow: saveDraftNow,
     state: autosaveState,
-    cancelPending: cancelPendingDraftSaves,
+    runExclusive: runWithoutDraftSaves,
     stop: stopDraftSaves,
   } = useLiveDraftAutosave({ getPayload: getAutosavePayload });
 
   /**
-   * Delete the server draft once no earlier autosave can land after the delete
-   * and bring it back. Clears the expiry warning, which described that draft.
+   * Delete the server draft with no autosave write before or alongside it, so
+   * a write can neither bring deleted content back nor be deleted itself.
+   * Clears the expiry warning, which described that draft.
    */
   const deleteDraft = useCallback(async () => {
-    await cancelPendingDraftSaves();
-    await deleteLiveDraft();
+    await runWithoutDraftSaves(deleteLiveDraft);
     setDraftExpiryAlert(null);
-  }, [cancelPendingDraftSaves]);
+  }, [runWithoutDraftSaves]);
 
   // A confirmed save renews the draft's 24 hours (and replaces any older draft),
   // so an expiry warning from the initial lookup no longer applies.
