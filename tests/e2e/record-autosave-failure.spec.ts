@@ -18,40 +18,64 @@ import { expect, test } from "@playwright/test";
 
 const LIVE_DRAFT = "**/api/live-draft";
 
-test.use({ permissions: ["microphone"] });
+/** Deterministic content, offered to the page as a draft to restore. */
+const SEEDED_DRAFT = {
+  transcript: {
+    background: [
+      {
+        speaker: "Judge",
+        text: "Seeded for the autosave e2e test.",
+        timestamp: "00:00",
+      },
+    ],
+    evidence: [],
+    facts: [],
+  },
+  form_data: {},
+  saved_at: new Date().toISOString(),
+};
 
 /**
  * Get a transcript onto the page so autosave has something to write.
  *
- * The autosave content gating is deliberate â€” the page only writes once a
- * transcript section is non-empty â€” so a test that never produces speech would
- * see no saves at all and prove nothing.
+ * The autosave content gating is deliberate: the page only writes once a
+ * transcript section is non-empty. A fake microphone produces no speech, so the
+ * content comes from restoring a draft; writes still go to the real backend.
+ * Recording then saves on its interval, which shows saving works before a test
+ * breaks it.
  */
-async function dictateSomething(page: import("@playwright/test").Page) {
+async function seedTranscriptAndRecord(page: import("@playwright/test").Page) {
+  await page.route(LIVE_DRAFT, (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ status: 200, json: SEEDED_DRAFT })
+      : route.continue()
+  );
+  await page.goto("/record?mode=mic");
+  await page.getByRole("button", { name: "Restore" }).click();
   await page.getByRole("button", { name: "Start recording" }).click();
-  await expect(page.getByTestId("save-status-label")).toBeVisible({
-    timeout: 60_000,
+  await expect(page.getByTestId("save-status-label")).toHaveText(/^Saved /, {
+    timeout: 30_000,
   });
 }
 
-test.describe("Record page with live-draft saving broken", () => {
-  test.beforeEach(async ({ context }) => {
-    await context.grantPermissions(["microphone"]);
-  });
+/**
+ * Make the page write again. Pausing always saves (no dirty check), so the
+ * next write reaches whatever the test has done to the endpoint.
+ */
+async function pause(page: import("@playwright/test").Page) {
+  await page.getByRole("button", { name: "Pause recording" }).click();
+}
 
+test.describe("Record page with live-draft saving broken", () => {
   test("warns persistently when saves start failing, then clears on recovery", async ({
     page,
   }) => {
-    await page.goto("/record?mode=mic");
-    await dictateSomething(page);
-
-    // Confirm saving was working before we break it, so the warning below is
-    // attributable to the break and not to a page that never saved.
-    await expect(page.getByTestId("save-status-label")).toHaveText(/^Saved /, {
-      timeout: 30_000,
-    });
+    // Saving works first, so the warning below is attributable to the break
+    // and not to a page that never saved.
+    await seedTranscriptAndRecord(page);
 
     await page.route(LIVE_DRAFT, (route) => route.abort("connectionfailed"));
+    await pause(page);
 
     const banner = page.getByTestId("record-alert-banner");
     await expect(banner).toBeVisible({ timeout: 30_000 });
@@ -81,12 +105,12 @@ test.describe("Record page with live-draft saving broken", () => {
     await page.route("**/.auth/refresh", (route) =>
       route.fulfill({ status: 401, body: "" })
     );
-    await page.goto("/record?mode=mic");
-    await dictateSomething(page);
+    await seedTranscriptAndRecord(page);
 
     await page.route(LIVE_DRAFT, (route) =>
       route.fulfill({ status: 401, body: "" })
     );
+    await pause(page);
 
     const banner = page.getByTestId("record-alert-banner");
     await expect(banner).toBeVisible({ timeout: 30_000 });

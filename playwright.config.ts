@@ -24,7 +24,19 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      use: {
+        ...devices["Desktop Chrome"],
+        // A synthetic microphone. Granting the permission alone does not create
+        // a capture device, so on a runner without audio hardware getUserMedia
+        // would fail before the record page reached the Speech service.
+        permissions: ["microphone"],
+        launchOptions: {
+          args: [
+            "--use-fake-device-for-media-stream",
+            "--use-fake-ui-for-media-stream",
+          ],
+        },
+      },
     },
   ],
 });

@@ -21,20 +21,37 @@ const SPEECH_SOCKET_PATTERNS = [
   "**/stt/**",
 ];
 
-test.use({ permissions: ["microphone"] });
+// The chromium project in playwright.config.ts supplies a fake microphone, so
+// getUserMedia succeeds and the page goes on to open the speech socket.
 
 test.describe("Record page with a broken speech WebSocket path", () => {
-  test.beforeEach(async ({ page, context }) => {
-    // A fake device so getUserMedia resolves without real hardware.
-    await context.grantPermissions(["microphone"]);
+  /** Speech connections the page attempted and we blocked. */
+  let blockedSpeechConnections = 0;
+
+  test.beforeEach(async ({ page }) => {
+    blockedSpeechConnections = 0;
 
     // Kill the speech socket while leaving every /api/* call healthy.
     for (const pattern of SPEECH_SOCKET_PATTERNS) {
-      await page.routeWebSocket(pattern, (ws) => ws.close());
-      await page.route(pattern, (route) => route.abort("connectionfailed"));
+      await page.routeWebSocket(pattern, (ws) => {
+        blockedSpeechConnections += 1;
+        ws.close();
+      });
+      await page.route(pattern, (route) => {
+        blockedSpeechConnections += 1;
+        return route.abort("connectionfailed");
+      });
     }
 
     await page.goto("/record?mode=mic");
+  });
+
+  test.afterEach(async () => {
+    // Without this, a page that failed earlier (no microphone, no token) would
+    // show the same banners and pass without exercising the blocked socket.
+    await expect
+      .poll(() => blockedSpeechConnections, { timeout: 30_000 })
+      .toBeGreaterThan(0);
   });
 
   test("shows a persistent error banner and stops claiming to record", async ({
