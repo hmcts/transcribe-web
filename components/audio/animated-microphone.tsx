@@ -136,6 +136,14 @@ export default function AnimatedMicrophone({
       viewBox="0 0 1024 1024"
       className={cn("h-full w-full", className)}
       xmlns="http://www.w3.org/2000/svg"
+      // The struck-through state is the only signal that speech is not being
+      // captured in some layouts, so it needs a name and a queryable flag
+      // rather than being purely decorative (DIAAT-297).
+      role="img"
+      aria-label={
+        isActive ? "Microphone recording" : "Microphone not recording"
+      }
+      data-active={isActive}
     >
       <defs>
         <clipPath id={clipPathId}>
