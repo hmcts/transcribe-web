@@ -2,10 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-// The pods Flux deploys get their runtime secrets only from the chart's
-// keyVaults block: each secret is mounted as a file named after its alias, and
-// start.js loads those files into process.env before the server starts. These
-// checks keep the App Insights mount and the code that reads it in step.
+// keyVaults secrets are mounted as files named after their alias, which start.js
+// loads into process.env, so the alias must be the name instrumentation.ts reads.
 const root = join(__dirname, "../..");
 const values = readFileSync(
   join(root, "charts/transcribe-web/values.yaml"),

@@ -6,10 +6,8 @@ def type = "nodejs"
 def product = "transcribe"
 def component = "web"
 
-// Build-time secret injection: the App Insights connection string is
-// substituted into values.{aat,preview}.template.yaml for the Jenkins releases.
-// The pods Flux deploys get it, like the other runtime secrets, from the chart's
-// keyVaults block (values.yaml), loaded into the environment by start.js.
+// Substituted into values.{aat,preview}.template.yaml for the Jenkins releases.
+// Flux-deployed pods read it from the chart's keyVaults mount instead.
 def secrets = [
   'transcribe-${env}': [
     secret('AppInsightsConnectionString', 'APP_INSIGHTS_CONNECTION_STRING'),

@@ -30,8 +30,7 @@ nodejs:
     # HMCTS tenant (CJS Common Platform); the client ID is per environment
     # (values.<env>.template.yaml): app registrations from hmcts/central-app-registration.
     AZURE_AD_TENANT_ID: 531ff96d-0ae9-462a-8d2d-bec7c0b42082
-    # Telemetry service name (cloud_RoleName in App Insights). Without it the
-    # Azure Monitor distro reports "unknown_service:node".
+    # cloud_RoleName in App Insights; unset, it is "unknown_service:node".
     OTEL_SERVICE_NAME: transcribe-web
 
   keyVaults:
@@ -43,9 +42,7 @@ nodejs:
           alias: AZURE_AD_CLIENT_SECRET
         - name: web-redis-connection-string
           alias: REDIS_URL
-        # Server-side telemetry: instrumentation.ts starts the Azure Monitor
-        # OpenTelemetry distro only when this is set. Created in every
-        # environment by transcribe-shared-infrastructure
-        # (application-insights.tf).
+        # instrumentation.ts starts Azure Monitor only when this is set.
+        # Created by transcribe-shared-infrastructure (application-insights.tf).
         - name: AppInsightsConnectionString
           alias: APPLICATIONINSIGHTS_CONNECTION_STRING
