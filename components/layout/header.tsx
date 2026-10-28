@@ -26,7 +26,12 @@ import cn from "@/lib/utils";
 import { useTranscripts } from "@/providers/transcripts";
 
 export default function Header() {
-  const { selectedRecordingMode } = useTranscripts();
+  const { isRecording, selectedRecordingMode } = useTranscripts();
+  // Hide the links away from the current page while a session is live: a
+  // client-side navigation would unmount it, and the provider's beforeunload
+  // and popstate guards do not catch <Link> clicks. Live dictation on /record
+  // sets isRecording, not selectedRecordingMode.
+  const hideNavLinks = Boolean(selectedRecordingMode) || isRecording;
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -136,7 +141,7 @@ export default function Header() {
         </Link>
 
         <nav className="hidden items-center gap-2 md:flex">
-          {!selectedRecordingMode && isAdminUser && (
+          {!hideNavLinks && isAdminUser && (
             <Link
               href="/admin"
               className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
@@ -150,7 +155,7 @@ export default function Header() {
           {/* MERGE NOTE: entry points for both feature areas (dictation and
               hearing recordings). Without nav links the merged app would ship
               two unreachable halves rather than one application. */}
-          {!selectedRecordingMode && (
+          {!hideNavLinks && (
             <Link
               href={DICTATION_HREF}
               className={cn(
@@ -165,7 +170,7 @@ export default function Header() {
               <span className="text-base">Dictation</span>
             </Link>
           )}
-          {!selectedRecordingMode && (
+          {!hideNavLinks && (
             <Link
               href={HEARING_RECORDINGS_HREF}
               className={cn(
@@ -180,7 +185,7 @@ export default function Header() {
               <span className="text-base">Hearing recordings</span>
             </Link>
           )}
-          {!selectedRecordingMode && (
+          {!hideNavLinks && (
             <Link
               href="/help"
               className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
@@ -219,7 +224,7 @@ export default function Header() {
                   Home
                 </Link>
               </SheetClose>
-              {!selectedRecordingMode && isAdminUser && (
+              {!hideNavLinks && isAdminUser && (
                 <SheetClose asChild>
                   <Link
                     href="/admin"
@@ -230,7 +235,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!selectedRecordingMode && (
+              {!hideNavLinks && (
                 <SheetClose asChild>
                   <Link
                     href={DICTATION_HREF}
@@ -245,7 +250,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!selectedRecordingMode && (
+              {!hideNavLinks && (
                 <SheetClose asChild>
                   <Link
                     href={HEARING_RECORDINGS_HREF}
@@ -262,7 +267,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!selectedRecordingMode && (
+              {!hideNavLinks && (
                 <SheetClose asChild>
                   <Link
                     href="/help"

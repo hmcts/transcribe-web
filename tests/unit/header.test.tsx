@@ -1,9 +1,10 @@
-import { render, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mockPush = vi.fn();
 let mockPathname = "/";
 let mockSelectedRecordingMode: string | null = null;
+let mockIsRecording = false;
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -35,7 +36,10 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/providers/transcripts", () => ({
-  useTranscripts: () => ({ selectedRecordingMode: mockSelectedRecordingMode }),
+  useTranscripts: () => ({
+    isRecording: mockIsRecording,
+    selectedRecordingMode: mockSelectedRecordingMode,
+  }),
 }));
 
 vi.mock("@/components/theme-toggle", () => ({
@@ -64,6 +68,7 @@ describe("Header", () => {
   afterEach(() => {
     mockPathname = "/";
     mockSelectedRecordingMode = null;
+    mockIsRecording = false;
   });
 
   it("renders the Bench Notes text", () => {
@@ -88,13 +93,72 @@ describe("Header", () => {
     expect((link as HTMLAnchorElement).href).toContain("/");
   });
 
-  it("hides Help, Dictation and Hearing recordings while recording", () => {
-    mockSelectedRecordingMode = "mic";
+  it.each([
+    [
+      "a recording mode is selected",
+      () => {
+        mockSelectedRecordingMode = "mic";
+      },
+    ],
+    [
+      "live dictation is recording",
+      () => {
+        mockPathname = "/record";
+        mockIsRecording = true;
+      },
+    ],
+  ])("hides Help, Dictation and Hearing recordings when %s", (_, arrange) => {
+    arrange();
     const { getByRole } = render(<Header />);
     const nav = within(getByRole("navigation"));
-    expect(nav.queryByText("Help")).toBeNull();
-    expect(nav.queryByText("Dictation")).toBeNull();
-    expect(nav.queryByText("Hearing recordings")).toBeNull();
+    for (const name of [
+      "Go to help",
+      "Go to dictation",
+      "Go to hearing recordings",
+    ]) {
+      expect(nav.queryByRole("link", { name })).toBeNull();
+    }
+  });
+
+  it("lists Dictation and Hearing recordings in the mobile menu", () => {
+    render(<Header />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open navigation menu" })
+    );
+    const menu = within(screen.getByRole("dialog"));
+    expect(
+      menu.getByRole("link", { name: "Dictation" }).getAttribute("href")
+    ).toBe("/record?mode=mic");
+    expect(
+      menu
+        .getByRole("link", { name: "Hearing recordings" })
+        .getAttribute("href")
+    ).toBe("/recording");
+  });
+
+  it("hides the mobile menu's feature links while dictation is recording", () => {
+    mockPathname = "/record";
+    mockIsRecording = true;
+    render(<Header />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open navigation menu" })
+    );
+    const menu = within(screen.getByRole("dialog"));
+    expect(menu.getByRole("link", { name: "Home" })).toBeTruthy();
+    for (const name of ["Dictation", "Hearing recordings", "Help"]) {
+      expect(menu.queryByRole("link", { name })).toBeNull();
+    }
+  });
+
+  it("shows the feature links again once dictation stops", () => {
+    mockPathname = "/record";
+    mockIsRecording = false;
+    const { getByRole } = render(<Header />);
+    const nav = within(getByRole("navigation"));
+    expect(nav.getByRole("link", { name: "Go to dictation" })).toBeTruthy();
+    expect(
+      nav.getByRole("link", { name: "Go to hearing recordings" })
+    ).toBeTruthy();
   });
 
   it("links to dictation and hearing recordings as separate entries", () => {
