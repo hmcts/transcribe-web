@@ -1,4 +1,4 @@
-import { Plus } from "lucide-react";
+import { Mic } from "lucide-react";
 /* eslint-disable react/require-default-props */
 import React from "react";
 import { Button } from "@/components/ui/button";
@@ -43,9 +43,9 @@ const StartNewRecordingButton = React.forwardRef<
         {...props}
       >
         {showIcon && (
-          <Plus className={size === "large" ? "size-5" : "mr-2 size-4"} />
+          <Mic className={size === "large" ? "size-5" : "mr-2 size-4"} />
         )}
-        Go to recording
+        Dictation
       </Button>
     );
   }

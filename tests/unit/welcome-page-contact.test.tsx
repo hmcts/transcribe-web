@@ -68,4 +68,12 @@ describe("WelcomePage contact link", () => {
     );
     expect(link.getAttribute("aria-label")).toBe("Contact us via email");
   });
+
+  it("offers a hearing recordings button alongside dictation", () => {
+    render(<WelcomePage />);
+    const link = screen.getByRole("link", {
+      name: "Hearing recordings",
+    }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/recording");
+  });
 });
