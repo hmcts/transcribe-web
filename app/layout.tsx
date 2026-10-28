@@ -23,8 +23,8 @@ const inter = Inter({ subsets: ["latin"] });
 const GTM_CONTAINER_ID = "GTM-KB37GM5V";
 
 export const metadata: Metadata = {
-  title: "Judicial Transcribe",
-  description: "Judicial Transcribe",
+  title: "Bench Notes",
+  description: "Bench Notes",
 };
 
 export default async function RootLayout({

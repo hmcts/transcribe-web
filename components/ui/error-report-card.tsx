@@ -26,7 +26,7 @@ export default function ErrorReportCard({ data }: { data: ErrorReportInput }) {
     const phid = getDistinctId();
     const sentryLastEvent = (Sentry as any)?.lastEventId?.() || null;
     return {
-      title: data.title || "Judicial Transcribe Error Report",
+      title: data.title || "Bench Notes Error Report",
       timestamp: now,
       location: typeof window !== "undefined" ? window.location.href : null,
       environment: process.env.NODE_ENV,

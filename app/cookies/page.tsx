@@ -57,7 +57,7 @@ export default function CookiesPage() {
           Cookies are small files saved on your phone, tablet or computer when you visit a website.
         </p>
         <p className="text-muted-foreground">
-          We use cookies to make Judicial Transcribe work and to collect information about how you use the service.
+          We use cookies to make Bench Notes work and to collect information about how you use the service.
         </p>
 
         <section className="space-y-3">

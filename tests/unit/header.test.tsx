@@ -66,9 +66,9 @@ describe("Header", () => {
     mockSelectedRecordingMode = null;
   });
 
-  it("renders the Judicial Transcribe text", () => {
+  it("renders the Bench Notes text", () => {
     const { getByText } = render(<Header />);
-    expect(getByText("Judicial Transcribe")).toBeTruthy();
+    expect(getByText("Bench Notes")).toBeTruthy();
   });
 
   it("does not render the Justice AI logo image", () => {
@@ -83,7 +83,7 @@ describe("Header", () => {
 
   it("has a home link wrapping the logo and title", () => {
     const { getByText } = render(<Header />);
-    const link = getByText("Judicial Transcribe").closest("a");
+    const link = getByText("Bench Notes").closest("a");
     expect(link).toBeTruthy();
     expect((link as HTMLAnchorElement).href).toContain("/");
   });

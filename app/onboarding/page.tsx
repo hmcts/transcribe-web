@@ -37,19 +37,19 @@ export default function OnboardingPage() {
   // Update page title for accessibility (WCAG 2.4.2 Page Titled)
   useEffect(() => {
     if (hasValidLicense === false) {
-      document.title = "Judicial Transcribe coming soon – access pending";
+      document.title = "Bench Notes coming soon – access pending";
       return;
     }
 
     const titlesByStep = {
-      1: "Welcome – Judicial Transcribe onboarding (step 1 of 4)",
-      2: "Transcribe a meeting – Judicial Transcribe onboarding (step 2 of 4)",
-      3: "Review and edit – Judicial Transcribe onboarding (step 3 of 4)",
-      4: "You're ready – Judicial Transcribe onboarding (step 4 of 4)",
+      1: "Welcome – Bench Notes onboarding (step 1 of 4)",
+      2: "Transcribe a meeting – Bench Notes onboarding (step 2 of 4)",
+      3: "Review and edit – Bench Notes onboarding (step 3 of 4)",
+      4: "You're ready – Bench Notes onboarding (step 4 of 4)",
     } as const;
 
     document.title =
-      titlesByStep[currentStep as 1 | 2 | 3 | 4] || "Judicial Transcribe";
+      titlesByStep[currentStep as 1 | 2 | 3 | 4] || "Bench Notes";
   }, [currentStep, hasValidLicense]);
 
   // Fetch onboarding status on page load to show warning banner
@@ -203,7 +203,7 @@ export default function OnboardingPage() {
         }
       >
         {/* Main heading for accessibility */}
-        <h1 className="sr-only">Complete your Judicial Transcribe setup</h1>
+        <h1 className="sr-only">Complete your Bench Notes setup</h1>
         {/* Step content - centered vertically */}
         {((currentStep === 2 || currentStep === 3) &&
           hasValidLicense !== false) ||

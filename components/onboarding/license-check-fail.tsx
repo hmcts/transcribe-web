@@ -29,7 +29,7 @@ export default function LicenseCheckFail({ onRetry }: LicenseCheckFailProps) {
     <div className="mx-auto max-w-2xl space-y-8 text-center">
       <div className="space-y-6">
         <h2 className="text-3xl font-bold text-gray-900">
-          Sorry, Judicial Transcribe will be coming soon! 🚀
+          Sorry, Bench Notes will be coming soon! 🚀
         </h2>
 
         <div className="space-y-4">

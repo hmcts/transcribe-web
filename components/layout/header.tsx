@@ -127,11 +127,11 @@ export default function Header() {
           href="/"
           onClick={handleHomeClick}
           className="flex h-min items-center gap-2 sm:gap-4"
-          aria-label="Judicial Transcribe home"
-          title="Judicial Transcribe home"
+          aria-label="Bench Notes home"
+          title="Bench Notes home"
         >
           <span className="text-xl font-medium text-foreground">
-            Judicial Transcribe
+            Bench Notes
           </span>
         </Link>
 

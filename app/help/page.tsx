@@ -26,10 +26,10 @@ export default function HelpPage() {
         {/* Page Header */}
         <section className="py-16 text-center">
           <h1 className="mb-4 text-4xl font-bold tracking-tight">
-            Getting started with Judicial Transcribe
+            Getting started with Bench Notes
           </h1>
           <p className="mx-auto max-w-2xl text-xl text-muted-foreground">
-            Getting started with Judicial Transcribe for the First-tier Tribunal
+            Getting started with Bench Notes for the First-tier Tribunal
             Immigration and Asylum Chamber
           </p>
         </section>
@@ -59,7 +59,7 @@ export default function HelpPage() {
           {/* Main content */}
           <section id="help-content" className="max-w-4xl">
             <p>
-              Judicial Transcribe is an advanced AI-powered tool designed to
+              Bench Notes is an advanced AI-powered tool designed to
               support judicial work by providing accurate live transcription of
               oral decisions and accurately transcribing arguments presented
               orally at Tribunal hearings. By capturing both hearings and
