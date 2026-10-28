@@ -6,10 +6,10 @@ def type = "nodejs"
 def product = "transcribe"
 def component = "web"
 
-// Build-time secret injection. The frontend holds no runtime Key Vault
-// secrets of its own — everything sensitive lives behind the backend — but the
-// App Insights connection string has to reach the container as an environment
-// variable, so it is substituted into values.{env}.template.yaml.
+// Build-time secret injection: the App Insights connection string is
+// substituted into values.{aat,preview}.template.yaml for the Jenkins releases.
+// The pods Flux deploys get it, like the other runtime secrets, from the chart's
+// keyVaults block (values.yaml), loaded into the environment by start.js.
 def secrets = [
   'transcribe-${env}': [
     secret('AppInsightsConnectionString', 'APP_INSIGHTS_CONNECTION_STRING'),

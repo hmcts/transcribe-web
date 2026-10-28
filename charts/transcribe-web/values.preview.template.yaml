@@ -4,6 +4,9 @@ nodejs:
   environment:
     BACKEND_INTERNAL_URL: https://transcribe-api-pr-${CHANGE_ID}.preview.platform.hmcts.net
     NEXT_PUBLIC_API_URL: https://transcribe-web-pr-${CHANGE_ID}.preview.platform.hmcts.net
+    # Also mounted from Key Vault (values.yaml), which is how the pods Flux
+    # deploys get it. An env var wins over the mounted file (start.js), and
+    # both hold the same value.
     APPLICATIONINSIGHTS_CONNECTION_STRING: ${APP_INSIGHTS_CONNECTION_STRING}
     # Preview has no Speech account of its own.
     AZURE_SPEECH_ENDPOINT: https://transcribe-speech-aat.cognitiveservices.azure.com
