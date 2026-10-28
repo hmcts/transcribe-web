@@ -4,6 +4,7 @@
 
 "use client";
 
+import { FileAudio } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import React from "react";
@@ -15,6 +16,7 @@ import StartNewRecordingButton from "@/components/ui/start-new-recording-button"
 import useMediaQuery from "@/hooks/use-media-query";
 import { track } from "@/lib/analytics";
 import type { AudioBackup } from "@/lib/indexeddb-backup";
+import { HEARING_RECORDINGS_HREF } from "@/lib/navigation";
 import { getFullNameFromEmail } from "@/lib/utils";
 import { useTranscripts } from "@/providers/transcripts";
 import { useUserSettings } from "@/providers/user-settings";
@@ -95,6 +97,16 @@ function WelcomePage() {
             fullWidth={false}
             className="w-full md:w-auto"
           />
+          <Button
+            asChild
+            variant="outline"
+            className="flex w-full items-center justify-center gap-2 py-6 text-lg md:w-auto"
+          >
+            <Link href={HEARING_RECORDINGS_HREF}>
+              <FileAudio className="size-5" />
+              Hearing recordings
+            </Link>
+          </Button>
         </div>
       </section>
 

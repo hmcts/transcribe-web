@@ -1,11 +1,14 @@
-import { render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const mockPush = vi.fn();
+let mockPathname = "/";
+let mockSelectedRecordingMode: string | null = null;
+let mockIsRecording = false;
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
   useSearchParams: () => new URLSearchParams(),
 }));
 
@@ -33,7 +36,10 @@ vi.mock("next/link", () => ({
 }));
 
 vi.mock("@/providers/transcripts", () => ({
-  useTranscripts: () => ({ selectedRecordingMode: null }),
+  useTranscripts: () => ({
+    isRecording: mockIsRecording,
+    selectedRecordingMode: mockSelectedRecordingMode,
+  }),
 }));
 
 vi.mock("@/components/theme-toggle", () => ({
@@ -59,9 +65,15 @@ vi.mock("@/lib/admin-access", () => ({
 import Header from "@/components/layout/header";
 
 describe("Header", () => {
-  it("renders the Judicial Transcribe text", () => {
+  afterEach(() => {
+    mockPathname = "/";
+    mockSelectedRecordingMode = null;
+    mockIsRecording = false;
+  });
+
+  it("renders the Bench Notes text", () => {
     const { getByText } = render(<Header />);
-    expect(getByText("Judicial Transcribe")).toBeTruthy();
+    expect(getByText("Bench Notes")).toBeTruthy();
   });
 
   it("does not render the Justice AI logo image", () => {
@@ -76,16 +88,118 @@ describe("Header", () => {
 
   it("has a home link wrapping the logo and title", () => {
     const { getByText } = render(<Header />);
-    const link = getByText("Judicial Transcribe").closest("a");
+    const link = getByText("Bench Notes").closest("a");
     expect(link).toBeTruthy();
     expect((link as HTMLAnchorElement).href).toContain("/");
   });
 
-  it("hides Help link when in recording mode", () => {
-    vi.mock("@/providers/transcripts", () => ({
-      useTranscripts: () => ({ selectedRecordingMode: "mic" }),
-    }));
-    // Re-render is not possible after mock change without factory reset,
-    // but the initial mock gives coverage of the conditional branch
+  it.each([
+    [
+      "a recording mode is selected",
+      () => {
+        mockSelectedRecordingMode = "mic";
+      },
+    ],
+    [
+      "live dictation is recording",
+      () => {
+        mockPathname = "/record";
+        mockIsRecording = true;
+      },
+    ],
+  ])("hides Help, Dictation and Hearing recordings when %s", (_, arrange) => {
+    arrange();
+    const { getByRole } = render(<Header />);
+    const nav = within(getByRole("navigation"));
+    for (const name of [
+      "Go to help",
+      "Go to dictation",
+      "Go to hearing recordings",
+    ]) {
+      expect(nav.queryByRole("link", { name })).toBeNull();
+    }
+  });
+
+  it("lists Dictation and Hearing recordings in the mobile menu", () => {
+    render(<Header />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open navigation menu" })
+    );
+    const menu = within(screen.getByRole("dialog"));
+    expect(
+      menu.getByRole("link", { name: "Dictation" }).getAttribute("href")
+    ).toBe("/record?mode=mic");
+    expect(
+      menu
+        .getByRole("link", { name: "Hearing recordings" })
+        .getAttribute("href")
+    ).toBe("/recording");
+  });
+
+  it("hides the mobile menu's feature links while dictation is recording", () => {
+    mockPathname = "/record";
+    mockIsRecording = true;
+    render(<Header />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open navigation menu" })
+    );
+    const menu = within(screen.getByRole("dialog"));
+    expect(menu.getByRole("link", { name: "Home" })).toBeTruthy();
+    for (const name of ["Dictation", "Hearing recordings", "Help"]) {
+      expect(menu.queryByRole("link", { name })).toBeNull();
+    }
+  });
+
+  it("shows the feature links again once dictation stops", () => {
+    mockPathname = "/record";
+    mockIsRecording = false;
+    const { getByRole } = render(<Header />);
+    const nav = within(getByRole("navigation"));
+    expect(nav.getByRole("link", { name: "Go to dictation" })).toBeTruthy();
+    expect(
+      nav.getByRole("link", { name: "Go to hearing recordings" })
+    ).toBeTruthy();
+  });
+
+  it("links to dictation and hearing recordings as separate entries", () => {
+    const { getByRole } = render(<Header />);
+    const nav = within(getByRole("navigation"));
+    expect(
+      nav.getByRole("link", { name: "Go to dictation" }).getAttribute("href")
+    ).toBe("/record?mode=mic");
+    expect(
+      nav
+        .getByRole("link", { name: "Go to hearing recordings" })
+        .getAttribute("href")
+    ).toBe("/recording");
+    expect(nav.getByText("Dictation")).toBeTruthy();
+    expect(nav.getByText("Hearing recordings")).toBeTruthy();
+    expect(nav.queryByText("Recordings")).toBeNull();
+  });
+
+  it.each([
+    ["/record", "Go to dictation", "Go to hearing recordings"],
+    ["/recording", "Go to hearing recordings", "Go to dictation"],
+    ["/recording/jobs/abc", "Go to hearing recordings", "Go to dictation"],
+  ])("on %s marks only %s as the current page", (path, active, inactive) => {
+    mockPathname = path;
+    const { getByRole } = render(<Header />);
+    const nav = within(getByRole("navigation"));
+    expect(
+      nav.getByRole("link", { name: active }).getAttribute("aria-current")
+    ).toBe("page");
+    expect(
+      nav.getByRole("link", { name: inactive }).getAttribute("aria-current")
+    ).toBeNull();
+  });
+
+  it("marks neither feature link as current on the home page", () => {
+    const { getByRole } = render(<Header />);
+    const nav = within(getByRole("navigation"));
+    for (const name of ["Go to dictation", "Go to hearing recordings"]) {
+      expect(
+        nav.getByRole("link", { name }).getAttribute("aria-current")
+      ).toBeNull();
+    }
   });
 });

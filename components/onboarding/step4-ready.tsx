@@ -13,7 +13,7 @@ export default function Step4Ready() {
       {/* Quote */}
       <div className="rounded-lg border-l-4 border-green-500 bg-gradient-to-r from-green-50 to-emerald-50 p-8">
         <blockquote className="text-lg italic text-gray-800">
-          &quot;The Judicial Transcribe AI has been life-saving… the amount of
+          &quot;The Bench Notes AI has been life-saving… the amount of
           time it saves is invaluable.&quot;
         </blockquote>
         <cite className="mt-3 block text-base font-medium text-gray-600">

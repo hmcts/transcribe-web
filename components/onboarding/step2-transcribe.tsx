@@ -50,7 +50,7 @@ export default function Step2BasicTutorial() {
               Transcribe a Meeting
             </h1>
             <h2 className="bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-xl font-medium text-transparent">
-              Using Judicial Transcribe is simple
+              Using Bench Notes is simple
             </h2>
           </div>
           <div

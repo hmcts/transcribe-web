@@ -59,7 +59,7 @@ function HomePageIllustration() {
           fontSize="18"
           fontWeight="500"
         >
-          + Go to recording
+          Dictation
         </text>
 
         {/* Recent recordings section */}
@@ -657,7 +657,7 @@ const quickStartSteps: QuickStartStep[] = [
     id: "start-recording",
     title: "Start a new recording",
     instruction:
-      "From the home page, select Go to recording to open the recording workspace.",
+      "From the home page, select Dictation to open the dictation workspace.",
     Illustration: HomePageIllustration,
   },
   {
@@ -770,7 +770,7 @@ export function MultistepTutorial() {
             </p>
             <div
               role="img"
-              aria-label="Illustration of the home page with the Go to recording button"
+              aria-label="Illustration of the home page with the Dictation button"
               data-quick-start-illustration={quickStartSteps[0].id}
             >
               <HomePageIllustration />

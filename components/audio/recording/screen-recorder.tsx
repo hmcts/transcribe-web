@@ -506,7 +506,7 @@ function ScreenRecorder({
       <div className="my-6 text-center">
         <h1 className="text-2xl font-semibold">Virtual Meeting Recorder</h1>
         <p className="text-sm text-muted-foreground">
-          Record audio by sharing your screen with Judicial Transcribe
+          Record audio by sharing your screen with Bench Notes
         </p>
       </div>
 

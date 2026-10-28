@@ -1,6 +1,6 @@
 "use client";
 
-import { FileAudio, HelpCircle, Menu, Shield } from "lucide-react";
+import { FileAudio, HelpCircle, Menu, Mic, Shield } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -16,17 +16,33 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { getAdminAccessStatus } from "@/lib/admin-access";
+import {
+  DICTATION_BASE_PATH,
+  DICTATION_HREF,
+  HEARING_RECORDINGS_HREF,
+  isPathActive,
+} from "@/lib/navigation";
 import cn from "@/lib/utils";
 import { useTranscripts } from "@/providers/transcripts";
 
 export default function Header() {
-  const { selectedRecordingMode } = useTranscripts();
+  const { isRecording, selectedRecordingMode } = useTranscripts();
+  // Hide the links away from the current page while a session is live: a
+  // client-side navigation would unmount it, and the provider's beforeunload
+  // and popstate guards do not catch <Link> clicks. Live dictation on /record
+  // sets isRecording, not selectedRecordingMode.
+  const hideNavLinks = Boolean(selectedRecordingMode) || isRecording;
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const lastScrollY = useRef(0);
   const [isHidden, setIsHidden] = useState(false);
   const [isAdminUser, setIsAdminUser] = useState(false);
+  const isDictationActive = isPathActive(pathname, DICTATION_BASE_PATH);
+  const isHearingRecordingsActive = isPathActive(
+    pathname,
+    HEARING_RECORDINGS_HREF
+  );
 
   const handleHomeClick = useCallback(() => {
     const hasQueryParams = (searchParams?.toString().length ?? 0) > 0;
@@ -116,16 +132,16 @@ export default function Header() {
           href="/"
           onClick={handleHomeClick}
           className="flex h-min items-center gap-2 sm:gap-4"
-          aria-label="Judicial Transcribe home"
-          title="Judicial Transcribe home"
+          aria-label="Bench Notes home"
+          title="Bench Notes home"
         >
           <span className="text-xl font-medium text-foreground">
-            Judicial Transcribe
+            Bench Notes
           </span>
         </Link>
 
         <nav className="hidden items-center gap-2 md:flex">
-          {!selectedRecordingMode && isAdminUser && (
+          {!hideNavLinks && isAdminUser && (
             <Link
               href="/admin"
               className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
@@ -136,21 +152,40 @@ export default function Header() {
               <span className="text-base">Admin</span>
             </Link>
           )}
-          {/* MERGE NOTE: entry point for the recording feature area. Without a nav
-              link the merged app would ship two unreachable halves rather than
-              one application. */}
-          {!selectedRecordingMode && (
+          {/* MERGE NOTE: entry points for both feature areas (dictation and
+              hearing recordings). Without nav links the merged app would ship
+              two unreachable halves rather than one application. */}
+          {!hideNavLinks && (
             <Link
-              href="/recording"
-              className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
-              aria-label="Go to recordings"
-              title="Go to recordings"
+              href={DICTATION_HREF}
+              className={cn(
+                "flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5",
+                isDictationActive && "bg-foreground/5"
+              )}
+              aria-label="Go to dictation"
+              aria-current={isDictationActive ? "page" : undefined}
+              title="Go to dictation"
             >
-              <FileAudio className="mr-1 size-5" />
-              <span className="text-base">Recordings</span>
+              <Mic className="mr-1 size-5" />
+              <span className="text-base">Dictation</span>
             </Link>
           )}
-          {!selectedRecordingMode && (
+          {!hideNavLinks && (
+            <Link
+              href={HEARING_RECORDINGS_HREF}
+              className={cn(
+                "flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5",
+                isHearingRecordingsActive && "bg-foreground/5"
+              )}
+              aria-label="Go to hearing recordings"
+              aria-current={isHearingRecordingsActive ? "page" : undefined}
+              title="Go to hearing recordings"
+            >
+              <FileAudio className="mr-1 size-5" />
+              <span className="text-base">Hearing recordings</span>
+            </Link>
+          )}
+          {!hideNavLinks && (
             <Link
               href="/help"
               className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
@@ -189,7 +224,7 @@ export default function Header() {
                   Home
                 </Link>
               </SheetClose>
-              {!selectedRecordingMode && isAdminUser && (
+              {!hideNavLinks && isAdminUser && (
                 <SheetClose asChild>
                   <Link
                     href="/admin"
@@ -200,7 +235,39 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!selectedRecordingMode && (
+              {!hideNavLinks && (
+                <SheetClose asChild>
+                  <Link
+                    href={DICTATION_HREF}
+                    aria-current={isDictationActive ? "page" : undefined}
+                    className={cn(
+                      "inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground",
+                      isDictationActive && "bg-foreground/5"
+                    )}
+                  >
+                    <Mic className="size-4" />
+                    Dictation
+                  </Link>
+                </SheetClose>
+              )}
+              {!hideNavLinks && (
+                <SheetClose asChild>
+                  <Link
+                    href={HEARING_RECORDINGS_HREF}
+                    aria-current={
+                      isHearingRecordingsActive ? "page" : undefined
+                    }
+                    className={cn(
+                      "inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground",
+                      isHearingRecordingsActive && "bg-foreground/5"
+                    )}
+                  >
+                    <FileAudio className="size-4" />
+                    Hearing recordings
+                  </Link>
+                </SheetClose>
+              )}
+              {!hideNavLinks && (
                 <SheetClose asChild>
                   <Link
                     href="/help"

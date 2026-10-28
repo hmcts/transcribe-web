@@ -4,14 +4,14 @@ export function CookieBanner() {
       className="cookie-banner fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-muted"
       data-nosnippet
       role="region"
-      aria-label="Cookies on Judicial Transcribe"
+      aria-label="Cookies on Bench Notes"
       hidden
     >
       {/* Initial message */}
       <div className="cookie-banner-message px-4 py-4 sm:px-6">
         <div className="mx-auto max-w-7xl">
           <h2 className="mb-2 text-base font-semibold">
-            Cookies on Judicial Transcribe
+            Cookies on Bench Notes
           </h2>
           <p className="mb-1 text-sm text-muted-foreground">
             We use some essential cookies to make this service work.

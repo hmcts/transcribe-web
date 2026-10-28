@@ -9,7 +9,7 @@ export default function Step1Welcome() {
           Welcome 👋
         </h1>
         <p className="mx-auto max-w-2xl text-lg leading-relaxed text-gray-900">
-          Judicial Transcribe is an AI assistant that transcribes and summarises
+          Bench Notes is an AI assistant that transcribes and summarises
           meetings. Turning conversations into clear case notes in minutes so
           you can stay fully present with people.
         </p>
