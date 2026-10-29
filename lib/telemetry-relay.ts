@@ -282,8 +282,7 @@ export class TelemetryRelay {
       this.unauthorised(batch);
       return;
     } else if (outcome === "retry") {
-      this.enqueue(batch, true);
-      this.backOff();
+      this.keepAfterHide(batch);
       return;
     }
     if (this.queue.length > 0) this.schedule(0);
