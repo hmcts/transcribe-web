@@ -66,8 +66,7 @@ vi.mock("@/lib/analytics", () => ({
   track: vi.fn(),
 }));
 
-// Mocked for the same reason DIAAT-297 mocks its telemetry module: the real one
-// pulls in @sentry/nextjs, which cannot load in this environment.
+// Mocked: these tests check the page; the telemetry module has its own tests.
 vi.mock("@/lib/live-draft-telemetry", () => ({
   liveDraftTelemetry: {
     saveFailed: vi.fn(),

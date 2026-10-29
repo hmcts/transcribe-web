@@ -8,12 +8,12 @@
  * completely invisible.
  *
  * Every event goes to Application Insights through the first-party relay
- * (`lib/dictation-session`, OBS-4), in the dictation session's journey. Sentry
- * additionally gets the "this is a data-loss incident in progress" escalation
- * that should alert someone. PostHog is no longer used (OBS-3).
+ * (`lib/dictation-session`, OBS-4), in the dictation session's journey. The
+ * "data-loss incident in progress" alert is to be built on the stalled event
+ * in transcribe-shared-infrastructure (DIAAT-205, not yet in place). Neither
+ * Sentry nor PostHog is used.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { dictationSessionTelemetry } from "@/lib/dictation-session";
 import type { LiveDraftFailureKind } from "@/lib/live-draft-errors";
 
@@ -64,24 +64,6 @@ export const liveDraftTelemetry: LiveDraftTelemetry = {
       consecutiveFailures,
       secondsSinceLastSave: toSeconds(msSinceLastSave),
     });
-
-    // Sentry as well as the relay. Autosave having stopped while someone is
-    // dictating is a data-loss incident in progress, not a usage statistic â€”
-    // this is the signal that was missing when a judge lost fifty minutes.
-    Sentry.captureMessage(
-      `Live-draft autosave stalled after ${consecutiveFailures} consecutive ${kind} failures`,
-      {
-        level: "error",
-        tags: {
-          feature: "live-dictation",
-          live_draft_failure_kind: kind,
-        },
-        extra: {
-          consecutiveFailures,
-          secondsSinceLastSave: toSeconds(msSinceLastSave),
-        },
-      }
-    );
   },
 
   saveRecovered({ consecutiveFailures, outageMs }) {

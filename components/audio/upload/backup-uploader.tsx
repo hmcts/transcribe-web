@@ -91,7 +91,6 @@ function BackupUploader({
             onUploadSuccess();
           }
         } catch (error) {
-          // Sentry.captureException(error);
           console.error(`error deleting backup: ${error}`);
         }
       } catch (error) {

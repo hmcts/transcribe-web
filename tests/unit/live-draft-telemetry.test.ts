@@ -7,17 +7,14 @@ const session = vi.hoisted(() => ({
   autosaveRecovered: vi.fn(),
   restoreFinished: vi.fn(),
 }));
-const mockCaptureMessage = vi.hoisted(() => vi.fn());
 
 // OBS-3: the event stream is the relay (through the dictation session), not PostHog.
 vi.mock("@/lib/dictation-session", () => ({
   dictationSessionTelemetry: session,
 }));
-vi.mock("@sentry/nextjs", () => ({ captureMessage: mockCaptureMessage }));
 
 beforeEach(() => {
   for (const fn of Object.values(session)) fn.mockReset();
-  mockCaptureMessage.mockReset();
 });
 
 describe("liveDraftTelemetry.saveFailed", () => {
@@ -46,7 +43,10 @@ describe("liveDraftTelemetry.saveFailed", () => {
       msSinceLastSave: null,
       trigger: "interval",
     });
-    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    // The failure is reported; the stall (the alert's source) is the
+    // autosave hook's decision, after repeated failures.
+    expect(session.autosaveFailed).toHaveBeenCalledTimes(1);
+    expect(session.autosaveStalled).not.toHaveBeenCalled();
   });
 
   it("reports a null elapsed time when nothing has ever been saved", () => {
@@ -64,7 +64,7 @@ describe("liveDraftTelemetry.saveFailed", () => {
 });
 
 describe("liveDraftTelemetry.autosaveStalled", () => {
-  it("escalates to Sentry, because this is data loss in progress", () => {
+  it("reports the stall, the source of the data-loss alert", () => {
     liveDraftTelemetry.autosaveStalled({
       kind: "network",
       consecutiveFailures: 4,
@@ -76,13 +76,6 @@ describe("liveDraftTelemetry.autosaveStalled", () => {
       consecutiveFailures: 4,
       secondsSinceLastSave: 42,
     });
-    expect(mockCaptureMessage).toHaveBeenCalledWith(
-      expect.stringContaining("4"),
-      expect.objectContaining({
-        level: "error",
-        tags: expect.objectContaining({ feature: "live-dictation" }),
-      })
-    );
   });
 });
 
@@ -97,7 +90,7 @@ describe("liveDraftTelemetry.saveRecovered", () => {
       consecutiveFailures: 3,
       outageSeconds: 12,
     });
-    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(session.autosaveStalled).not.toHaveBeenCalled();
   });
 });
 

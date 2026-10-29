@@ -22,7 +22,6 @@ function AudioUploader({ initialRecordingMode, onClose }: AudioUploaderProps) {
     handleRecordingStart,
     handleRecordingStop,
   } = useAudioUpload({
-    initialRecordingMode,
     setIsProcessingTranscription,
   });
 
@@ -78,7 +77,6 @@ function AudioUploader({ initialRecordingMode, onClose }: AudioUploaderProps) {
                 user_upload_key: errorDetails.userUploadKey,
                 backup_id: currentBackupId,
               },
-              sentryEventId: errorDetails.sentryEventId,
             }}
           />
         </>

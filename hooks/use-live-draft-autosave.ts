@@ -83,7 +83,7 @@ export function useLiveDraftAutosave({
   const inFlightRef = useRef(false);
   const isMountedRef = useRef(true);
   /**
-   * Whether this failure run has already been escalated. Sentry should hear
+   * Whether this failure run has already been escalated. The alert should hear
    * "autosave has stopped" once per outage, not once per retry.
    */
   const escalatedRef = useRef(false);

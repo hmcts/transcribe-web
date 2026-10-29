@@ -75,7 +75,6 @@ vi.mock("@/lib/api-client", () => ({
   apiClient: { getSpeechToken: mockGetSpeechToken },
 }));
 
-vi.mock("@sentry/nextjs", () => ({ captureMessage: vi.fn() }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), dismiss: vi.fn() } }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/providers/user-settings", () => ({

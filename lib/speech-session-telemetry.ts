@@ -9,11 +9,11 @@
  * Every event goes to Application Insights through the first-party relay
  * (`lib/dictation-session`, OBS-4), as one dictation-session journey with
  * timings; the relay carries no free text (the cancellation's `errorDetails`
- * is not sent). Sentry additionally gets the "this session is broken" signal
- * that should alert someone. PostHog is no longer used (OBS-3).
+ * is not sent). The "this session is broken" alert is to be built on these
+ * events in transcribe-shared-infrastructure (DIAAT-205, not yet in place).
+ * Neither Sentry nor PostHog is used.
  */
 
-import * as Sentry from "@sentry/nextjs";
 import { dictationSessionTelemetry } from "@/lib/dictation-session";
 import type { SpeechCancellationInfo } from "@/lib/speech-session-health";
 
@@ -136,38 +136,9 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
       reason: cancellation?.reason,
       errorCode: cancellation?.errorCode,
     });
-
-    // Sentry as well as the relay: a dictation session collapsing this often is a
-    // data-loss incident in progress, not a usage statistic.
-    Sentry.captureMessage(
-      `Speech session collapsed ${collapsesInWindow} times in ${windowSeconds}s`,
-      {
-        level: "error",
-        tags: {
-          feature: "live-dictation",
-          speech_cancellation_reason: cancellation?.reason ?? "unknown",
-          speech_error_code: cancellation?.errorCode ?? "unknown",
-        },
-        // No errorDetails: it is free text (e.g. String(err) for a failed start)
-        // and can quote a service response. The reason and code above are enums.
-        extra: {
-          collapsesInWindow,
-          windowSeconds,
-        },
-      }
-    );
   },
 
   noSpeechCaptured({ elapsedSeconds }) {
     dictationSessionTelemetry.noSpeechWarning({ elapsedSeconds });
-
-    Sentry.captureMessage(
-      `Dictation ran ${elapsedSeconds}s with no captured speech`,
-      {
-        level: "warning",
-        tags: { feature: "live-dictation" },
-        extra: { elapsedSeconds },
-      }
-    );
   },
 };

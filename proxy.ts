@@ -132,14 +132,13 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
-      // Run on all routes except Next.js static assets, the Sentry tunnel and
-      // the recording upload. Next.js buffers the whole request body of any
+      // Run on all routes except Next.js static assets and the recording
+      // upload. Next.js buffers the whole request body of any
       // request the proxy runs on, and passes at most
       // experimental.proxyClientMaxBodySize (10 MB) of it on; /api/upload
       // streams recordings of up to 200 MB to the API instead, and checks the
       // session itself (app/api/upload/route.ts).
-      source:
-        "/((?!_next/static|_next/image|favicon.ico|monitoring|api/upload$).*)",
+      source: "/((?!_next/static|_next/image|favicon.ico|api/upload$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },
