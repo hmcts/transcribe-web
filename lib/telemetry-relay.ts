@@ -37,7 +37,7 @@ export interface RelayEvent {
   durationMs?: number;
 }
 
-interface WireEvent {
+export interface WireEvent {
   name: string;
   attributes?: Record<string, RelayAttributeValue>;
   journey?: { type: string; id: string };
@@ -61,7 +61,7 @@ export const UNSENT_STORAGE_KEY = "hmcts-telemetry-unsent";
  * The relay rejects a whole batch for one bad value (pydantic), so values are
  * cleaned here: null, undefined and non-finite numbers are left out.
  */
-function toWire(event: RelayEvent): WireEvent {
+export function toWire(event: RelayEvent): WireEvent {
   const wire: WireEvent = { name: event.name };
   if (event.attributes) {
     const attributes: Record<string, RelayAttributeValue> = {};

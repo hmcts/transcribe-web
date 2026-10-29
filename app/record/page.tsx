@@ -100,7 +100,12 @@ export default function RecordPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setIsRecording } = useTranscripts();
-  const mode = searchParams?.get("mode") || "mic";
+  // From the URL: only the known modes (anything else is the default, mic).
+  const requestedMode = searchParams?.get("mode");
+  const mode =
+    requestedMode === "screen" || requestedMode === "upload"
+      ? requestedMode
+      : "mic";
   const [isRecordingActive, setIsRecordingActive] = useState(false);
   const [activeSection, setActiveSection] =
     useState<TranscriptSection>("background");
