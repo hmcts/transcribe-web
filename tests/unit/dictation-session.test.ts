@@ -121,7 +121,6 @@ describe("dictation session telemetry", () => {
     telemetry.submissionFinished({
       ok: true,
       mode: "mic",
-      transcriptionId: "6f1c2d3e-4b5a-4c6d-8e7f-9a0b1c2d3e4f",
       durationMs: 900,
     });
     telemetry.sessionEnded("submitted");
@@ -158,5 +157,43 @@ describe("dictation session telemetry", () => {
     telemetry.sessionEnded("submitted");
     expect(named("dictation.session_ended")).toHaveLength(0);
     expect(named("live_draft.restore_finished")[0].journey).toBeUndefined();
+  });
+
+  it("does not start a dictation for a reconnect after a submission, only for the user", () => {
+    const { telemetry, named } = setup();
+    telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+    telemetry.segmentCaptured();
+    telemetry.sessionEnded("submitted");
+    // The recognizer collapses and reconnects before the page navigates away.
+    telemetry.recordingRequested({ sessionIndex: 2, reconnectAttempt: 1 });
+    telemetry.sessionEnded("left_page");
+    expect(named("dictation.session_requested")).toHaveLength(1);
+    expect(named("dictation.session_ended")).toHaveLength(1);
+
+    telemetry.recordingRequested({ sessionIndex: 3, reconnectAttempt: 0 });
+    expect(named("dictation.session_requested")).toHaveLength(2);
+  });
+
+  it("counts a stopping recognizer's late final for the dictation, not the running Speech session", () => {
+    const { telemetry, named } = setup();
+    telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+    telemetry.speechSessionStarted({
+      sessionId: SDK_SESSION,
+      sessionIndex: 1,
+      reconnectAttempt: 0,
+    });
+    telemetry.segmentCaptured();
+    telemetry.segmentCaptured({ stoppedSession: true });
+    telemetry.sessionEnded("submitted");
+    expect(
+      named("speech.session_stopped")[0].attributes?.[
+        "dictation.segments_captured"
+      ]
+    ).toBe(1);
+    expect(
+      named("dictation.session_ended")[0].attributes?.[
+        "dictation.segments_captured"
+      ]
+    ).toBe(2);
   });
 });

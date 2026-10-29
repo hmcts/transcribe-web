@@ -245,4 +245,78 @@ describe("TelemetryRelay", () => {
       Reflect.deleteProperty(document, "visibilityState");
     }
   });
+
+  it("sends every batch with keepalive, so an in-flight request survives the page closing", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(202));
+    const relay = new TelemetryRelay({
+      fetchImpl,
+    });
+    relay.emit({ name: "dictation.paused" });
+    await relay.flush();
+    expect((fetchImpl.mock.calls[0][1] as RequestInit).keepalive).toBe(true);
+  });
+
+  it("keeps page-hide sends within the keepalive budget left by an in-flight batch", async () => {
+    let finish: (r: Response) => void = () => undefined;
+    const fetchImpl = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finish = resolve;
+          })
+      )
+      .mockResolvedValue(response(202));
+    const storage = new Map<string, string>();
+    const relay = new TelemetryRelay({
+      fetchImpl,
+      storage: () =>
+        ({
+          getItem: (k: string) => storage.get(k) ?? null,
+          setItem: (k: string, v: string) => void storage.set(k, v),
+          removeItem: (k: string) => void storage.delete(k),
+        }) as Storage,
+    });
+    const big = { a: "x".repeat(400) };
+    for (let i = 0; i < 49; i++)
+      relay.emit({ name: "live_draft.save_failed", attributes: big });
+    const flushing = relay.flush(); // ~25 KB in flight
+    await Promise.resolve();
+    await Promise.resolve();
+    for (let i = 0; i < 150; i++)
+      relay.emit({ name: "live_draft.save_failed", attributes: big });
+    relay.flushOnHide();
+    const hideBytes = fetchImpl.mock.calls
+      .slice(1)
+      .reduce(
+        (total, [, init]) => total + String((init as RequestInit).body).length,
+        0
+      );
+    const inFlight = String(
+      (fetchImpl.mock.calls[0][1] as RequestInit).body
+    ).length;
+    expect(inFlight + hideBytes).toBeLessThanOrEqual(60_000);
+    expect(storage.has("hmcts-telemetry-unsent")).toBe(true); // the rest is kept
+    finish(response(202));
+    await flushing;
+  });
+
+  it("sends without keepalive when page-hide requests have used the budget", async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockReturnValueOnce(new Promise(() => undefined)) // page-hide send, in flight
+      .mockReturnValueOnce(new Promise(() => undefined))
+      .mockResolvedValue(response(202));
+    const relay = new TelemetryRelay({ fetchImpl });
+    const big = { "attribute.text": "x".repeat(500) };
+    for (let i = 0; i < 100; i++)
+      relay.emit({ name: "live_draft.save_failed", attributes: big });
+    relay.flushOnHide(); // about 52 KB of keepalive in flight
+    for (let i = 0; i < 20; i++)
+      relay.emit({ name: "live_draft.save_failed", attributes: big });
+    await relay.flush(); // the page is visible again
+    const last = fetchImpl.mock.calls.at(-1)?.[1] as RequestInit;
+    expect(last.keepalive).toBe(false);
+    expect(relay.pending).toBe(0);
+  });
 });

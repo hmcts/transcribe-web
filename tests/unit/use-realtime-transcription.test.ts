@@ -67,6 +67,7 @@ const telemetry = vi.hoisted(() => ({
   paused: vi.fn(),
   sessionStarted: vi.fn(),
   sessionStopped: vi.fn(),
+  tornDown: vi.fn(),
   sessionCanceled: vi.fn(),
   sessionUnhealthy: vi.fn(),
   noSpeechCaptured: vi.fn(),
@@ -191,6 +192,26 @@ describe("useRealtimeTranscription session health", () => {
     expect(result.current.session.health).toBe("recovering");
   });
 
+  it("reports no Speech session stop for a reconnect that failed before it started", async () => {
+    const { result } = renderHook(() => useRealtimeTranscription());
+    await startRecording(result.current.connect);
+    const before = transcribers.current.length;
+    await act(async () => {
+      collapseWithError(latest());
+    });
+    expect(telemetry.sessionStopped).toHaveBeenCalledTimes(1);
+    await waitFor(
+      () => expect(transcribers.current.length).toBeGreaterThan(before),
+      { timeout: 5000 }
+    );
+    // The reconnect collapses before the SDK reports sessionStarted.
+    await act(async () => {
+      collapseWithError(latest());
+    });
+    expect(result.current.session.totalCollapses).toBe(2);
+    expect(telemetry.sessionStopped).toHaveBeenCalledTimes(1);
+  });
+
   it("does not double-count a cancellation followed by sessionStopped", async () => {
     const { result } = renderHook(() => useRealtimeTranscription());
     await startRecording(result.current.connect);
@@ -295,6 +316,24 @@ describe("useRealtimeTranscription session health", () => {
     expect(telemetry.tokenFetched).toHaveBeenCalledWith(
       expect.objectContaining({ ok: true })
     );
+  });
+
+  it("counts only results with text as captured (an empty result is not a transcript)", async () => {
+    const { result } = renderHook(() => useRealtimeTranscription());
+    await startRecording(result.current.connect);
+    telemetry.segmentCaptured.mockClear();
+    await act(async () => {
+      latest().transcribed?.(null, {
+        result: { reason: 3, speakerId: "Guest-1", text: "  " },
+      });
+    });
+    expect(telemetry.segmentCaptured).not.toHaveBeenCalled();
+    await act(async () => {
+      latest().transcribed?.(null, {
+        result: { reason: 3, speakerId: "Guest-1", text: "words" },
+      });
+    });
+    expect(telemetry.segmentCaptured).toHaveBeenCalledTimes(1);
   });
 
   it("does not treat a user-initiated stop as a collapse", async () => {

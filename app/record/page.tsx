@@ -272,7 +272,6 @@ export default function RecordPage() {
         const draft = await getLiveDraft();
         console.debug("[live-draft] GET result:", draft ? `found (saved_at: ${draft.saved_at})` : "not found");
         if (cancelled || !draft) return;
-        liveDraftTelemetry.restoreSucceeded();
         // The backend hard-deletes a draft 24h after its last save, on read.
         // A judge who cannot get back in within a day loses the work
         // permanently, so say so while it can still be acted on (DIAAT-296).
@@ -290,6 +289,8 @@ export default function RecordPage() {
                 setFormData(restoredFormData);
                 setRestoredTranscript(draft.transcript);
                 setSpeechDemoKey(k => k + 1);
+                // Only now has a draft been restored (not when one was found).
+                liveDraftTelemetry.restoreSucceeded();
               },
             },
             cancel: {
@@ -485,24 +486,36 @@ export default function RecordPage() {
       const submittedAt = Date.now();
       let failedStatus: number | undefined;
       let failureCode: string | undefined;
+      let submissionReported = false;
       try {
         setIsSubmitting(true);
         const authToken = await getAuthToken();
+        const dictationSessionId = dictationSessionTelemetry.currentSessionId();
 
-        const response = await fetch("/api/live-transcription/submission", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(authToken && { Authorization: `Bearer ${authToken}` }),
-          },
-          body: JSON.stringify(
-            liveTranscriptionSubmissionPayloadSchema.parse({
-              form_data: validation.data,
-              messages: sectionedTranscript,
-              notes: normalizeOptionalEditorText(editorContent),
-            })
-          ),
-        });
+        const body = JSON.stringify(
+          liveTranscriptionSubmissionPayloadSchema.parse({
+            form_data: validation.data,
+            messages: sectionedTranscript,
+            notes: normalizeOptionalEditorText(editorContent),
+          })
+        );
+
+        let response: Response;
+        try {
+          response = await fetch("/api/live-transcription/submission", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(authToken && { Authorization: `Bearer ${authToken}` }),
+              // Relates this dictation session to the submission, server-side.
+              ...(dictationSessionId && { "X-Dictation-Session-Id": dictationSessionId }),
+            },
+            body,
+          });
+        } catch (error) {
+          failureCode = "network"; // the request itself failed
+          throw error;
+        }
 
         if (!response.ok) {
           failedStatus = response.status;
@@ -515,7 +528,9 @@ export default function RecordPage() {
           throw new Error(message);
         }
 
-        const responseBody = await response.json();
+        // A 2xx that is not JSON (e.g. a sign-in page from a proxy) is an
+        // invalid response too, not a browser error.
+        const responseBody = await response.json().catch(() => undefined);
         const parsedResponse =
           liveTranscriptionSubmissionResponseSchema.safeParse(responseBody);
         if (!parsedResponse.success) {
@@ -528,9 +543,9 @@ export default function RecordPage() {
         dictationSessionTelemetry.submissionFinished({
           ok: true,
           mode,
-          transcriptionId: data.transcription_id,
           durationMs: Date.now() - submittedAt,
         });
+        submissionReported = true;
         dictationSessionTelemetry.sessionEnded("submitted");
         // Stop autosave for good first: a pending retry or the flush on leaving
         // the page would otherwise write the submitted transcript back as a
@@ -540,13 +555,16 @@ export default function RecordPage() {
         router.push("/");
         return data;
       } catch (error) {
-        dictationSessionTelemetry.submissionFinished({
-          ok: false,
-          status: failedStatus,
-          errorCode: failureCode,
-          mode,
-          durationMs: Date.now() - submittedAt,
-        });
+        // Not after a reported success (clean-up after it failed instead).
+        if (!submissionReported) {
+          dictationSessionTelemetry.submissionFinished({
+            ok: false,
+            status: failedStatus,
+            errorCode: failureCode,
+            mode,
+            durationMs: Date.now() - submittedAt,
+          });
+        }
         throw error;
       } finally {
         setIsSubmitting(false);

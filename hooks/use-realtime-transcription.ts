@@ -251,6 +251,9 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
 
   useEffect(
     () => () => {
+      // Unmounted while recording (submitted, page left, remounted): the Speech
+      // session's time still counts (OBS-5), and this is not a pause.
+      speechSessionTelemetry.tornDown();
       recordingIntendedRef.current = false;
       teardownSession();
     },
@@ -276,9 +279,10 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
 
       const sessionIndex = sessionIndexRef.current;
       const sessionId = speechSessionIdRef.current;
-      const durationMs = sessionStartedAtRef.current
-        ? Date.now() - sessionStartedAtRef.current
-        : 0;
+      // A reconnect that failed before the SDK's sessionStarted never had a
+      // Speech session to stop.
+      const started = sessionStartedAtRef.current > 0;
+      const durationMs = started ? Date.now() - sessionStartedAtRef.current : 0;
       const segmentsCaptured = sessionSegmentCountRef.current;
       sessionStartedAtRef.current = 0;
 
@@ -303,13 +307,15 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
           collapsesInWindow,
         });
       }
-      speechSessionTelemetry.sessionStopped({
-        sessionId,
-        sessionIndex,
-        durationMs,
-        segmentsCaptured,
-        userInitiated: false,
-      });
+      if (started) {
+        speechSessionTelemetry.sessionStopped({
+          sessionId,
+          sessionIndex,
+          durationMs,
+          segmentsCaptured,
+          userInitiated: false,
+        });
+      }
 
       if (
         isUnhealthyCollapseCount(collapsesInWindow, collapseThreshold) &&
@@ -526,16 +532,22 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
           if (!current) {
             // Counted in the dictation session (OBS-4), not in the stopped
             // Speech session, whose summary has already been reported.
-            if (text.trim()) speechSessionTelemetry.segmentCaptured();
+            if (text.trim()) {
+              speechSessionTelemetry.segmentCaptured({ stoppedSession: true });
+            }
             setSegments((prev) => [
               ...prev,
               { id: segmentId, speaker, text, isFinal: true },
             ]);
             return;
           }
-          sessionSegmentCountRef.current += 1;
-          reportFirstText(e.sessionId, text);
-          speechSessionTelemetry.segmentCaptured();
+          // Only text counts as captured: an empty result (silence, noise) must
+          // not hide a dictation that captured nothing (DIAAT-300).
+          if (text.trim()) {
+            sessionSegmentCountRef.current += 1;
+            reportFirstText(e.sessionId, text);
+            speechSessionTelemetry.segmentCaptured();
+          }
 
           // Finalize the current segment; if no interim event fired, create one now.
           setSegments((prev) => {

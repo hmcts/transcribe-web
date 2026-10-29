@@ -10,6 +10,7 @@ const telemetry = vi.hoisted(() => ({
   paused: vi.fn(),
   sessionStarted: vi.fn(),
   sessionStopped: vi.fn(),
+  tornDown: vi.fn(),
   sessionCanceled: vi.fn(),
   sessionUnhealthy: vi.fn(),
   noSpeechCaptured: vi.fn(),

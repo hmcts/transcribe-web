@@ -195,19 +195,27 @@ describe("finding 5: a session whose page is killed while hidden still ends", ()
     page.stop();
   });
 
-  it("does not end a session twice when a frozen page comes back after its end was sent", () => {
+  it("continues under a new journey when a frozen page comes back after its end was sent", () => {
     const local = storageWithKeys();
     const clock = { now: 1_000_000 };
     const page = recordingPage(local, clock);
+    const before = page.telemetry.currentSessionId();
     setVisibility("hidden");
 
     clock.now += 10 * 60_000; // frozen: no heartbeat
     const other = openPage(local, clock);
-    expect(other.named("dictation.session_ended")).toHaveLength(1);
+    const [sentElsewhere] = other.named("dictation.session_ended");
+    expect(sentElsewhere.journey?.id).toBe(before);
 
-    setVisibility("visible"); // it was alive after all
-    page.telemetry.sessionEnded("left_page");
-    expect(page.named("dictation.session_ended")).toHaveLength(0);
+    setVisibility("visible"); // it was alive after all, still recording
+    const after = page.telemetry.currentSessionId();
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before); // that journey is closed: no second end for it
+    page.telemetry.sessionEnded("submitted");
+    const ends = page.named("dictation.session_ended");
+    expect(ends).toHaveLength(1);
+    expect(ends[0].journey?.id).toBe(after);
+    expect(ends[0].attributes?.["hmcts.outcome"]).toBe("success"); // counts kept
     other.stop();
     page.stop();
   });
@@ -256,6 +264,66 @@ describe("finding 5: a session whose page is killed while hidden still ends", ()
     }
   });
 
+  it("keeps the stored end current while dictation continues in a hidden tab", () => {
+    vi.useFakeTimers();
+    try {
+      const local = storageWithKeys();
+      const clock = { now: 1_000_000 };
+      const rec = recorder();
+      const telemetry = createDictationSessionTelemetry(
+        rec.relay,
+        () => clock.now
+      );
+      const stop = trackDictationPage(
+        telemetry,
+        rec.relay,
+        () => local,
+        () => clock.now
+      );
+      telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+      setVisibility("hidden"); // early: nothing captured yet
+
+      for (let i = 0; i < 3; i++) telemetry.segmentCaptured(); // dictating while hidden
+      clock.now += 60 * 60_000;
+      vi.advanceTimersByTime(30_000); // a heartbeat
+
+      clock.now += 10 * 60_000; // then the tab is killed
+      const next = openPage(local, clock);
+      const [ended] = next.named("dictation.session_ended");
+      expect(ended.attributes?.["dictation.segments_captured"]).toBe(3);
+      // Captured speech but never submitted: its own outcome, not a success.
+      expect(ended.attributes?.["hmcts.outcome"]).toBe("cancelled");
+      expect(ended.attributes?.["hmcts.error.code"]).toBe(
+        "dictation.not_submitted"
+      );
+      expect(ended.durationMs).toBeGreaterThanOrEqual(60 * 60_000);
+      next.stop();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not recreate a stored end that another page already sent", () => {
+    vi.useFakeTimers();
+    try {
+      const local = storageWithKeys();
+      const clock = { now: 1_000_000 };
+      const page = recordingPage(local, clock);
+      setVisibility("hidden");
+      clock.now += 10 * 60_000; // frozen
+      const other = openPage(local, clock); // sends and removes the stored end
+      expect(other.named("dictation.session_ended")).toHaveLength(1);
+
+      vi.advanceTimersByTime(30_000); // the frozen page wakes and beats while still hidden
+      expect(pendingEnds(local)).toBe(0);
+      other.stop();
+      page.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("is not blocked by an unreadable entry", () => {
     const local = storageWithKeys();
     const clock = { now: 1_000_000 };
@@ -287,5 +355,119 @@ describe("finding 7: a successful submission excuses an autosave outage", () => 
     expect(
       named("dictation.session_ended")[0].attributes?.["hmcts.outcome"]
     ).toBe("success");
+  });
+});
+
+describe("latest review: session outcomes and empty results", () => {
+  it("reports a session left without submitting as not submitted, not a success", () => {
+    for (const reason of ["page_hidden", "left_page"] as const) {
+      const { relay, named } = recorder();
+      const telemetry = createDictationSessionTelemetry(relay);
+      telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+      telemetry.segmentCaptured();
+      telemetry.sessionEnded(reason);
+      expect(named("dictation.session_ended")[0].attributes).toMatchObject({
+        "hmcts.outcome": "cancelled",
+        "hmcts.error.code": "dictation.not_submitted",
+      });
+    }
+  });
+
+  it("still reports a real problem first, and success only when submitted", () => {
+    const { relay, named } = recorder();
+    const telemetry = createDictationSessionTelemetry(relay);
+    telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+    telemetry.segmentCaptured();
+    telemetry.autosaveStalled({
+      kind: "server",
+      consecutiveFailures: 3,
+      secondsSinceLastSave: 30,
+    });
+    telemetry.sessionEnded("left_page");
+    expect(
+      named("dictation.session_ended")[0].attributes?.["hmcts.error.code"]
+    ).toBe("autosave.failed");
+  });
+
+  it("does not send an empty batch when every queued event was too large", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(202));
+    const relay = new TelemetryRelay({
+      fetchImpl,
+    });
+    relay.emit({ name: "x", attributes: { big: "y".repeat(40_000) } });
+    await relay.flush();
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(relay.pending).toBe(0);
+  });
+
+  describe("medium review fixes", () => {
+    it("a restored draft submitted without new speech is not a no-transcript failure", () => {
+      const { relay, named } = recorder();
+      const telemetry = createDictationSessionTelemetry(relay);
+      telemetry.restoreFinished({ ok: true });
+      telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+      telemetry.sessionEnded("submitted");
+      expect(
+        named("dictation.session_ended")[0].attributes?.["hmcts.outcome"]
+      ).toBe("success");
+
+      // After the submission the draft is gone: a new empty session is a failure again.
+      telemetry.recordingRequested({ sessionIndex: 2, reconnectAttempt: 0 });
+      telemetry.sessionEnded("submitted");
+      expect(
+        named("dictation.session_ended")[1].attributes?.["hmcts.error.code"]
+      ).toBe("dictation.no_transcript");
+    });
+
+    it("a submission that fails in the browser is not reported as a network outage", () => {
+      const { relay, named } = recorder();
+      const telemetry = createDictationSessionTelemetry(relay);
+      telemetry.submissionFinished({ ok: false, mode: "mic", durationMs: 1 }); // e.g. validation threw
+      telemetry.submissionFinished({
+        ok: false,
+        errorCode: "network",
+        mode: "mic",
+        durationMs: 1,
+      });
+      telemetry.submissionFinished({
+        ok: false,
+        status: 503,
+        mode: "mic",
+        durationMs: 1,
+      });
+      expect(
+        named("dictation.submission_finished").map(
+          (e) => e.attributes?.["hmcts.error.code"]
+        )
+      ).toEqual(["submission.client_error", "network", "http.503"]);
+    });
+
+    it("clears the restored flag when a restore is submitted, or the page left, without recording", () => {
+      for (const reason of ["submitted", "left_page"] as const) {
+        const { relay, named } = recorder();
+        const telemetry = createDictationSessionTelemetry(relay);
+        telemetry.restoreFinished({ ok: true });
+        telemetry.sessionEnded(reason); // no session: nothing recorded
+        telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+        telemetry.sessionEnded("submitted");
+        expect(
+          named("dictation.session_ended")[0].attributes?.["hmcts.error.code"]
+        ).toBe("dictation.no_transcript");
+      }
+    });
+
+    it("a 4xx speech token response is a failure, a 5xx or network failure an error", () => {
+      const { relay, named } = recorder();
+      const telemetry = createDictationSessionTelemetry(relay);
+      telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+      telemetry.tokenFetched({ ok: false, status: 401, durationMs: 5 });
+      telemetry.tokenFetched({ ok: false, status: 503, durationMs: 5 });
+      telemetry.tokenFetched({ ok: false, durationMs: 5 });
+      expect(
+        named("speech.token_fetched").map(
+          (e) => e.attributes?.["hmcts.outcome"]
+        )
+      ).toEqual(["failure", "error", "error"]);
+    });
   });
 });

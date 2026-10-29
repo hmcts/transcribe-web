@@ -36,7 +36,9 @@ export interface SpeechSessionTelemetry {
   }): void;
   /** First transcript text of a speech session (call once per session). */
   firstText(input: { sessionId?: string; sessionIndex: number }): void;
-  segmentCaptured(): void;
+  /** Final text captured; `stoppedSession` when it came from a recognizer that
+   * is stopping (counted for the dictation, not the running Speech session). */
+  segmentCaptured(input?: { stoppedSession?: boolean }): void;
   /** The user stopped recording, whether or not a session was connected. */
   paused(): void;
   sessionStopped(input: {
@@ -47,6 +49,8 @@ export interface SpeechSessionTelemetry {
     /** False when the session ended without the user asking it to. */
     userInitiated: boolean;
   }): void;
+  /** The hook unmounted: stop the running Speech session, if any (not a pause). */
+  tornDown(): void;
   sessionCanceled(input: {
     sessionId?: string;
     sessionIndex: number;
@@ -82,8 +86,8 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
     dictationSessionTelemetry.firstText(input);
   },
 
-  segmentCaptured() {
-    dictationSessionTelemetry.segmentCaptured();
+  segmentCaptured(input) {
+    dictationSessionTelemetry.segmentCaptured(input);
   },
 
   paused() {
@@ -104,6 +108,10 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
       segmentsCaptured,
       userInitiated,
     });
+  },
+
+  tornDown() {
+    dictationSessionTelemetry.speechSessionTornDown();
   },
 
   sessionCanceled({
@@ -140,10 +148,11 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
           speech_cancellation_reason: cancellation?.reason ?? "unknown",
           speech_error_code: cancellation?.errorCode ?? "unknown",
         },
+        // No errorDetails: it is free text (e.g. String(err) for a failed start)
+        // and can quote a service response. The reason and code above are enums.
         extra: {
           collapsesInWindow,
           windowSeconds,
-          errorDetails: cancellation?.errorDetails ?? null,
         },
       }
     );

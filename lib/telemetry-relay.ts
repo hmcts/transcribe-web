@@ -20,8 +20,8 @@
  *   the app sends the user to sign in). On page hide they are kept in
  *   localStorage instead of being sent to be refused.
  * - Page hide: queued events go with `fetch(..., { keepalive: true })` within the
- *   browser's 64 KiB keepalive budget, counted across hide flushes until each
- *   request settles. Events that cannot be sent (signed out, budget exhausted, a
+ *   browser's 64 KiB keepalive budget, shared with every request still in
+ *   flight. Events that cannot be sent (signed out, budget exhausted, a
  *   send failing while the page is hidden) are kept in localStorage and sent when
  *   the page is visible again or by the next dictation page. They carry no user
  *   identity, so on a shared computer the next user's page may send them.
@@ -126,7 +126,7 @@ export class TelemetryRelay {
   private retryAt = 0;
   /** The last response was 401: retry slowly, and keep events on page hide. */
   private signedOut = false;
-  /** Bytes of page-hide keepalive requests not yet settled. */
+  /** Bytes of keepalive requests not yet settled (the browser's budget is shared). */
   private keepaliveInFlight = 0;
   private readonly fetchImpl: () => typeof fetch;
   private readonly flushDelayMs: number;
@@ -239,13 +239,28 @@ export class TelemetryRelay {
     }
     this.inFlight = true;
     const batch = this.takeBatch();
+    if (batch.length === 0) {
+      // Everything at the head was too large to send and was dropped.
+      this.inFlight = false;
+      if (this.queue.length > 0) this.schedule(0);
+      return;
+    }
     let outcome: "sent" | "drop" | "retry" | "unauthorised" = "retry";
+    const payload = body(batch);
+    // keepalive: the request survives the page being closed while it is in
+    // flight. Only within the budget left by other keepalive requests (e.g. a
+    // page-hide flush just before the page was shown again): over it, the
+    // browser would refuse the request.
+    const keepalive =
+      payload.length <= KEEPALIVE_BUDGET_BYTES - this.keepaliveInFlight;
+    if (keepalive) this.keepaliveInFlight += payload.length;
     try {
       const response = await this.fetchImpl()(RELAY_PATH, {
         method: "POST",
         headers: JSON_HEADERS,
-        body: body(batch),
+        body: payload,
         credentials: "same-origin",
+        keepalive,
       });
       if (response.ok) outcome = "sent";
       else if (response.status === 401) outcome = "unauthorised";
@@ -254,6 +269,7 @@ export class TelemetryRelay {
       outcome = "retry"; // network failure
     } finally {
       this.inFlight = false;
+      if (keepalive) this.keepaliveInFlight -= payload.length;
     }
 
     if (outcome === "sent") {

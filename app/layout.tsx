@@ -12,6 +12,7 @@ import { Toaster } from "@/components/ui/sonner";
 import cn from "@/lib/utils";
 import AccessGate from "@/providers/access-gate";
 import PageViewTracker from "@/providers/page-view-tracker";
+import TelemetryBootstrap from "@/providers/telemetry-bootstrap";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { TranscriptsProvider } from "@/providers/transcripts";
 import { UserSettingsProvider } from "@/providers/user-settings";
@@ -53,6 +54,7 @@ export default async function RootLayout({
           disableTransitionOnChange
         >
           <UserSettingsProvider>
+            <TelemetryBootstrap />
             <PageViewTracker />
             <TranscriptsProvider>
               <AccessGate>

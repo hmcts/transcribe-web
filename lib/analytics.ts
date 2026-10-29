@@ -235,8 +235,8 @@ const MAPPINGS: {
     },
     operational: true,
   }),
-  // The transcription ID is not sent: the contract carries no identifier on
-  // product events.
+  // No transcription ID: browser-sent IDs are unverifiable claims, and the
+  // contract allows none on these events.
   opened_existing_transcript: () => ({ name: "transcript.opened" }),
   deleted_transcript: () => ({ name: "transcript.deleted" }),
   renamed_transcript: () => ({ name: "transcript.renamed" }),

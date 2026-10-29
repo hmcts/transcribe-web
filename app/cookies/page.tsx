@@ -66,9 +66,14 @@ export default function CookiesPage() {
               </thead>
               <tbody>
                 <tr className="border-t">
-                  <td className="px-4 py-2 font-mono text-xs">AppServiceAuthSession</td>
+                  <td className="px-4 py-2 font-mono text-xs">transcribe_session</td>
                   <td className="px-4 py-2 text-muted-foreground">Keeps you signed in</td>
-                  <td className="px-4 py-2 text-muted-foreground">Session</td>
+                  <td className="px-4 py-2 text-muted-foreground">12 hours</td>
+                </tr>
+                <tr className="border-t">
+                  <td className="px-4 py-2 font-mono text-xs">transcribe_login_state</td>
+                  <td className="px-4 py-2 text-muted-foreground">Protects your sign-in while it is in progress</td>
+                  <td className="px-4 py-2 text-muted-foreground">10 minutes</td>
                 </tr>
                 <tr className="border-t">
                   <td className="px-4 py-2 font-mono text-xs">judicial-transcribe-cookie-preferences</td>
