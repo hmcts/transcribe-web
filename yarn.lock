@@ -90,13 +90,13 @@ __metadata:
   linkType: hard
 
 "@assistant-ui/react-markdown@npm:^0.14.0":
-  version: 0.14.17
-  resolution: "@assistant-ui/react-markdown@npm:0.14.17"
+  version: 0.14.24
+  resolution: "@assistant-ui/react-markdown@npm:0.14.24"
   dependencies:
-    "@radix-ui/react-primitive": "npm:^2.1.10"
-    "@radix-ui/react-use-callback-ref": "npm:^1.1.4"
+    "@radix-ui/react-primitive": "npm:^2.2.0"
     "@types/hast": "npm:^3.0.5"
     classnames: "npm:^2.5.1"
+    micromark-util-html-tag-name: "npm:^2.0.1"
     react-markdown: "npm:^10.1.0"
   peerDependencies:
     "@assistant-ui/react": ^0.15.0
@@ -105,7 +105,7 @@ __metadata:
   peerDependenciesMeta:
     "@types/react":
       optional: true
-  checksum: 10/2595bcd573b7ea4c1d6b56e465d88012f95e78f0f819eb7687b5f0db43af5e69687b9201044daf86a61a6fbe462a57ad113f57f73aa705c3f3a607994dfd1266
+  checksum: 10/b8db44b591d63717637b5dc2587c46ab6c096e26cd178f8be3d82050c3526566288ef960d0b7f25a62eee5d14aeab18fff8f4fa4e6f563ffd68d28228b291db0
   languageName: node
   linkType: hard
 
@@ -3179,6 +3179,25 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@radix-ui/react-primitive@npm:^2.2.0":
+  version: 2.2.0
+  resolution: "@radix-ui/react-primitive@npm:2.2.0"
+  dependencies:
+    "@radix-ui/react-slot": "npm:1.5.0"
+  peerDependencies:
+    "@types/react": "*"
+    "@types/react-dom": "*"
+    react: ^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc
+    react-dom: ^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc
+  peerDependenciesMeta:
+    "@types/react":
+      optional: true
+    "@types/react-dom":
+      optional: true
+  checksum: 10/447adf47113120b3f7d9a6707742cf38eca1a426d6ebd2a18f6813600c52773bb5a284fa2c90c374ffde33603442d5322eab66d43558f8d825316acc51b4c3fa
+  languageName: node
+  linkType: hard
+
 "@radix-ui/react-progress@npm:1.1.16":
   version: 1.1.16
   resolution: "@radix-ui/react-progress@npm:1.1.16"
@@ -3382,6 +3401,21 @@ __metadata:
     "@types/react":
       optional: true
   checksum: 10/97f305fb29c6284e1292cfee441cd807744f32322c0a1b541190a294f878edacce3bc37c174b4024724210243dad7b4feb762222e4c43668db2b65b9576d222a
+  languageName: node
+  linkType: hard
+
+"@radix-ui/react-slot@npm:1.5.0":
+  version: 1.5.0
+  resolution: "@radix-ui/react-slot@npm:1.5.0"
+  dependencies:
+    "@radix-ui/react-compose-refs": "npm:1.1.5"
+  peerDependencies:
+    "@types/react": "*"
+    react: ^16.8 || ^17.0 || ^18.0 || ^19.0 || ^19.0.0-rc
+  peerDependenciesMeta:
+    "@types/react":
+      optional: true
+  checksum: 10/1798212d0852181c49ca5a2c614d9624f0ca116f058c291b7b4b7d4c8551ed3241500fa5c9cd094e769e5d473c2b13617ff002135d7840f06798769d1bf21d4d
   languageName: node
   linkType: hard
 
@@ -8813,7 +8847,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"micromark-util-html-tag-name@npm:^2.0.0":
+"micromark-util-html-tag-name@npm:^2.0.0, micromark-util-html-tag-name@npm:^2.0.1":
   version: 2.0.1
   resolution: "micromark-util-html-tag-name@npm:2.0.1"
   checksum: 10/dea365f5ad28ad74ff29fcb581f7b74fc1f80271c5141b3b2bc91c454cbb6dfca753f28ae03730d657874fcbd89d0494d0e3965dfdca06d9855f467c576afa9d
