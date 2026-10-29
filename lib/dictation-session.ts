@@ -171,6 +171,9 @@ export interface DictationSessionTelemetry {
   /** Forget the running session without an event (it was ended elsewhere and the
    * page is going away). */
   discardSession(): void;
+  /** Called whenever a session ends (so a page can drop its stored end at once).
+   * Returns the unsubscribe function. */
+  onSessionEnded(listener: () => void): () => void;
   /** Its end was sent elsewhere but the page is back (a frozen tab): carry on
    * under a new journey ID, so later events and the submission still have one.
    * Counts are kept, so the outcome still reflects the whole dictation. */
@@ -264,6 +267,7 @@ export function createDictationSessionTelemetry(
   let finalisedSpeechIndex: number | null = null;
   /** The last session on this page ended with a submission. */
   let submittedOnPage = false;
+  const endListeners = new Set<() => void>();
 
   /** Start a session if none is running. Only a recording request does this. */
   const start = (): SessionState => {
@@ -564,6 +568,18 @@ export function createDictationSessionTelemetry(
         );
       }
       relay.emit(endEvent(state, reason, at));
+      for (const listener of [...endListeners]) {
+        try {
+          listener();
+        } catch {
+          // A listener never affects the session.
+        }
+      }
+    },
+
+    onSessionEnded(listener) {
+      endListeners.add(listener);
+      return () => endListeners.delete(listener);
     },
 
     pendingEnd() {
@@ -618,7 +634,21 @@ export function startBrowserTelemetry(
   if (typeof window === "undefined") return;
   installRelayLifecycle(relay);
   recoverStaleEnds(relay);
+  // Again later: a page killed less than PAGE_GONE_AFTER_MS ago still looked
+  // alive at startup, and others can be killed while this page is open.
+  if (recoveryTimer === null && typeof setInterval !== "undefined") {
+    recoveryTimer = setInterval(
+      () => recoverStaleEnds(relay),
+      RECOVERY_INTERVAL_MS
+    );
+  }
 }
+
+let recoveryTimer: ReturnType<typeof setInterval> | null = null;
+/** How often a page looks for the ends of pages killed while hidden. */
+const RECOVERY_INTERVAL_MS = 60_000;
+/** Web Locks name: one tab at a time claims stored ends, so none is sent twice. */
+const RECOVERY_LOCK = "hmcts-dictation-recovery";
 
 export const PENDING_END_STORAGE_KEY = "hmcts-dictation-pending-end";
 export const PAGE_ALIVE_STORAGE_KEY = "hmcts-dictation-alive";
@@ -664,6 +694,27 @@ export function recoverStaleEnds(
   storage: () => Storage | null = pageStorage,
   now: () => number = Date.now,
   ownEndKey?: string
+): void {
+  // Each entry is read and removed with no await in between, so under the lock
+  // two tabs cannot both send it. Browsers without Web Locks run unlocked.
+  const locks =
+    typeof navigator !== "undefined"
+      ? (navigator as Navigator & { locks?: LockManager }).locks
+      : undefined;
+  if (locks?.request) {
+    locks
+      .request(RECOVERY_LOCK, () => recoverNow(relay, storage, now, ownEndKey))
+      .catch(() => undefined);
+    return;
+  }
+  recoverNow(relay, storage, now, ownEndKey);
+}
+
+function recoverNow(
+  relay: TelemetryRelay,
+  storage: () => Storage | null,
+  now: () => number,
+  ownEndKey: string | undefined
 ): void {
   const get = (key: string): string | null => {
     try {
@@ -798,6 +849,15 @@ export function trackDictationPage(
 
   recoverStaleEnds(relay, storage, now, endKey);
 
+  // A session that ends while hidden (e.g. a submission completing) drops its
+  // stored page_hidden end at once: if the page were killed before the next
+  // heartbeat, another page would otherwise send a second, contradictory end.
+  const stopListening = telemetry.onSessionEnded(() => {
+    if (!storedPending) return;
+    remove(endKey);
+    storedPending = false;
+  });
+
   const onVisibilityChange = () => {
     if (document.visibilityState === "hidden") {
       const pending = telemetry.pendingEnd();
@@ -826,6 +886,7 @@ export function trackDictationPage(
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pagehide", onPageHide);
     endHere("left_page");
+    stopListening();
     void relay.flush();
   };
 }
