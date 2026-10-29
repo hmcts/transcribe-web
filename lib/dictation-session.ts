@@ -24,6 +24,7 @@
  * `submission.failed`, or success.
  */
 
+import { installClientErrorHandlers } from "@/lib/browser-failures";
 import {
   installRelayLifecycle,
   type RelayEvent,
@@ -625,14 +626,16 @@ export const dictationSessionTelemetry =
 
 /**
  * Browser telemetry for every page (mounted once from the root layout): the
- * relay's page-hide flush and restore of unsent events, and the ends of
- * dictations whose page was killed while hidden. Idempotent.
+ * relay's page-hide flush and restore of unsent events, client-side error
+ * reporting (lib/browser-failures), and the ends of dictations whose page was
+ * killed while hidden. Idempotent.
  */
 export function startBrowserTelemetry(
   relay: TelemetryRelay = telemetryRelay
 ): void {
   if (typeof window === "undefined") return;
   installRelayLifecycle(relay);
+  installClientErrorHandlers();
   recoverStaleEnds(relay);
   // Again later: a page killed less than PAGE_GONE_AFTER_MS ago still looked
   // alive at startup, and others can be killed while this page is open.

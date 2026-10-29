@@ -2,6 +2,7 @@
 
 import NextError from "next/error";
 import { useEffect } from "react";
+import { browserFailures } from "@/lib/browser-failures";
 
 export default function GlobalError({
   error,
@@ -9,10 +10,12 @@ export default function GlobalError({
   error: Error & { digest?: string };
 }) {
   useEffect(() => {
-    // No error tracker on CNP (Sentry removed, DIAAT-205): the browser console
-    // only. Server-side errors reach Application Insights with their digest
-    // (instrumentation.ts), which is shown below for support.
+    // No error tracker on CNP (Sentry removed, DIAAT-205): the error's type,
+    // route and digest go to Application Insights through the relay (never its
+    // message). Server-side errors are there with the same digest
+    // (instrumentation.ts), which is also shown below for support.
     console.error(error);
+    browserFailures.clientError(error, "render", error.digest);
   }, [error]);
 
   return (

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { AudioProcessingStatus } from "@/components/audio/processing/processing-loader";
 import { track } from "@/lib/analytics";
+import { browserFailures } from "@/lib/browser-failures";
 import { apiClient } from "@/lib/api-client";
 import { audioBackupDB } from "@/lib/indexeddb-backup";
 import type { UploadErrorDetails, UploadUrlData } from "./types";
@@ -172,6 +173,7 @@ export default function useAudioUpload({
                 ),
                 {
                   status: xhr.status,
+                  code: `http.${xhr.status}`,
                   requestId:
                     xhr.getResponseHeader("x-request-id") ??
                     xhr.getResponseHeader("x-ms-request-id") ??
@@ -183,11 +185,19 @@ export default function useAudioUpload({
         });
 
         xhr.addEventListener("error", () => {
-          reject(new Error("Network error during upload"));
+          reject(
+            Object.assign(new Error("Network error during upload"), {
+              code: "upload.network",
+            })
+          );
         });
 
         xhr.addEventListener("timeout", () => {
-          reject(new Error("Upload timed out"));
+          reject(
+            Object.assign(new Error("Upload timed out"), {
+              code: "upload.timeout",
+            })
+          );
         });
 
         xhr.open("PUT", uploadUrl);
@@ -214,7 +224,9 @@ export default function useAudioUpload({
         const errorMsg = "Upload URL not available. This should not happen.";
         // eslint-disable-next-line no-console
         console.error(errorMsg);
-        throw new Error(errorMsg);
+        throw Object.assign(new Error(errorMsg), {
+          code: "upload.url_unavailable",
+        });
       }
 
       // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -293,6 +305,15 @@ export default function useAudioUpload({
       }
 
       // All retries failed - report error
+      const failure = lastError as
+        | (Error & { code?: string; status?: number })
+        | null;
+      browserFailures.transferFailed({
+        code: failure?.code ?? "upload.error",
+        status: failure?.status,
+        file: blob,
+        attempt: MAX_RETRIES,
+      });
       setUploadError(lastError?.message || "Error occurred while transcribing");
       reportError(lastError || new Error("Unknown error"));
       setIsProcessingTranscription(false);

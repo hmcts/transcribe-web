@@ -31,6 +31,7 @@ vi.mock("@/lib/analytics-consent", async (importOriginal) => ({
 
 import { type AnalyticsEventName, track } from "@/lib/analytics";
 import { CONSENT_COOKIE_NAME } from "@/lib/analytics-consent";
+import { createBrowserFailures } from "@/lib/browser-failures";
 import {
   createDictationSessionTelemetry,
   type DictationEndReason,
@@ -339,7 +340,11 @@ describe("every event this app sends is accepted whole", () => {
     // Catches an event the scripted session above does not reach. Attributes are
     // read up to the next event, as quoted dotted keys (helpers and spreads are
     // covered by the session above, not here).
-    const text = ["lib/dictation-session.ts", "lib/analytics.ts"]
+    const text = [
+      "lib/dictation-session.ts",
+      "lib/analytics.ts",
+      "lib/browser-failures.ts",
+    ]
       .map((file) => readFileSync(join(ROOT, file), "utf8"))
       .join("\n");
     const calls = text.split(/emit\(|name: (?=")/).slice(1);
@@ -365,6 +370,43 @@ describe("every event this app sends is accepted whole", () => {
     expect(checked.size).toBeGreaterThan(40);
     expect(checked).toContain("dictation.session_ended");
     expect(checked).toContain("page.viewed");
+  });
+});
+
+describe("browser failures are accepted whole (lib/browser-failures)", () => {
+  it("in every form the app sends", () => {
+    const events: RelayEvent[] = [];
+    const failures = createBrowserFailures(
+      { emit: (event: RelayEvent) => events.push(event) },
+      () => 0,
+      () => "/record"
+    );
+    for (const source of [
+      "render",
+      "window_error",
+      "unhandled_rejection",
+    ] as const)
+      failures.clientError(new TypeError("x"), source, "1234567890");
+    failures.clientError("not an error", "unhandled_rejection");
+    const recording = new Blob([new Uint8Array(4)], { type: "audio/webm" });
+    const upload = new File([new Uint8Array(4)], "a.mp3", {
+      type: "audio/mpeg",
+    });
+    for (const code of [
+      "upload.network",
+      "upload.timeout",
+      "upload.url_unavailable",
+      "upload.error",
+    ])
+      failures.transferFailed({ code, file: recording, attempt: 2 });
+    failures.transferFailed({
+      code: "http.503",
+      status: 503,
+      file: upload,
+      attempt: 2,
+    });
+    expect(events.length).toBe(9);
+    expect(checkAll(events)).toEqual([]);
   });
 });
 
