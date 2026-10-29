@@ -378,7 +378,7 @@ export class TelemetryRelay {
   /** Queue events kept by an earlier page hide (this or a previous visit). */
   restoreUnsent(): void {
     try {
-      if (this.signedOut) return; // they would be refused: kept for later
+      // Restored events still respect retryAt in flush().
       const storage = this.storage();
       if (!storage) return;
       const stored = this.readStored(storage);
