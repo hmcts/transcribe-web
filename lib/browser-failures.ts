@@ -63,7 +63,8 @@ export function createBrowserFailures(
       try {
         const type = errorType(error);
         const route = normaliseRoute(path());
-        const key = `${type}|${source}|${route}`;
+        const digestKey = digest && DIGEST.test(digest) ? digest : "";
+        const key = `${type}|${source}|${route}|${digestKey}`;
         const at = now();
         const previous = lastSent.get(key);
         if (previous !== undefined && at - previous < REPEAT_AFTER_MS) return;
