@@ -41,7 +41,6 @@ ARG ENVIRONMENT
 ARG NEXT_PUBLIC_POSTHOG_API_KEY
 ARG NEXT_PUBLIC_POSTHOG_HOST
 ARG NEXT_PUBLIC_MAX_RECORDING_MINUTES=115
-ARG VERSION=dev
 
 # Set environment variables from build args
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
@@ -50,17 +49,16 @@ ENV NEXT_PUBLIC_POSTHOG_API_KEY=$NEXT_PUBLIC_POSTHOG_API_KEY
 ENV NEXT_PUBLIC_POSTHOG_HOST=$NEXT_PUBLIC_POSTHOG_HOST
 ENV NEXT_PUBLIC_MAX_RECORDING_MINUTES=$NEXT_PUBLIC_MAX_RECORDING_MINUTES
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV APP_VERSION=$VERSION
 
-RUN yarn run build
+# BUILD_VERSION comes from Jenkinsfile_CNP; elsewhere an empty one lets the
+# runner stage copy it unconditionally (lib/app-version.ts then reports "dev").
+RUN yarn run build && touch BUILD_VERSION
 
 # Production image, copy all the files and run next
 FROM base AS runner
 WORKDIR /app
 
-ARG VERSION=dev
 ENV NODE_ENV=production
-ENV APP_VERSION=$VERSION
 
 RUN apk add --no-cache caddy supervisor
 
@@ -75,6 +73,7 @@ RUN chown 1000:1000 .next
 COPY --from=builder --chown=1000:1000 /app/.next/standalone ./
 COPY --from=builder --chown=1000:1000 /app/.next/static ./.next/static
 COPY --from=builder --chown=1000:1000 /app/start.js ./start.js
+COPY --from=builder --chown=1000:1000 /app/BUILD_VERSION ./BUILD_VERSION
 COPY supervisord.conf /etc/supervisord.conf
 COPY Caddyfile /etc/caddy/Caddyfile
 # Allow the app to write to env-config.js at runtime for dynamic environment variable support

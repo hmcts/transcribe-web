@@ -22,3 +22,6 @@ charts/**/Chart.lock
 # Reports from yarn test:smoke / test:functional
 smoke-output/
 functional-output/
+
+# Written by Jenkinsfile_CNP before the image build
+BUILD_VERSION
