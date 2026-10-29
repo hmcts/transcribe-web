@@ -1,8 +1,7 @@
+import { appVersion } from "@/lib/app-version";
+
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return Response.json({
-    status: "ok",
-    version: process.env.APP_VERSION ?? "dev",
-  });
+  return Response.json({ status: "ok", version: appVersion() });
 }
