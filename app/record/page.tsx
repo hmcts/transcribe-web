@@ -43,6 +43,10 @@ import {
 import { getAuthToken } from "@/lib/auth-utils";
 import { deleteLiveDraft, getLiveDraft } from "@/lib/live-draft-api";
 import { LiveDraftError, liveDraftFailureKind } from "@/lib/live-draft-errors";
+import {
+  dictationSessionTelemetry,
+  trackDictationPage,
+} from "@/lib/dictation-session";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { fetchUserDocumentContent } from "@/lib/document-content-api";
 import {
@@ -256,6 +260,9 @@ export default function RecordPage() {
     }
   }, [isRecordingActive]);
 
+  // OBS-4: one dictation-session journey per visit; ends when the page is left.
+  useEffect(() => trackDictationPage(), []);
+
   // Offer to restore a draft left by an interrupted session (e.g. forced logout mid-recording).
   useEffect(() => {
     let cancelled = false;
@@ -266,6 +273,7 @@ export default function RecordPage() {
         const draft = await getLiveDraft();
         console.debug("[live-draft] GET result:", draft ? `found (saved_at: ${draft.saved_at})` : "not found");
         if (cancelled || !draft) return;
+        liveDraftTelemetry.restoreSucceeded();
         // The backend hard-deletes a draft 24h after its last save, on read.
         // A judge who cannot get back in within a day loses the work
         // permanently, so say so while it can still be acted on (DIAAT-296).
@@ -474,6 +482,10 @@ export default function RecordPage() {
     setFormErrors({});
 
     const submissionPromise = (async () => {
+      // OBS-4: the submission's outcome and timing, in the dictation session.
+      const submittedAt = Date.now();
+      let failedStatus: number | undefined;
+      let failureCode: string | undefined;
       try {
         setIsSubmitting(true);
         const authToken = await getAuthToken();
@@ -494,6 +506,7 @@ export default function RecordPage() {
         });
 
         if (!response.ok) {
+          failedStatus = response.status;
           const errorBody = await response.json().catch(() => null);
           const errorResult =
             submissionErrorResponseSchema.safeParse(errorBody);
@@ -507,12 +520,20 @@ export default function RecordPage() {
         const parsedResponse =
           liveTranscriptionSubmissionResponseSchema.safeParse(responseBody);
         if (!parsedResponse.success) {
+          failureCode = "submission.invalid_response";
           throw new Error(
             "Submission succeeded but returned an invalid response."
           );
         }
         const data = parsedResponse.data;
         track("hearing_submitted", { mode });
+        dictationSessionTelemetry.submissionFinished({
+          ok: true,
+          mode,
+          transcriptionId: data.transcription_id,
+          durationMs: Date.now() - submittedAt,
+        });
+        dictationSessionTelemetry.sessionEnded("submitted");
         // Stop autosave for good first: a pending retry or the flush on leaving
         // the page would otherwise write the submitted transcript back as a
         // draft, to be offered for restore on the next visit.
@@ -521,6 +542,13 @@ export default function RecordPage() {
         router.push("/");
         return data;
       } catch (error) {
+        dictationSessionTelemetry.submissionFinished({
+          ok: false,
+          status: failedStatus,
+          errorCode: failureCode,
+          mode,
+          durationMs: Date.now() - submittedAt,
+        });
         track("hearing_submission_failed", {
           mode,
           error_type: error instanceof Error ? error.name : "unknown_error",

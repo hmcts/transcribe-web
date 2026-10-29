@@ -17,10 +17,14 @@
  * pattern DIAAT-297 established in `lib/speech-session-telemetry.ts`: PostHog
  * for the full event stream, Sentry for the "this is a data-loss incident in
  * progress" escalation that should page someone.
+ *
+ * OBS-4: every event also goes to Application Insights through the first-party
+ * relay (`lib/dictation-session`), in the dictation session's journey.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { track } from "@/lib/analytics";
+import { dictationSessionTelemetry } from "@/lib/dictation-session";
 import type { LiveDraftFailureKind } from "@/lib/live-draft-errors";
 
 /** Which autosave call site produced the write. */
@@ -49,11 +53,19 @@ export interface LiveDraftTelemetry {
     msSinceLastSave: number | null;
   }): void;
   saveRecovered(input: { consecutiveFailures: number; outageMs: number }): void;
+  restoreSucceeded(): void;
   restoreFailed(input: { kind: LiveDraftFailureKind; status?: number }): void;
 }
 
 export const liveDraftTelemetry: LiveDraftTelemetry = {
   saveFailed({ kind, status, consecutiveFailures, msSinceLastSave, trigger }) {
+    dictationSessionTelemetry.autosaveFailed({
+      kind,
+      status,
+      consecutiveFailures,
+      secondsSinceLastSave: toSeconds(msSinceLastSave),
+      trigger,
+    });
     track("live_draft_save_failed", {
       failure_kind: kind,
       status: status ?? null,
@@ -64,6 +76,11 @@ export const liveDraftTelemetry: LiveDraftTelemetry = {
   },
 
   autosaveStalled({ kind, consecutiveFailures, msSinceLastSave }) {
+    dictationSessionTelemetry.autosaveStalled({
+      kind,
+      consecutiveFailures,
+      secondsSinceLastSave: toSeconds(msSinceLastSave),
+    });
     track("live_draft_autosave_stalled", {
       failure_kind: kind,
       consecutive_failures: consecutiveFailures,
@@ -90,13 +107,22 @@ export const liveDraftTelemetry: LiveDraftTelemetry = {
   },
 
   saveRecovered({ consecutiveFailures, outageMs }) {
+    dictationSessionTelemetry.autosaveRecovered({
+      consecutiveFailures,
+      outageSeconds: Math.round(outageMs / 1000),
+    });
     track("live_draft_save_recovered", {
       failures_before_recovery: consecutiveFailures,
       outage_seconds: Math.round(outageMs / 1000),
     });
   },
 
+  restoreSucceeded() {
+    dictationSessionTelemetry.restoreFinished({ ok: true });
+  },
+
   restoreFailed({ kind, status }) {
+    dictationSessionTelemetry.restoreFinished({ ok: false, kind, status });
     track("live_draft_restore_failed", {
       failure_kind: kind,
       status: status ?? null,

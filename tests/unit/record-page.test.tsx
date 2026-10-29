@@ -72,6 +72,7 @@ vi.mock("@/lib/live-draft-telemetry", () => ({
     saveFailed: vi.fn(),
     autosaveStalled: vi.fn(),
     saveRecovered: vi.fn(),
+    restoreSucceeded: vi.fn(),
     restoreFailed: vi.fn(),
   },
 }));

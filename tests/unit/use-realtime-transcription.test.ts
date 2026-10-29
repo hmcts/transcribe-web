@@ -60,6 +60,11 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 const telemetry = vi.hoisted(() => ({
+  recordingRequested: vi.fn(),
+  tokenFetched: vi.fn(),
+  firstText: vi.fn(),
+  segmentCaptured: vi.fn(),
+  paused: vi.fn(),
   sessionStarted: vi.fn(),
   sessionStopped: vi.fn(),
   sessionCanceled: vi.fn(),
@@ -257,6 +262,41 @@ describe("useRealtimeTranscription session health", () => {
     expect(transcribers.current).toHaveLength(countAfterDisconnect);
   });
 
+  it("reports a user stop as a pause even while a reconnect is pending (OBS-4)", async () => {
+    const { result } = renderHook(() => useRealtimeTranscription());
+    await startRecording(result.current.connect);
+    await act(async () => {
+      collapseWithError(latest()); // a reconnect is now scheduled, nothing connected
+    });
+    telemetry.paused.mockClear();
+
+    await act(async () => {
+      result.current.disconnect();
+    });
+
+    expect(telemetry.paused).toHaveBeenCalledTimes(1);
+  });
+
+  it("passes the Speech SDK session ID and reports first text once per session (OBS-4)", async () => {
+    const { result } = renderHook(() => useRealtimeTranscription());
+    await act(async () => {
+      await result.current.connect();
+    });
+    const sessionId = "0123456789abcdef0123456789abcdef";
+    await act(async () => {
+      latest().sessionStarted?.(null, { sessionId });
+    });
+    expect(telemetry.sessionStarted).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId })
+    );
+    expect(telemetry.recordingRequested).toHaveBeenCalledWith(
+      expect.objectContaining({ reconnectAttempt: 0 })
+    );
+    expect(telemetry.tokenFetched).toHaveBeenCalledWith(
+      expect.objectContaining({ ok: true })
+    );
+  });
+
   it("does not treat a user-initiated stop as a collapse", async () => {
     const { result } = renderHook(() => useRealtimeTranscription());
     await startRecording(result.current.connect);
@@ -363,6 +403,8 @@ describe("useRealtimeTranscription session health", () => {
       expect(result.current.segments).toEqual([
         expect.objectContaining({ text: "the last sentence", isFinal: true }),
       ]);
+      // It counts as captured: the dictation did not end without a transcript.
+      expect(telemetry.segmentCaptured).toHaveBeenCalledTimes(1);
 
       // Once the stop completes, the recognizer is stale.
       await act(async () => {

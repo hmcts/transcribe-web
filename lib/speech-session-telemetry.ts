@@ -13,19 +13,40 @@
  * PostHog for the full lifecycle stream (funnel/frequency analysis of the loop)
  * and Sentry for the "this session is broken" signal that should page someone.
  *
- * See the ticket write-up for the App Insights follow-up options.
+ * OBS-4: every event also goes to Application Insights through the first-party
+ * relay (`lib/dictation-session`), as one dictation-session journey with timings.
+ * The relay carries no free text: the cancellation's `errorDetails` is not sent.
  */
 
 import * as Sentry from "@sentry/nextjs";
 import { track } from "@/lib/analytics";
+import { dictationSessionTelemetry } from "@/lib/dictation-session";
 import type { SpeechCancellationInfo } from "@/lib/speech-session-health";
 
 export interface SpeechSessionTelemetry {
-  sessionStarted(input: {
+  /** A user start/resume (reconnectAttempt 0) or an automatic reconnect. */
+  recordingRequested(input: {
     sessionIndex: number;
     reconnectAttempt: number;
   }): void;
+  tokenFetched(input: {
+    ok: boolean;
+    status?: number;
+    durationMs: number;
+  }): void;
+  sessionStarted(input: {
+    /** Speech SDK session ID (`SessionEventArgs.sessionId`). */
+    sessionId?: string;
+    sessionIndex: number;
+    reconnectAttempt: number;
+  }): void;
+  /** First transcript text of a speech session (call once per session). */
+  firstText(input: { sessionId?: string; sessionIndex: number }): void;
+  segmentCaptured(): void;
+  /** The user stopped recording, whether or not a session was connected. */
+  paused(): void;
   sessionStopped(input: {
+    sessionId?: string;
     sessionIndex: number;
     durationMs: number;
     segmentsCaptured: number;
@@ -33,6 +54,7 @@ export interface SpeechSessionTelemetry {
     userInitiated: boolean;
   }): void;
   sessionCanceled(input: {
+    sessionId?: string;
     sessionIndex: number;
     cancellation: SpeechCancellationInfo;
     collapsesInWindow: number;
@@ -46,14 +68,40 @@ export interface SpeechSessionTelemetry {
 }
 
 export const speechSessionTelemetry: SpeechSessionTelemetry = {
-  sessionStarted({ sessionIndex, reconnectAttempt }) {
+  recordingRequested(input) {
+    dictationSessionTelemetry.recordingRequested(input);
+  },
+
+  tokenFetched(input) {
+    dictationSessionTelemetry.tokenFetched(input);
+  },
+
+  sessionStarted({ sessionId, sessionIndex, reconnectAttempt }) {
     track("speech_session_started", {
       session_index: sessionIndex,
       reconnect_attempt: reconnectAttempt,
     });
+    dictationSessionTelemetry.speechSessionStarted({
+      sessionId,
+      sessionIndex,
+      reconnectAttempt,
+    });
+  },
+
+  firstText(input) {
+    dictationSessionTelemetry.firstText(input);
+  },
+
+  segmentCaptured() {
+    dictationSessionTelemetry.segmentCaptured();
+  },
+
+  paused() {
+    dictationSessionTelemetry.recordingPaused();
   },
 
   sessionStopped({
+    sessionId,
     sessionIndex,
     durationMs,
     segmentsCaptured,
@@ -65,9 +113,28 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
       segments_captured: segmentsCaptured,
       user_initiated: userInitiated,
     });
+    dictationSessionTelemetry.speechSessionStopped({
+      sessionId,
+      sessionIndex,
+      durationMs,
+      segmentsCaptured,
+      userInitiated,
+    });
   },
 
-  sessionCanceled({ sessionIndex, cancellation, collapsesInWindow }) {
+  sessionCanceled({
+    sessionId,
+    sessionIndex,
+    cancellation,
+    collapsesInWindow,
+  }) {
+    dictationSessionTelemetry.speechCanceled({
+      sessionId,
+      sessionIndex,
+      reason: cancellation.reason,
+      errorCode: cancellation.errorCode,
+      collapsesInWindow,
+    });
     track("speech_session_canceled", {
       session_index: sessionIndex,
       reason: cancellation.reason,
@@ -78,6 +145,12 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
   },
 
   sessionUnhealthy({ collapsesInWindow, windowSeconds, cancellation }) {
+    dictationSessionTelemetry.speechUnhealthy({
+      collapsesInWindow,
+      windowSeconds,
+      reason: cancellation?.reason,
+      errorCode: cancellation?.errorCode,
+    });
     track("speech_session_unhealthy", {
       collapses_in_window: collapsesInWindow,
       window_seconds: windowSeconds,
@@ -106,6 +179,7 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
   },
 
   noSpeechCaptured({ elapsedSeconds }) {
+    dictationSessionTelemetry.noSpeechWarning({ elapsedSeconds });
     track("speech_no_content_warning_shown", {
       elapsed_seconds: elapsedSeconds,
     });
