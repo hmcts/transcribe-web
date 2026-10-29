@@ -552,6 +552,7 @@ export default function RecordPage() {
         });
         submissionReported = true;
         dictationSessionTelemetry.sessionEnded("submitted");
+        setIsRecordingActive(false);
         // Stop autosave for good first: a pending retry or the flush on leaving
         // the page would otherwise write the submitted transcript back as a
         // draft, to be offered for restore on the next visit.
