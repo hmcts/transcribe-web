@@ -2,30 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { Separator } from "@/components/ui/separator";
+import {
+  type AnalyticsConsent,
+  CONSENT_COOKIE_NAME,
+  readAnalyticsConsent,
+} from "@/lib/analytics-consent";
 
-type AnalyticsConsent = "on" | "off";
-
-const COOKIE_NAME = "judicial-transcribe-cookie-preferences";
 const COOKIE_EXPIRY_DAYS = 365;
-
-function readStoredAnalyticsConsent(): AnalyticsConsent {
-  if (typeof document === "undefined") return "off";
-  const match = document.cookie.match(new RegExp(`${COOKIE_NAME}=([^;]+)`));
-  if (!match) return "off";
-  try {
-    const prefs = JSON.parse(decodeURIComponent(match[1]));
-    return prefs.analytics === "on" ? "on" : "off";
-  } catch {
-    return "off";
-  }
-}
 
 export default function CookiesPage() {
   const [analytics, setAnalytics] = useState<AnalyticsConsent>("off");
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    setAnalytics(readStoredAnalyticsConsent());
+    setAnalytics(readAnalyticsConsent());
   }, []);
 
   function handleSubmit(e: { preventDefault(): void }) {
@@ -35,13 +25,13 @@ export default function CookiesPage() {
     // We cannot rely on cookie-manager's PreferencesFormHandler because it is
     // initialised once in the layout. On client-side navigation to this page the
     // form is not in the DOM at init time, so no submit listener is attached.
-    // PostHog and GTM sync automatically on the next page load via the
-    // UserPreferencesLoaded event in CookieManagerInit.
+    // The preference is read whenever an analytics event is sent, so it applies
+    // immediately.
     const prefs = { analytics };
     const expires = new Date();
     expires.setDate(expires.getDate() + COOKIE_EXPIRY_DAYS);
     const secure = window.location.protocol === "https:" ? ";secure" : "";
-    document.cookie = `${COOKIE_NAME}=${JSON.stringify(prefs)};expires=${expires.toUTCString()};path=/${secure}`;
+    document.cookie = `${CONSENT_COOKIE_NAME}=${JSON.stringify(prefs)};expires=${expires.toUTCString()};path=/${secure}`;
 
     setSaved(true);
     setTimeout(() => setSaved(false), 4000);
@@ -91,35 +81,22 @@ export default function CookiesPage() {
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-xl font-semibold">Analytics cookies (optional)</h2>
+          <h2 className="text-xl font-semibold">Analytics (optional)</h2>
           <p className="text-sm text-muted-foreground">
-            These help us understand how you use the service so we can improve it. We use Google
-            Analytics and PostHog to collect usage data. This may include your email address to
-            associate activity with your account.
+            If you allow analytics, we record which parts of Bench Notes are used, for example
+            which pages are viewed and when minutes are generated or copied, so we can improve
+            the service. These records are kept in HMCTS&apos;s own monitoring service. They do
+            not include your name, email address, transcripts, notes or case details, and no
+            analytics cookies are set on your device.
           </p>
-          <div className="rounded-md border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted">
-                <tr>
-                  <th className="px-4 py-2 text-left font-medium">Name</th>
-                  <th className="px-4 py-2 text-left font-medium">Purpose</th>
-                  <th className="px-4 py-2 text-left font-medium">Expires</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr className="border-t">
-                  <td className="px-4 py-2 font-mono text-xs">_ga</td>
-                  <td className="px-4 py-2 text-muted-foreground">Google Analytics – distinguishes users</td>
-                  <td className="px-4 py-2 text-muted-foreground">2 years</td>
-                </tr>
-                <tr className="border-t">
-                  <td className="px-4 py-2 font-mono text-xs">_ga_*</td>
-                  <td className="px-4 py-2 text-muted-foreground">Google Analytics – maintains session state</td>
-                  <td className="px-4 py-2 text-muted-foreground">2 years</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+          <p className="text-sm text-muted-foreground">
+            Whatever you choose, we record whether the service is working (for example, when a
+            recording fails to start or an autosave fails) so that problems can be fixed. This
+            information is needed to run the service and does not include your name, email
+            address, transcripts, notes or case details. Your browser&apos;s local storage holds
+            these records briefly if they cannot be sent straight away, for example when the
+            page closes unexpectedly.
+          </p>
 
           {saved && (
             <div className="rounded-md bg-green-50 px-4 py-3 text-sm text-green-800 dark:bg-green-950 dark:text-green-200">
@@ -133,7 +110,7 @@ export default function CookiesPage() {
           >
             <fieldset className="space-y-2">
               <legend className="text-sm font-medium">
-                Do you want to accept analytics cookies?
+                Do you want to allow analytics?
               </legend>
               <div className="flex items-center gap-2">
                 <input
@@ -146,7 +123,7 @@ export default function CookiesPage() {
                   className="h-4 w-4 accent-primary"
                 />
                 <label htmlFor="analytics-on" className="text-sm">
-                  Yes, accept analytics cookies
+                  Yes, allow analytics
                 </label>
               </div>
               <div className="flex items-center gap-2">
@@ -160,7 +137,7 @@ export default function CookiesPage() {
                   className="h-4 w-4 accent-primary"
                 />
                 <label htmlFor="analytics-off" className="text-sm">
-                  No, do not accept analytics cookies
+                  No, do not allow analytics
                 </label>
               </div>
             </fieldset>

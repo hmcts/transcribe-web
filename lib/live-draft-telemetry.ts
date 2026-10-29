@@ -7,23 +7,13 @@
  * and reported none of it, because a failure that never reaches the server is
  * completely invisible.
  *
- * The ticket asks for client-side telemetry and notes there is no browser App
- * Insights SDK. There is not, and there is no easy way to add one here:
- * `@azure/monitor-opentelemetry` is server-side only, and the `Caddyfile` routes
- * every `/api/*` path to the backend service, so a Next.js route handler under
- * `app/api/*` is unreachable in production and cannot be used as an ingest
- * endpoint. The two client-side sinks that do exist are PostHog
- * (`lib/analytics`) and Sentry, and both are queryable, so this follows the
- * pattern DIAAT-297 established in `lib/speech-session-telemetry.ts`: PostHog
- * for the full event stream, Sentry for the "this is a data-loss incident in
- * progress" escalation that should page someone.
- *
- * OBS-4: every event also goes to Application Insights through the first-party
- * relay (`lib/dictation-session`), in the dictation session's journey.
+ * Every event goes to Application Insights through the first-party relay
+ * (`lib/dictation-session`, OBS-4), in the dictation session's journey. Sentry
+ * additionally gets the "this is a data-loss incident in progress" escalation
+ * that should alert someone. PostHog is no longer used (OBS-3).
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { track } from "@/lib/analytics";
 import { dictationSessionTelemetry } from "@/lib/dictation-session";
 import type { LiveDraftFailureKind } from "@/lib/live-draft-errors";
 
@@ -66,13 +56,6 @@ export const liveDraftTelemetry: LiveDraftTelemetry = {
       secondsSinceLastSave: toSeconds(msSinceLastSave),
       trigger,
     });
-    track("live_draft_save_failed", {
-      failure_kind: kind,
-      status: status ?? null,
-      consecutive_failures: consecutiveFailures,
-      seconds_since_last_save: toSeconds(msSinceLastSave),
-      trigger,
-    });
   },
 
   autosaveStalled({ kind, consecutiveFailures, msSinceLastSave }) {
@@ -81,13 +64,8 @@ export const liveDraftTelemetry: LiveDraftTelemetry = {
       consecutiveFailures,
       secondsSinceLastSave: toSeconds(msSinceLastSave),
     });
-    track("live_draft_autosave_stalled", {
-      failure_kind: kind,
-      consecutive_failures: consecutiveFailures,
-      seconds_since_last_save: toSeconds(msSinceLastSave),
-    });
 
-    // Sentry, not just PostHog. Autosave having stopped while someone is
+    // Sentry as well as the relay. Autosave having stopped while someone is
     // dictating is a data-loss incident in progress, not a usage statistic â€”
     // this is the signal that was missing when a judge lost fifty minutes.
     Sentry.captureMessage(
@@ -111,10 +89,6 @@ export const liveDraftTelemetry: LiveDraftTelemetry = {
       consecutiveFailures,
       outageSeconds: Math.round(outageMs / 1000),
     });
-    track("live_draft_save_recovered", {
-      failures_before_recovery: consecutiveFailures,
-      outage_seconds: Math.round(outageMs / 1000),
-    });
   },
 
   restoreSucceeded() {
@@ -123,9 +97,5 @@ export const liveDraftTelemetry: LiveDraftTelemetry = {
 
   restoreFailed({ kind, status }) {
     dictationSessionTelemetry.restoreFinished({ ok: false, kind, status });
-    track("live_draft_restore_failed", {
-      failure_kind: kind,
-      status: status ?? null,
-    });
   },
 };

@@ -2,7 +2,7 @@ import * as Sentry from "@sentry/nextjs";
 import { Copy } from "lucide-react";
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { getDistinctId, track } from "@/lib/analytics";
+import { track } from "@/lib/analytics";
 import { getEnv } from "@/lib/env";
 
 type ErrorReportInput = {
@@ -11,7 +11,6 @@ type ErrorReportInput = {
   requestId?: string | null;
   sentryEventId?: string | null;
   sentryTraceId?: string | null;
-  posthogDistinctId?: string | null;
   statusCode?: number | null;
   recordingMode?: "mic" | "screen" | "upload" | null;
   fileSizeBytes?: number | null;
@@ -23,7 +22,6 @@ type ErrorReportInput = {
 export default function ErrorReportCard({ data }: { data: ErrorReportInput }) {
   const report = React.useMemo(() => {
     const now = new Date().toISOString();
-    const phid = getDistinctId();
     const sentryLastEvent = (Sentry as any)?.lastEventId?.() || null;
     return {
       title: data.title || "Bench Notes Error Report",
@@ -35,7 +33,6 @@ export default function ErrorReportCard({ data }: { data: ErrorReportInput }) {
       observability: {
         sentry_event_id: data.sentryEventId || sentryLastEvent || null,
         sentry_trace_id: data.sentryTraceId || null,
-        posthog_distinct_id: data.posthogDistinctId || phid,
       },
       backend: {
         request_id: data.requestId || null,

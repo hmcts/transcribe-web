@@ -49,37 +49,32 @@ describe("getEnv", () => {
   });
 
   describe("preset values", () => {
-    const HOST_KEY = "NEXT_PUBLIC_POSTHOG_HOST" as const;
-    const API_KEY = "NEXT_PUBLIC_POSTHOG_API_KEY" as const;
-    let originalHost: string | undefined;
-    let originalApiKey: string | undefined;
+    const PRESET_KEY = "NEXT_PUBLIC_MAX_RECORDING_MINUTES" as const;
+    let original: string | undefined;
 
     beforeEach(() => {
-      originalHost = process.env[HOST_KEY];
-      originalApiKey = process.env[API_KEY];
-      delete process.env[HOST_KEY];
-      delete process.env[API_KEY];
+      original = process.env[PRESET_KEY];
+      delete process.env[PRESET_KEY];
       delete (window as any).__ENV;
     });
 
     afterEach(() => {
-      if (originalHost !== undefined) process.env[HOST_KEY] = originalHost;
-      else delete process.env[HOST_KEY];
-      if (originalApiKey !== undefined) process.env[API_KEY] = originalApiKey;
-      else delete process.env[API_KEY];
+      if (original !== undefined) process.env[PRESET_KEY] = original;
+      else delete process.env[PRESET_KEY];
     });
 
-    it("returns https://eu.i.posthog.com for NEXT_PUBLIC_POSTHOG_HOST when no runtime value is set", () => {
-      expect(getEnv(HOST_KEY)).toBe("https://eu.i.posthog.com");
+    it("returns the preset when no runtime value is set", () => {
+      expect(getEnv(PRESET_KEY)).toBe("125");
     });
 
-    it("returns undefined for NEXT_PUBLIC_POSTHOG_API_KEY when no runtime value is set", () => {
-      expect(getEnv(API_KEY)).toBeUndefined();
+    it("overrides the preset with a window.__ENV value", () => {
+      (window as any).__ENV = { [PRESET_KEY]: "60" };
+      expect(getEnv(PRESET_KEY)).toBe("60");
     });
 
-    it("overrides NEXT_PUBLIC_POSTHOG_HOST preset with window.__ENV value", () => {
-      (window as any).__ENV = { [HOST_KEY]: "https://custom.posthog.com" };
-      expect(getEnv(HOST_KEY)).toBe("https://custom.posthog.com");
+    it("has no PostHog settings any more (OBS-3)", () => {
+      expect(getEnv("NEXT_PUBLIC_POSTHOG_HOST")).toBeUndefined();
+      expect(getEnv("NEXT_PUBLIC_POSTHOG_API_KEY")).toBeUndefined();
     });
   });
 });

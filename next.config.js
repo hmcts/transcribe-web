@@ -6,30 +6,6 @@ const nextConfig = {
     // Set root to this directory to avoid lockfile detection issues
     root: __dirname,
   },
-  async rewrites() {
-    // Proxy PostHog analytics through /ingest so the browser request stays
-    // same-origin. This means connect-src 'self' covers PostHog without
-    // needing to whitelist external PostHog domains in the CSP.
-    const posthogHost =
-      process.env.NEXT_PUBLIC_POSTHOG_HOST || "/ingest";
-
-    // If NEXT_PUBLIC_POSTHOG_HOST is a relative path (recommended: /ingest),
-    // use the default PostHog cloud ingest host as the rewrite destination.
-    const destinationHost = posthogHost.startsWith("/")
-      ? "https://eu.i.posthog.com"
-      : posthogHost;
-
-    return [
-      {
-        source: "/ingest/static/:path*",
-        destination: `${destinationHost}/static/:path*`,
-      },
-      {
-        source: "/ingest/:path*",
-        destination: `${destinationHost}/:path*`,
-      },
-    ];
-  },
 };
 
 module.exports = nextConfig;

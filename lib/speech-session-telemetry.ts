@@ -6,20 +6,14 @@
  * The browser knew exactly what was happening â€” sessionStarted, canceled with a
  * reason and an error code, sessionStopped â€” and reported none of it.
  *
- * There is no browser-side App Insights SDK in this app, and the Caddy config
- * sends every `/api/*` path to the backend service, so a Next.js route handler
- * here is unreachable in production. The two client-side sinks that do exist are
- * PostHog (`lib/analytics`) and Sentry. Both are queryable, so both are used:
- * PostHog for the full lifecycle stream (funnel/frequency analysis of the loop)
- * and Sentry for the "this session is broken" signal that should page someone.
- *
- * OBS-4: every event also goes to Application Insights through the first-party
- * relay (`lib/dictation-session`), as one dictation-session journey with timings.
- * The relay carries no free text: the cancellation's `errorDetails` is not sent.
+ * Every event goes to Application Insights through the first-party relay
+ * (`lib/dictation-session`, OBS-4), as one dictation-session journey with
+ * timings; the relay carries no free text (the cancellation's `errorDetails`
+ * is not sent). Sentry additionally gets the "this session is broken" signal
+ * that should alert someone. PostHog is no longer used (OBS-3).
  */
 
 import * as Sentry from "@sentry/nextjs";
-import { track } from "@/lib/analytics";
 import { dictationSessionTelemetry } from "@/lib/dictation-session";
 import type { SpeechCancellationInfo } from "@/lib/speech-session-health";
 
@@ -77,10 +71,6 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
   },
 
   sessionStarted({ sessionId, sessionIndex, reconnectAttempt }) {
-    track("speech_session_started", {
-      session_index: sessionIndex,
-      reconnect_attempt: reconnectAttempt,
-    });
     dictationSessionTelemetry.speechSessionStarted({
       sessionId,
       sessionIndex,
@@ -107,12 +97,6 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
     segmentsCaptured,
     userInitiated,
   }) {
-    track("speech_session_stopped", {
-      session_index: sessionIndex,
-      duration_ms: durationMs,
-      segments_captured: segmentsCaptured,
-      user_initiated: userInitiated,
-    });
     dictationSessionTelemetry.speechSessionStopped({
       sessionId,
       sessionIndex,
@@ -135,13 +119,6 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
       errorCode: cancellation.errorCode,
       collapsesInWindow,
     });
-    track("speech_session_canceled", {
-      session_index: sessionIndex,
-      reason: cancellation.reason,
-      error_code: cancellation.errorCode ?? null,
-      error_details: cancellation.errorDetails ?? null,
-      collapses_in_window: collapsesInWindow,
-    });
   },
 
   sessionUnhealthy({ collapsesInWindow, windowSeconds, cancellation }) {
@@ -151,14 +128,8 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
       reason: cancellation?.reason,
       errorCode: cancellation?.errorCode,
     });
-    track("speech_session_unhealthy", {
-      collapses_in_window: collapsesInWindow,
-      window_seconds: windowSeconds,
-      last_reason: cancellation?.reason ?? null,
-      last_error_code: cancellation?.errorCode ?? null,
-    });
 
-    // Sentry, not just PostHog: a dictation session collapsing this often is a
+    // Sentry as well as the relay: a dictation session collapsing this often is a
     // data-loss incident in progress, not a usage statistic.
     Sentry.captureMessage(
       `Speech session collapsed ${collapsesInWindow} times in ${windowSeconds}s`,
@@ -180,9 +151,6 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
 
   noSpeechCaptured({ elapsedSeconds }) {
     dictationSessionTelemetry.noSpeechWarning({ elapsedSeconds });
-    track("speech_no_content_warning_shown", {
-      elapsed_seconds: elapsedSeconds,
-    });
 
     Sentry.captureMessage(
       `Dictation ran ${elapsedSeconds}s with no captured speech`,

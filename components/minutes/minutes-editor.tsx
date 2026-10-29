@@ -398,7 +398,7 @@ function MinutesEditor({ onCitationClick }: MinutesEditorProps) {
           </div>
         )}
         {currentVersion && (
-          <div className="ph-mask w-full overflow-visible">
+          <div className="w-full overflow-visible">
             <SimpleEditor
               initialContent={currentVersion?.html_content ?? ""}
               isEditing={isEditing}

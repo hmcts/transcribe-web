@@ -33,7 +33,6 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useLiveDraftAutosave } from "@/hooks/use-live-draft-autosave";
-import { track } from "@/lib/analytics";
 import {
   describeAutosaveAlert,
   describeDraftExpiryAlert,
@@ -526,7 +525,6 @@ export default function RecordPage() {
           );
         }
         const data = parsedResponse.data;
-        track("hearing_submitted", { mode });
         dictationSessionTelemetry.submissionFinished({
           ok: true,
           mode,
@@ -548,10 +546,6 @@ export default function RecordPage() {
           errorCode: failureCode,
           mode,
           durationMs: Date.now() - submittedAt,
-        });
-        track("hearing_submission_failed", {
-          mode,
-          error_type: error instanceof Error ? error.name : "unknown_error",
         });
         throw error;
       } finally {
@@ -732,16 +726,7 @@ export default function RecordPage() {
         <AnimatedMicrophone size={28} isActive={isCapturingSpeechNow} />
       </div>
       <Button
-        onClick={() =>
-          setIsRecordingActive((active) => {
-            const nextActive = !active;
-            track("dictation_recording_toggled", {
-              action: nextActive ? "start" : "pause",
-              mode,
-            });
-            return nextActive;
-          })
-        }
+        onClick={() => setIsRecordingActive((active) => !active)}
         variant="outline"
         className="w-min border-border hover:bg-accent focus-visible:ring-inset focus-visible:ring-offset-0"
       >

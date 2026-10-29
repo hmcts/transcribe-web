@@ -2,8 +2,6 @@
 const preset: Partial<Record<string, string>> = {
   NEXT_PUBLIC_API_URL:
     process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000",
-  NEXT_PUBLIC_POSTHOG_HOST:
-    process.env.NEXT_PUBLIC_POSTHOG_HOST || "https://eu.i.posthog.com",
   NEXT_PUBLIC_MAX_RECORDING_MINUTES:
     process.env.NEXT_PUBLIC_MAX_RECORDING_MINUTES || "125",
   NEXT_PUBLIC_PREPOPULATE_LOCAL_TRANSCRIPT:
