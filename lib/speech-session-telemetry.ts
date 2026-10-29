@@ -6,33 +6,53 @@
  * The browser knew exactly what was happening â€” sessionStarted, canceled with a
  * reason and an error code, sessionStopped â€” and reported none of it.
  *
- * There is no browser-side App Insights SDK in this app, and the Caddy config
- * sends every `/api/*` path to the backend service, so a Next.js route handler
- * here is unreachable in production. The two client-side sinks that do exist are
- * PostHog (`lib/analytics`) and Sentry. Both are queryable, so both are used:
- * PostHog for the full lifecycle stream (funnel/frequency analysis of the loop)
- * and Sentry for the "this session is broken" signal that should page someone.
- *
- * See the ticket write-up for the App Insights follow-up options.
+ * Every event goes to Application Insights through the first-party relay
+ * (`lib/dictation-session`, OBS-4), as one dictation-session journey with
+ * timings; the relay carries no free text (the cancellation's `errorDetails`
+ * is not sent). The "this session is broken" alert is to be built on these
+ * events in transcribe-shared-infrastructure (DIAAT-205, not yet in place).
+ * Neither Sentry nor PostHog is used.
  */
 
-import * as Sentry from "@sentry/nextjs";
-import { track } from "@/lib/analytics";
+import { dictationSessionTelemetry } from "@/lib/dictation-session";
 import type { SpeechCancellationInfo } from "@/lib/speech-session-health";
 
 export interface SpeechSessionTelemetry {
-  sessionStarted(input: {
+  /** A user start/resume (reconnectAttempt 0) or an automatic reconnect. */
+  recordingRequested(input: {
     sessionIndex: number;
     reconnectAttempt: number;
   }): void;
+  tokenFetched(input: {
+    ok: boolean;
+    status?: number;
+    durationMs: number;
+  }): void;
+  sessionStarted(input: {
+    /** Speech SDK session ID (`SessionEventArgs.sessionId`). */
+    sessionId?: string;
+    sessionIndex: number;
+    reconnectAttempt: number;
+  }): void;
+  /** First transcript text of a speech session (call once per session). */
+  firstText(input: { sessionId?: string; sessionIndex: number }): void;
+  /** Final text captured; `stoppedSession` when it came from a recognizer that
+   * is stopping (counted for the dictation, not the running Speech session). */
+  segmentCaptured(input?: { stoppedSession?: boolean }): void;
+  /** The user stopped recording, whether or not a session was connected. */
+  paused(): void;
   sessionStopped(input: {
+    sessionId?: string;
     sessionIndex: number;
     durationMs: number;
     segmentsCaptured: number;
     /** False when the session ended without the user asking it to. */
     userInitiated: boolean;
   }): void;
+  /** The hook unmounted: stop the running Speech session, if any (not a pause). */
+  tornDown(): void;
   sessionCanceled(input: {
+    sessionId?: string;
     sessionIndex: number;
     cancellation: SpeechCancellationInfo;
     collapsesInWindow: number;
@@ -46,77 +66,79 @@ export interface SpeechSessionTelemetry {
 }
 
 export const speechSessionTelemetry: SpeechSessionTelemetry = {
-  sessionStarted({ sessionIndex, reconnectAttempt }) {
-    track("speech_session_started", {
-      session_index: sessionIndex,
-      reconnect_attempt: reconnectAttempt,
+  recordingRequested(input) {
+    dictationSessionTelemetry.recordingRequested(input);
+  },
+
+  tokenFetched(input) {
+    dictationSessionTelemetry.tokenFetched(input);
+  },
+
+  sessionStarted({ sessionId, sessionIndex, reconnectAttempt }) {
+    dictationSessionTelemetry.speechSessionStarted({
+      sessionId,
+      sessionIndex,
+      reconnectAttempt,
     });
   },
 
+  firstText(input) {
+    dictationSessionTelemetry.firstText(input);
+  },
+
+  segmentCaptured(input) {
+    dictationSessionTelemetry.segmentCaptured(input);
+  },
+
+  paused() {
+    dictationSessionTelemetry.recordingPaused();
+  },
+
   sessionStopped({
+    sessionId,
     sessionIndex,
     durationMs,
     segmentsCaptured,
     userInitiated,
   }) {
-    track("speech_session_stopped", {
-      session_index: sessionIndex,
-      duration_ms: durationMs,
-      segments_captured: segmentsCaptured,
-      user_initiated: userInitiated,
+    dictationSessionTelemetry.speechSessionStopped({
+      sessionId,
+      sessionIndex,
+      durationMs,
+      segmentsCaptured,
+      userInitiated,
     });
   },
 
-  sessionCanceled({ sessionIndex, cancellation, collapsesInWindow }) {
-    track("speech_session_canceled", {
-      session_index: sessionIndex,
+  tornDown() {
+    dictationSessionTelemetry.speechSessionTornDown();
+  },
+
+  sessionCanceled({
+    sessionId,
+    sessionIndex,
+    cancellation,
+    collapsesInWindow,
+  }) {
+    dictationSessionTelemetry.speechCanceled({
+      sessionId,
+      sessionIndex,
       reason: cancellation.reason,
-      error_code: cancellation.errorCode ?? null,
-      error_details: cancellation.errorDetails ?? null,
-      collapses_in_window: collapsesInWindow,
+      errorCode: cancellation.errorCode,
+      collapsesInWindow,
     });
   },
 
   sessionUnhealthy({ collapsesInWindow, windowSeconds, cancellation }) {
-    track("speech_session_unhealthy", {
-      collapses_in_window: collapsesInWindow,
-      window_seconds: windowSeconds,
-      last_reason: cancellation?.reason ?? null,
-      last_error_code: cancellation?.errorCode ?? null,
+    dictationSessionTelemetry.speechUnhealthy({
+      collapsesInWindow,
+      windowSeconds,
+      reason: cancellation?.reason,
+      errorCode: cancellation?.errorCode,
     });
-
-    // Sentry, not just PostHog: a dictation session collapsing this often is a
-    // data-loss incident in progress, not a usage statistic.
-    Sentry.captureMessage(
-      `Speech session collapsed ${collapsesInWindow} times in ${windowSeconds}s`,
-      {
-        level: "error",
-        tags: {
-          feature: "live-dictation",
-          speech_cancellation_reason: cancellation?.reason ?? "unknown",
-          speech_error_code: cancellation?.errorCode ?? "unknown",
-        },
-        extra: {
-          collapsesInWindow,
-          windowSeconds,
-          errorDetails: cancellation?.errorDetails ?? null,
-        },
-      }
-    );
   },
 
   noSpeechCaptured({ elapsedSeconds }) {
-    track("speech_no_content_warning_shown", {
-      elapsed_seconds: elapsedSeconds,
-    });
-
-    Sentry.captureMessage(
-      `Dictation ran ${elapsedSeconds}s with no captured speech`,
-      {
-        level: "warning",
-        tags: { feature: "live-dictation" },
-        extra: { elapsedSeconds },
-      }
-    );
+    dictationSessionTelemetry.noSpeechWarning({ elapsedSeconds });
   },
 };

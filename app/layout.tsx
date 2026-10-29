@@ -5,22 +5,19 @@ import "./globals.css";
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import { headers } from "next/headers";
-import Script from "next/script";
-
-import Header from "@/components/layout/header";
-import { Toaster } from "@/components/ui/sonner";
-
 import { CookieBanner } from "@/components/cookie-banner/cookie-banner";
 import { CookieManagerInit } from "@/components/cookie-banner/cookie-manager-init";
+import Header from "@/components/layout/header";
+import { Toaster } from "@/components/ui/sonner";
 import cn from "@/lib/utils";
 import AccessGate from "@/providers/access-gate";
+import PageViewTracker from "@/providers/page-view-tracker";
+import TelemetryBootstrap from "@/providers/telemetry-bootstrap";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { TranscriptsProvider } from "@/providers/transcripts";
 import { UserSettingsProvider } from "@/providers/user-settings";
-import PosthogProvider from "../providers/posthog";
 
 const inter = Inter({ subsets: ["latin"] });
-const GTM_CONTAINER_ID = "GTM-KB37GM5V";
 
 export const metadata: Metadata = {
   title: "Bench Notes",
@@ -32,8 +29,11 @@ export default async function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const headersList = await headers();
-  const nonce = headersList.get("x-nonce") ?? "";
+  // Per-request CSP nonce from proxy.ts (Next.js adds it to its own scripts). Passed
+  // to next-themes for its inline theme script, as its docs describe. Production
+  // HTML still shows that script without a nonce: to be checked in a deployed
+  // environment (the theme is then applied after hydration rather than before paint).
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
 
   return (
     <html
@@ -46,52 +46,27 @@ export default async function RootLayout({
       </head>
       <body className={inter.className}>
         <CookieManagerInit />
-        {/* Google Tag Manager — step 1 */}
-        <Script
-          id="gtm-init"
-          nonce={nonce}
-          strategy="afterInteractive"
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: GTM bootstrap requires inline script injection
-          dangerouslySetInnerHTML={{
-            __html: `(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
-new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
-j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
-'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
-})(window,document,'script','dataLayer','${GTM_CONTAINER_ID}');`,
-          }}
-        />
-        {/* End Google Tag Manager */}
-        {/* Google Tag Manager (noscript) — step 2 */}
-        <noscript>
-          <iframe
-            src={`https://www.googletagmanager.com/ns.html?id=${GTM_CONTAINER_ID}`}
-            height="0"
-            width="0"
-            style={{ display: "none", visibility: "hidden" }}
-            title="Google Tag Manager"
-          />
-        </noscript>
-        {/* End Google Tag Manager (noscript) */}
         <ThemeProvider
+          nonce={nonce}
           attribute="class"
           defaultTheme="system"
           enableSystem
           disableTransitionOnChange
         >
           <UserSettingsProvider>
-            <PosthogProvider>
-              <TranscriptsProvider>
-                <AccessGate>
-                  <div className="flex min-h-screen min-w-0 flex-col">
-                    <Header />
-                    <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
-                      <main className="mt-14 w-full min-w-0">{children}</main>
-                    </div>
+            <TelemetryBootstrap />
+            <PageViewTracker />
+            <TranscriptsProvider>
+              <AccessGate>
+                <div className="flex min-h-screen min-w-0 flex-col">
+                  <Header />
+                  <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
+                    <main className="mt-14 w-full min-w-0">{children}</main>
                   </div>
-                  <Toaster />
-                </AccessGate>
-              </TranscriptsProvider>
-            </PosthogProvider>
+                </div>
+                <Toaster />
+              </AccessGate>
+            </TranscriptsProvider>
           </UserSettingsProvider>
         </ThemeProvider>
         <CookieBanner />

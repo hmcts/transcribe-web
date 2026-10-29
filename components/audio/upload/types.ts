@@ -21,7 +21,6 @@ export interface AudioUploaderProps {
 export interface UploadErrorDetails {
   requestId: string | null;
   statusCode: number | null;
-  sentryEventId: string | null;
   userUploadKey: string | null;
   duration: number | null;
 }

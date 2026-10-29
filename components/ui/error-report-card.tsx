@@ -1,17 +1,13 @@
-import * as Sentry from "@sentry/nextjs";
 import { Copy } from "lucide-react";
 import React from "react";
 import { Button } from "@/components/ui/button";
-import { getDistinctId, track } from "@/lib/analytics";
+import { track } from "@/lib/analytics";
 import { getEnv } from "@/lib/env";
 
 type ErrorReportInput = {
   title?: string;
   userEmail?: string | null;
   requestId?: string | null;
-  sentryEventId?: string | null;
-  sentryTraceId?: string | null;
-  posthogDistinctId?: string | null;
   statusCode?: number | null;
   recordingMode?: "mic" | "screen" | "upload" | null;
   fileSizeBytes?: number | null;
@@ -23,8 +19,6 @@ type ErrorReportInput = {
 export default function ErrorReportCard({ data }: { data: ErrorReportInput }) {
   const report = React.useMemo(() => {
     const now = new Date().toISOString();
-    const phid = getDistinctId();
-    const sentryLastEvent = (Sentry as any)?.lastEventId?.() || null;
     return {
       title: data.title || "Bench Notes Error Report",
       timestamp: now,
@@ -32,11 +26,6 @@ export default function ErrorReportCard({ data }: { data: ErrorReportInput }) {
       environment: process.env.NODE_ENV,
       apiBaseUrl: getEnv("NEXT_PUBLIC_API_URL"),
       user: { email: data.userEmail || null },
-      observability: {
-        sentry_event_id: data.sentryEventId || sentryLastEvent || null,
-        sentry_trace_id: data.sentryTraceId || null,
-        posthog_distinct_id: data.posthogDistinctId || phid,
-      },
       backend: {
         request_id: data.requestId || null,
         status_code: data.statusCode ?? null,

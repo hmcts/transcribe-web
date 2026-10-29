@@ -15,9 +15,6 @@ const config: ExtendedConfig = {
     "./src/**/*.{ts,tsx}",
   ],
   prefix: "",
-  safelist: [
-    "ph-mask", // PostHog privacy masking class
-  ],
   theme: {
   	container: {
   		center: true,

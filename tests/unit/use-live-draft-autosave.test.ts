@@ -154,7 +154,7 @@ describe("useLiveDraftAutosave", () => {
     );
   });
 
-  it("escalates to Sentry once, not on every retry", async () => {
+  it("escalates once per outage, not on every retry", async () => {
     mockPutLiveDraft.mockRejectedValue(new LiveDraftError("network", "boom"));
     const { result } = renderHook(() =>
       useLiveDraftAutosave({ getPayload: payloadGetter() })

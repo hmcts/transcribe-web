@@ -275,16 +275,16 @@ function SectionDivider({ section }: { section: TranscriptSection }) {
 
 function TranscriptCard({ entry }: { entry: TranscriptEntry }) {
   return (
-    <div className="ph-mask py-3">
+    <div className="py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="ph-mask text-sm font-medium text-foreground">
+        <div className="text-sm font-medium text-foreground">
           {entry.speaker || "Unknown speaker"}
         </div>
         {entry.timestamp && (
           <div className="text-xs text-muted-foreground">{entry.timestamp}</div>
         )}
       </div>
-      <div className="ph-mask prose prose-lg max-w-none whitespace-pre-wrap text-muted-foreground">
+      <div className="prose prose-lg max-w-none whitespace-pre-wrap text-muted-foreground">
         {entry.text}
       </div>
     </div>

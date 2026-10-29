@@ -72,8 +72,14 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 const telemetry = vi.hoisted(() => ({
+  recordingRequested: vi.fn(),
+  tokenFetched: vi.fn(),
+  firstText: vi.fn(),
+  segmentCaptured: vi.fn(),
+  paused: vi.fn(),
   sessionStarted: vi.fn(),
   sessionStopped: vi.fn(),
+  tornDown: vi.fn(),
   sessionCanceled: vi.fn(),
   sessionUnhealthy: vi.fn(),
   noSpeechCaptured: vi.fn(),

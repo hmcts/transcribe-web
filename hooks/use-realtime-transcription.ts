@@ -130,6 +130,9 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
   const sessionStartedAtRef = useRef(0);
   const sessionSegmentCountRef = useRef(0);
   const pendingReconnectAttemptRef = useRef(0);
+  /** Speech SDK session ID of the current session, for telemetry (OBS-4). */
+  const speechSessionIdRef = useRef<string | undefined>(undefined);
+  const firstTextReportedRef = useRef(false);
   // startSession and handleTermination are mutually recursive.
   const startSessionRef = useRef<(() => Promise<void>) | null>(null);
 
@@ -218,8 +221,12 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
   }, []);
 
   const disconnect = useCallback(() => {
+    // A user stop is a pause even when no session is connected (e.g. while a
+    // reconnect is pending after a collapse).
+    if (recordingIntendedRef.current) speechSessionTelemetry.paused();
     if (recordingIntendedRef.current && sessionStartedAtRef.current !== 0) {
       speechSessionTelemetry.sessionStopped({
+        sessionId: speechSessionIdRef.current,
         sessionIndex: sessionIndexRef.current,
         durationMs: sessionStartedAtRef.current
           ? Date.now() - sessionStartedAtRef.current
@@ -244,6 +251,9 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
 
   useEffect(
     () => () => {
+      // Unmounted while recording (submitted, page left, remounted): the Speech
+      // session's time still counts (OBS-5), and this is not a pause.
+      speechSessionTelemetry.tornDown();
       recordingIntendedRef.current = false;
       teardownSession();
     },
@@ -268,9 +278,11 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
       if (!recordingIntendedRef.current) return;
 
       const sessionIndex = sessionIndexRef.current;
-      const durationMs = sessionStartedAtRef.current
-        ? Date.now() - sessionStartedAtRef.current
-        : 0;
+      const sessionId = speechSessionIdRef.current;
+      // A reconnect that failed before the SDK's sessionStarted never had a
+      // Speech session to stop.
+      const started = sessionStartedAtRef.current > 0;
+      const durationMs = started ? Date.now() - sessionStartedAtRef.current : 0;
       const segmentsCaptured = sessionSegmentCountRef.current;
       sessionStartedAtRef.current = 0;
 
@@ -289,17 +301,21 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
 
       if (cancellation) {
         speechSessionTelemetry.sessionCanceled({
+          sessionId,
           sessionIndex,
           cancellation,
           collapsesInWindow,
         });
       }
-      speechSessionTelemetry.sessionStopped({
-        sessionIndex,
-        durationMs,
-        segmentsCaptured,
-        userInitiated: false,
-      });
+      if (started) {
+        speechSessionTelemetry.sessionStopped({
+          sessionId,
+          sessionIndex,
+          durationMs,
+          segmentsCaptured,
+          userInitiated: false,
+        });
+      }
 
       if (
         isUnhealthyCollapseCount(collapsesInWindow, collapseThreshold) &&
@@ -345,9 +361,21 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
       setStatus("connecting");
       sessionIndexRef.current += 1;
       sessionSegmentCountRef.current = 0;
+      speechSessionIdRef.current = undefined;
+      firstTextReportedRef.current = false;
+      speechSessionTelemetry.recordingRequested({
+        sessionIndex: sessionIndexRef.current,
+        reconnectAttempt: pendingReconnectAttemptRef.current,
+      });
 
       // 1. Fetch Speech Service token from FastAPI
+      const tokenRequestedAt = Date.now();
       const result = await apiClient.getSpeechToken();
+      speechSessionTelemetry.tokenFetched({
+        ok: !result.error && Boolean(result.data),
+        status: result.status,
+        durationMs: Date.now() - tokenRequestedAt,
+      });
       if (result.error || !result.data) {
         throw new Error(result.error || "Failed to get speech token");
       }
@@ -432,6 +460,13 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
        */
       let partialSegmentId: string | null = null;
 
+      /** OBS-4: start-to-first-text, once per speech session. */
+      const reportFirstText = (sessionId: string | undefined, text: string) => {
+        if (firstTextReportedRef.current || !text) return;
+        firstTextReportedRef.current = true;
+        speechSessionTelemetry.firstText({ sessionId, sessionIndex });
+      };
+
       // ------------------------------------------------------------------
       // Event handlers
       // ------------------------------------------------------------------
@@ -442,6 +477,7 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
           const speaker = e.result.speakerId || "Unknown";
           const text = e.result.text || "";
+          reportFirstText(e.sessionId, text);
 
           if (!currentSegmentIdRef.current) {
             currentSegmentIdRef.current = `seg-${++segmentCounterRef.current}`;
@@ -494,13 +530,24 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
             `seg-${++segmentCounterRef.current}`;
           partialSegmentId = null;
           if (!current) {
+            // Counted in the dictation session (OBS-4), not in the stopped
+            // Speech session, whose summary has already been reported.
+            if (text.trim()) {
+              speechSessionTelemetry.segmentCaptured({ stoppedSession: true });
+            }
             setSegments((prev) => [
               ...prev,
               { id: segmentId, speaker, text, isFinal: true },
             ]);
             return;
           }
-          sessionSegmentCountRef.current += 1;
+          // Only text counts as captured: an empty result (silence, noise) must
+          // not hide a dictation that captured nothing (DIAAT-300).
+          if (text.trim()) {
+            sessionSegmentCountRef.current += 1;
+            reportFirstText(e.sessionId, text);
+            speechSessionTelemetry.segmentCaptured();
+          }
 
           // Finalize the current segment; if no interim event fired, create one now.
           setSegments((prev) => {
@@ -557,12 +604,14 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         terminate(null);
       };
 
-      transcriber.sessionStarted = (_s, _e) => {
+      transcriber.sessionStarted = (_s, e) => {
         if (!isCurrent()) return;
         sdkConnectedRef.current = true;
         sessionStartedAtRef.current = Date.now();
+        speechSessionIdRef.current = e?.sessionId || undefined;
         setStatus("connected");
         speechSessionTelemetry.sessionStarted({
+          sessionId: speechSessionIdRef.current,
           sessionIndex,
           reconnectAttempt: pendingReconnectAttemptRef.current,
         });

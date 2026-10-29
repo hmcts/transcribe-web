@@ -33,7 +33,6 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useLiveDraftAutosave } from "@/hooks/use-live-draft-autosave";
-import { track } from "@/lib/analytics";
 import {
   describeAutosaveAlert,
   describeDraftExpiryAlert,
@@ -43,6 +42,10 @@ import {
 import { getAuthToken } from "@/lib/auth-utils";
 import { deleteLiveDraft, getLiveDraft } from "@/lib/live-draft-api";
 import { LiveDraftError, liveDraftFailureKind } from "@/lib/live-draft-errors";
+import {
+  dictationSessionTelemetry,
+  trackDictationPage,
+} from "@/lib/dictation-session";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { fetchUserDocumentContent } from "@/lib/document-content-api";
 import {
@@ -97,7 +100,12 @@ export default function RecordPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setIsRecording } = useTranscripts();
-  const mode = searchParams?.get("mode") || "mic";
+  // From the URL: only the known modes (anything else is the default, mic).
+  const requestedMode = searchParams?.get("mode");
+  const mode =
+    requestedMode === "screen" || requestedMode === "upload"
+      ? requestedMode
+      : "mic";
   const [isRecordingActive, setIsRecordingActive] = useState(false);
   const [activeSection, setActiveSection] =
     useState<TranscriptSection>("background");
@@ -256,6 +264,9 @@ export default function RecordPage() {
     }
   }, [isRecordingActive]);
 
+  // OBS-4: one dictation-session journey per visit; ends when the page is left.
+  useEffect(() => trackDictationPage(), []);
+
   // Offer to restore a draft left by an interrupted session (e.g. forced logout mid-recording).
   useEffect(() => {
     let cancelled = false;
@@ -283,6 +294,8 @@ export default function RecordPage() {
                 setFormData(restoredFormData);
                 setRestoredTranscript(draft.transcript);
                 setSpeechDemoKey(k => k + 1);
+                // Only now has a draft been restored (not when one was found).
+                liveDraftTelemetry.restoreSucceeded();
               },
             },
             cancel: {
@@ -474,26 +487,43 @@ export default function RecordPage() {
     setFormErrors({});
 
     const submissionPromise = (async () => {
+      // OBS-4: the submission's outcome and timing, in the dictation session.
+      const submittedAt = Date.now();
+      let failedStatus: number | undefined;
+      let failureCode: string | undefined;
+      let submissionReported = false;
       try {
         setIsSubmitting(true);
         const authToken = await getAuthToken();
+        const dictationSessionId = dictationSessionTelemetry.currentSessionId();
 
-        const response = await fetch("/api/live-transcription/submission", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(authToken && { Authorization: `Bearer ${authToken}` }),
-          },
-          body: JSON.stringify(
-            liveTranscriptionSubmissionPayloadSchema.parse({
-              form_data: validation.data,
-              messages: sectionedTranscript,
-              notes: normalizeOptionalEditorText(editorContent),
-            })
-          ),
-        });
+        const body = JSON.stringify(
+          liveTranscriptionSubmissionPayloadSchema.parse({
+            form_data: validation.data,
+            messages: sectionedTranscript,
+            notes: normalizeOptionalEditorText(editorContent),
+          })
+        );
+
+        let response: Response;
+        try {
+          response = await fetch("/api/live-transcription/submission", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(authToken && { Authorization: `Bearer ${authToken}` }),
+              // Relates this dictation session to the submission, server-side.
+              ...(dictationSessionId && { "X-Dictation-Session-Id": dictationSessionId }),
+            },
+            body,
+          });
+        } catch (error) {
+          failureCode = "network"; // the request itself failed
+          throw error;
+        }
 
         if (!response.ok) {
+          failedStatus = response.status;
           const errorBody = await response.json().catch(() => null);
           const errorResult =
             submissionErrorResponseSchema.safeParse(errorBody);
@@ -503,16 +533,26 @@ export default function RecordPage() {
           throw new Error(message);
         }
 
-        const responseBody = await response.json();
+        // A 2xx that is not JSON (e.g. a sign-in page from a proxy) is an
+        // invalid response too, not a browser error.
+        const responseBody = await response.json().catch(() => undefined);
         const parsedResponse =
           liveTranscriptionSubmissionResponseSchema.safeParse(responseBody);
         if (!parsedResponse.success) {
+          failureCode = "submission.invalid_response";
           throw new Error(
             "Submission succeeded but returned an invalid response."
           );
         }
         const data = parsedResponse.data;
-        track("hearing_submitted", { mode });
+        dictationSessionTelemetry.submissionFinished({
+          ok: true,
+          mode,
+          durationMs: Date.now() - submittedAt,
+        });
+        submissionReported = true;
+        dictationSessionTelemetry.sessionEnded("submitted");
+        setIsRecordingActive(false);
         // Stop autosave for good first: a pending retry or the flush on leaving
         // the page would otherwise write the submitted transcript back as a
         // draft, to be offered for restore on the next visit.
@@ -521,10 +561,16 @@ export default function RecordPage() {
         router.push("/");
         return data;
       } catch (error) {
-        track("hearing_submission_failed", {
-          mode,
-          error_type: error instanceof Error ? error.name : "unknown_error",
-        });
+        // Not after a reported success (clean-up after it failed instead).
+        if (!submissionReported) {
+          dictationSessionTelemetry.submissionFinished({
+            ok: false,
+            status: failedStatus,
+            errorCode: failureCode,
+            mode,
+            durationMs: Date.now() - submittedAt,
+          });
+        }
         throw error;
       } finally {
         setIsSubmitting(false);
@@ -704,16 +750,7 @@ export default function RecordPage() {
         <AnimatedMicrophone size={28} isActive={isCapturingSpeechNow} />
       </div>
       <Button
-        onClick={() =>
-          setIsRecordingActive((active) => {
-            const nextActive = !active;
-            track("dictation_recording_toggled", {
-              action: nextActive ? "start" : "pause",
-              mode,
-            });
-            return nextActive;
-          })
-        }
+        onClick={() => setIsRecordingActive((active) => !active)}
         variant="outline"
         className="w-min border-border hover:bg-accent focus-visible:ring-inset focus-visible:ring-offset-0"
       >

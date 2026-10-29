@@ -9,6 +9,7 @@ import { Toaster } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
 import { LiveDraftError } from "@/lib/live-draft-errors";
+import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
 
 const mockSetIsRecording = vi.hoisted(() => vi.fn());
@@ -65,13 +66,13 @@ vi.mock("@/lib/analytics", () => ({
   track: vi.fn(),
 }));
 
-// Mocked for the same reason DIAAT-297 mocks its telemetry module: the real one
-// pulls in @sentry/nextjs, which cannot load in this environment.
+// Mocked: these tests check the page; the telemetry module has its own tests.
 vi.mock("@/lib/live-draft-telemetry", () => ({
   liveDraftTelemetry: {
     saveFailed: vi.fn(),
     autosaveStalled: vi.fn(),
     saveRecovered: vi.fn(),
+    restoreSucceeded: vi.fn(),
     restoreFailed: vi.fn(),
   },
 }));
@@ -199,6 +200,33 @@ describe("Live draft restore", () => {
     expect(lastSpeechDemoProps.current.initialSectionedTranscript).toEqual(
       TEST_TRANSCRIPT
     );
+  });
+
+  it("reports a restore only when the user restores the draft (OBS-4)", async () => {
+    vi.mocked(liveDraftTelemetry.restoreSucceeded).mockClear();
+    mockGetLiveDraft.mockResolvedValue({
+      transcript: TEST_TRANSCRIPT,
+      form_data: {},
+      saved_at: SAVED_AT_RECENT,
+    });
+
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /restore/i })).toBeTruthy();
+    });
+    // Found, but not restored yet.
+    expect(liveDraftTelemetry.restoreSucceeded).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /restore/i }));
+    });
+    expect(liveDraftTelemetry.restoreSucceeded).toHaveBeenCalledTimes(1);
   });
 
   it("does not delete the server draft when Restore is clicked", async () => {

@@ -1,6 +1,5 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import NextError from "next/error";
 import { useEffect } from "react";
 
@@ -10,7 +9,10 @@ export default function GlobalError({
   error: Error & { digest?: string };
 }) {
   useEffect(() => {
-    Sentry.captureException(error);
+    // No error tracker on CNP (Sentry removed, DIAAT-205): the browser console
+    // only. Server-side errors reach Application Insights with their digest
+    // (instrumentation.ts), which is shown below for support.
+    console.error(error);
   }, [error]);
 
   return (
@@ -22,6 +24,11 @@ export default function GlobalError({
         does not expose status codes for errors, we simply pass 0 to render a
         generic error message. */}
         <NextError statusCode={0} />
+        {error.digest && (
+          <p style={{ textAlign: "center", fontFamily: "monospace" }}>
+            Error reference: {error.digest}
+          </p>
+        )}
       </body>
     </html>
   );

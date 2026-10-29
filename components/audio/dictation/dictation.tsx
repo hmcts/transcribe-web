@@ -34,8 +34,8 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNoSpeechWatchdog } from "@/hooks/use-no-speech-watchdog";
 import { useRealtimeTranscription } from "@/hooks/use-realtime-transcription";
-import { getAuthToken } from "@/lib/auth-utils";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
+import { submitDictation } from "@/lib/dictation-submission";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
 import { isCapturingSpeech } from "@/lib/speech-session-health";
 import cn, { getJudgeNameFromEmail } from "@/lib/utils";
@@ -474,31 +474,18 @@ export default function LiveDictation({
       try {
         setIsSubmitting(true);
 
-        // Get auth token to forward to backend
-        const authToken = await getAuthToken();
-
-        const response = await fetch("/api/live-transcription/submission", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(authToken && { Authorization: `Bearer ${authToken}` }),
-          },
-          body: JSON.stringify({
+        // Reports the outcome and ends the dictation session as submitted, with
+        // the session's ID on the request (OBS-4), as the record page does.
+        const data = await submitDictation<
+          Awaited<Parameters<typeof submitHearingToast>[0]>
+        >(
+          {
             form_data: validation.data,
             // Send sectioned messages to backend
             messages: sectionedTranscript,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorBody = await response.json().catch(() => null);
-          const message =
-            (errorBody && (errorBody.detail || errorBody.error)) ||
-            "Failed to save submission.";
-          throw new Error(message);
-        }
-
-        const data = await response.json();
+          },
+          { mode: "mic" }
+        );
 
         router.push("/");
 

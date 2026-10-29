@@ -1,5 +1,3 @@
-import * as Sentry from "@sentry/nextjs";
-
 interface AudioBackup {
   id: string;
   blob: Blob;
@@ -36,7 +34,6 @@ class IndexedDBBackup {
           (event.target as IDBOpenDBRequest).error?.message || "Unknown error";
         const error = new Error(`Failed to open IndexedDB: ${errorMsg}`);
         console.error("[IndexedDB] Open error:", error);
-        Sentry.captureException(error);
         reject(error);
       };
 
@@ -177,7 +174,6 @@ class IndexedDBBackup {
           (event.target as IDBRequest).error?.message || "Unknown error";
         const error = new Error(`Failed to get all audio backups: ${errorMsg}`);
         console.error("[IndexedDB] Get all error:", error);
-        Sentry.captureException(error);
         reject(error);
       };
 
@@ -220,7 +216,7 @@ class IndexedDBBackup {
 
       request.onerror = () => {
         const error = new Error(`Failed to delete audio backup with id: ${id}`);
-        Sentry.captureException(error);
+        console.error("[IndexedDB] Delete error:", error);
         reject(error);
       };
 

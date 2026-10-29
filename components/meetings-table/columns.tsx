@@ -67,7 +67,7 @@ export const getMeetingsColumns = ({
         className="flex w-full flex-col items-start text-left"
         onClick={() => onOpenMeeting(row.original)}
       >
-        <span className="ph-mask font-medium text-card-foreground">
+        <span className="font-medium text-card-foreground">
           {row.original.title}
         </span>
       </button>

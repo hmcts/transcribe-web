@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { IndexedDBBackup } from "@/lib/indexeddb-backup";
 
-vi.mock("@sentry/nextjs", () => ({ captureException: vi.fn() }));
-
 // ─── Minimal IndexedDB fake ───────────────────────────────────────────────────
 
 function makeStore(records: Map<string, any>) {

@@ -6,8 +6,8 @@ import { type NextRequest, NextResponse } from "next/server";
  * process.env is read per request).
  *
  * Responsibilities:
- *  1. Generate a per-response CSP nonce for Google Tag Manager and forward
- *     it to Server Components via the x-nonce request header.
+ *  1. Generate a per-response CSP nonce and forward it to Server Components via
+ *     the x-nonce request header (used for the next-themes inline script).
  *  2. Send anyone without a session to the login (/auth/login).
  *
  * The session cookie's presence is only a routing hint. What protects data is
@@ -70,21 +70,23 @@ export function proxy(request: NextRequest) {
     : "";
 
   const csp = [
-    `script-src 'nonce-${nonce}' 'self' https://*.googletagmanager.com`,
+    `script-src 'nonce-${nonce}' 'self'`,
     // script-src-elem must be set explicitly — otherwise the browser falls back to
     // script-src, which lacks blob:. The Azure Speech SDK loads its worker module
     // as a blob: URL <script>, so script-src-elem needs blob: while script-src
     // (which covers eval/inline) remains unchanged.
-    `script-src-elem 'nonce-${nonce}' 'self' https://*.googletagmanager.com blob:`,
+    `script-src-elem 'nonce-${nonce}' 'self' blob:`,
     // The Azure Speech SDK creates workers from both blob: and data: URLs:
     // - blob: for the audio-processing worker
     // - data: for an inline timer/keepalive scheduler worker
     // Without the data: worker the SDK's keepalive stops firing after the first
     // silence period, silently killing the transcription session.
     `worker-src blob: data: 'self'`,
-    `img-src 'self' https://*.googletagmanager.com https://*.google-analytics.com https://*.g.doubleclick.net`,
-    `connect-src ${["'self'", apiUrl].filter(Boolean).join(" ")} https://*.googletagmanager.com https://www.google.com https://*.google-analytics.com https://*.g.doubleclick.net`,
-    `frame-src https://*.googletagmanager.com`,
+    // OBS-3: no third-party analytics (Google Tag Manager and PostHog removed).
+    `img-src 'self'`,
+    `connect-src ${["'self'", apiUrl].filter(Boolean).join(" ")}`,
+    // Only Google Tag Manager's frame was ever allowed; with it gone, none are.
+    `frame-src 'none'`,
     `object-src 'none'`,
     `base-uri 'none'`,
     `frame-ancestors 'self'`,
@@ -130,14 +132,13 @@ export function proxy(request: NextRequest) {
 export const config = {
   matcher: [
     {
-      // Run on all routes except Next.js static assets, the Sentry tunnel and
-      // the recording upload. Next.js buffers the whole request body of any
+      // Run on all routes except Next.js static assets and the recording
+      // upload. Next.js buffers the whole request body of any
       // request the proxy runs on, and passes at most
       // experimental.proxyClientMaxBodySize (10 MB) of it on; /api/upload
       // streams recordings of up to 200 MB to the API instead, and checks the
       // session itself (app/api/upload/route.ts).
-      source:
-        "/((?!_next/static|_next/image|favicon.ico|monitoring|api/upload$).*)",
+      source: "/((?!_next/static|_next/image|favicon.ico|api/upload$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },
