@@ -167,14 +167,16 @@ describe("TelemetryRelay", () => {
     expect(relay.pending).toBe(2);
 
     relay.flushOnHide(); // would be refused: kept, not sent
-    relay.restoreUnsent(); // visible again, still signed out: left in storage
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(relay.pending).toBe(0);
     const kept = JSON.parse(storage.get(UNSENT_STORAGE_KEY) ?? "[]");
     expect(kept.map((e: { name: string }) => e.name)).toEqual([
       "dictation.paused",
       "dictation.resumed",
     ]);
+    relay.restoreUnsent(); // visible again: queued, still respecting the retry deadline
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(relay.pending).toBe(2);
+    expect(storage.has(UNSENT_STORAGE_KEY)).toBe(false);
 
     // Signed in again: the next event's send succeeds and brings the kept ones.
     fetchImpl.mockResolvedValue(response(202));
