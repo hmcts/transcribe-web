@@ -2,6 +2,8 @@
 
 import NextError from "next/error";
 import { useEffect } from "react";
+import { browserFailures } from "@/lib/browser-failures";
+import { installRelayLifecycle, telemetryRelay } from "@/lib/telemetry-relay";
 
 export default function GlobalError({
   error,
@@ -9,10 +11,18 @@ export default function GlobalError({
   error: Error & { digest?: string };
 }) {
   useEffect(() => {
-    // No error tracker on CNP (Sentry removed, DIAAT-205): the browser console
-    // only. Server-side errors reach Application Insights with their digest
-    // (instrumentation.ts), which is shown below for support.
+    // No error tracker on CNP (Sentry removed, DIAAT-205): the error's type,
+    // route and digest go to Application Insights through the relay (never its
+    // message). Server-side errors are there with the same digest
+    // (instrumentation.ts), which is also shown below for support.
     console.error(error);
+    // This page replaces the root layout when it fails, so TelemetryBootstrap may
+    // never have mounted: install the relay's page-hide flush here (idempotent), and
+    // send now rather than after the batching delay, so leaving or reloading the
+    // error page does not lose the report.
+    installRelayLifecycle(telemetryRelay);
+    browserFailures.clientError(error, "render", error.digest);
+    void telemetryRelay.flush();
   }, [error]);
 
   return (
