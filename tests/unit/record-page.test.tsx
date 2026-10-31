@@ -18,6 +18,13 @@ const mockGetLiveDraft = vi.hoisted(() => vi.fn());
 const mockPutLiveDraft = vi.hoisted(() => vi.fn());
 const mockDeleteLiveDraft = vi.hoisted(() => vi.fn());
 
+// DIAAT-322: the record page as the IAC sees it, unless a test says otherwise.
+let mockJurisdiction: "IAC" | "ET" = "IAC";
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule(
+    () => mockJurisdiction
+  )
+);
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
   useSearchParams: () => new URLSearchParams("mode=mic"),
@@ -741,6 +748,38 @@ describe("Autosave failure states", () => {
     ).toBeTruthy();
   });
 
+  it("names what is saved to in the jurisdiction's words (DIAAT-331)", async () => {
+    mockPutLiveDraft.mockRejectedValue(
+      new LiveDraftError("server", "unavailable", 503)
+    );
+    await startDictating();
+    await tickInterval();
+    await tickRetry(1_000);
+
+    expect(
+      screen.getByText(/Saving to the case record has stopped working/)
+    ).toBeTruthy();
+  });
+
+  it("uses neutral words in a jurisdiction that sets none (DIAAT-330)", async () => {
+    mockJurisdiction = "ET";
+    try {
+      mockPutLiveDraft.mockRejectedValue(
+        new LiveDraftError("server", "unavailable", 503)
+      );
+      await startDictating();
+      await tickInterval();
+      await tickRetry(1_000);
+
+      expect(
+        screen.getByText(/Saving to the record has stopped working/)
+      ).toBeTruthy();
+      expect(screen.queryByText(/case record/)).toBeNull();
+    } finally {
+      mockJurisdiction = "IAC";
+    }
+  });
+
   it("cannot be dismissed while work is being lost", async () => {
     mockPutLiveDraft.mockRejectedValue(new LiveDraftError("network", "boom"));
     await startDictating();
@@ -773,6 +812,9 @@ describe("Autosave failure states", () => {
     const banner = screen.getByTestId("record-alert-banner");
     expect(banner.getAttribute("data-kind")).toBe("auth-expired");
     expect(screen.getByText(/sign in again/i)).toBeTruthy();
+    expect(
+      screen.getByText(/this device can no longer save to the case record/)
+    ).toBeTruthy();
   });
 
   it("lets the capture failure win when speech and saving are both broken", async () => {

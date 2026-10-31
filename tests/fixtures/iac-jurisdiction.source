@@ -1,1 +1,1 @@
-transcribe-api alembic/versions/0004_jurisdictions.py IAC_SETTINGS (DIAAT-322)
+transcribe-api 22de5ab alembic/versions/0004_jurisdictions.py

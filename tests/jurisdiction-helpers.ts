@@ -7,6 +7,8 @@
  *
  *   vi.mock("@/providers/jurisdiction", async () =>
  *     (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC"));
+ *
+ * or, to switch between tests, with a getter: `mockJurisdictionModule(() => code)`.
  */
 
 import type React from "react";
@@ -28,14 +30,18 @@ export const ET: CurrentJurisdiction = {
 
 const JURISDICTIONS = { IAC, ET } as const;
 
-export function mockJurisdictionModule(code: keyof typeof JURISDICTIONS) {
-  const value = jurisdictionContextValue(JURISDICTIONS[code], [
-    JURISDICTIONS[code],
-  ]);
+type Code = keyof typeof JURISDICTIONS;
+
+export function mockJurisdictionModule(code: Code | (() => Code)) {
+  const current = typeof code === "function" ? code : () => code;
+  const values = {
+    IAC: jurisdictionContextValue(IAC, [IAC]),
+    ET: jurisdictionContextValue(ET, [ET]),
+  };
   return {
     JurisdictionProvider: ({ children }: { children: React.ReactNode }) =>
       children,
-    useJurisdiction: () => value,
-    useWording: () => value.wording,
+    useJurisdiction: () => values[current()],
+    useWording: () => values[current()].wording,
   };
 }
