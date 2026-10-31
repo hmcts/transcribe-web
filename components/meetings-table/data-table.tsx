@@ -26,6 +26,7 @@ import { getMeetingsColumns } from "./columns";
 import { RECENT_RECORDINGS_TABLE_ID } from "./ids";
 import { MeetingsTableToolbar } from "./toolbar";
 import type { DateFilter, MeetingRow } from "./types";
+import { useWording } from "@/providers/jurisdiction";
 
 function normalizeSearchValue(value: string): string {
   return value
@@ -158,6 +159,7 @@ export function MeetingsDataTable({
   isBulkDeleting,
   isBulkMarkingDone,
 }: MeetingsDataTableProps) {
+  const wording = useWording();
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: "createdTimestamp", desc: true },
   ]);
@@ -260,7 +262,7 @@ export function MeetingsDataTable({
   }
 
   if (selectedHearingType !== "all") {
-    activeFilters.push(`Hearing type filter: ${selectedHearingType}.`);
+    activeFilters.push(`${wording("records.column_type")} filter: ${selectedHearingType}.`);
   }
 
   if (selectedDateFilter) {
@@ -345,7 +347,7 @@ export function MeetingsDataTable({
                 colSpan={columns.length}
                 className="h-24 text-center text-muted-foreground"
               >
-                No hearings matched your current search or filters.
+                {wording("records.no_match")}
               </TableCell>
             </TableRow>
           )}

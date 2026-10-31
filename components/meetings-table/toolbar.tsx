@@ -32,6 +32,7 @@ import {
 import { cn } from "@/lib/utils";
 import { RECENT_RECORDINGS_TABLE_ID } from "./ids";
 import type { DateFilter, MeetingRow } from "./types";
+import { useWording } from "@/providers/jurisdiction";
 
 const RECENT_RECORDINGS_CONTROLS_DESCRIPTION_ID =
   "recent-recordings-controls-description";
@@ -72,6 +73,7 @@ export function MeetingsTableToolbar({
   isBulkDeleting,
   isBulkMarkingDone,
 }: MeetingsTableToolbarProps) {
+  const wording = useWording();
   const selectedMeetings = table
     .getFilteredSelectedRowModel()
     .rows.map((row) => row.original);
@@ -120,13 +122,13 @@ export function MeetingsTableToolbar({
               Search recent recordings
             </label>
             <p id={RECENT_RECORDINGS_SEARCH_DESCRIPTION_ID} className="sr-only">
-              Search recent recordings by hearing title or date.
+              {wording("records.search_hint")}
             </p>
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               id={RECENT_RECORDINGS_SEARCH_ID}
               type="search"
-              placeholder="Search hearings or dates"
+              placeholder={wording("records.search_placeholder")}
               value={(table.getState().globalFilter as string) ?? ""}
               onChange={(event) => table.setGlobalFilter(event.target.value)}
               aria-controls={RECENT_RECORDINGS_TABLE_ID}
@@ -144,14 +146,14 @@ export function MeetingsTableToolbar({
           >
             <SelectTrigger
               className="h-10 w-full"
-              aria-label="Filter recent recordings by hearing type"
+              aria-label={wording("records.filter_label")}
               aria-controls={RECENT_RECORDINGS_TABLE_ID}
               aria-describedby={RECENT_RECORDINGS_CONTROLS_DESCRIPTION_ID}
             >
-              <SelectValue placeholder="Filter by hearing type" />
+              <SelectValue placeholder={wording("records.filter_placeholder")} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All hearing types</SelectItem>
+              <SelectItem value="all">{wording("records.filter_all")}</SelectItem>
               {hearingTypeOptions.map((hearingType) => (
                 <SelectItem key={hearingType} value={hearingType}>
                   {hearingType}

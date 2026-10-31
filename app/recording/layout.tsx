@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { HearingRecordingsOnly } from "@/components/jurisdiction/hearing-recordings-only";
 
 /**
  * Route-group layout for the recording feature area.
@@ -19,5 +20,5 @@ export const metadata: Metadata = {
 };
 
 export default function RecordingLayout({ children }: { children: React.ReactNode }) {
-  return <>{children}</>;
+  return <HearingRecordingsOnly>{children}</HearingRecordingsOnly>;
 }

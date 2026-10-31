@@ -1,5 +1,6 @@
 import { getEnv } from "@/lib/env";
 import { isLocalDevelopment } from "@/lib/environment";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import type { User } from "@/src/api/generated";
 
 const API_BASE_URL = `${getEnv("NEXT_PUBLIC_API_URL") || "http://localhost:8000"}/api`;
@@ -68,6 +69,8 @@ class ApiClient {
           ...(!isFormData && { "Content-Type": "application/json" }),
           // Pass the token to backend
           ...(authToken && { Authorization: `Bearer ${authToken}` }),
+          // DIAAT-322: the jurisdiction this tab works in.
+          ...jurisdictionHeaders(),
           ...options.headers,
         },
       };

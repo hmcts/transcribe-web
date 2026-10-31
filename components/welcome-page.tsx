@@ -18,6 +18,7 @@ import { track } from "@/lib/analytics";
 import type { AudioBackup } from "@/lib/indexeddb-backup";
 import { HEARING_RECORDINGS_HREF } from "@/lib/navigation";
 import { getFullNameFromEmail } from "@/lib/utils";
+import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 import { useUserSettings } from "@/providers/user-settings";
 
@@ -38,6 +39,7 @@ function WelcomePage() {
   const { isLoading, transcriptsMetadata } = useTranscripts();
 
   const { user } = useUserSettings();
+  const { hasHearingRecordings, wording } = useJurisdiction();
   const router = useRouter();
 
   const [retryingBackup, setRetryingBackup] =
@@ -85,10 +87,7 @@ function WelcomePage() {
       <div className="absolute left-1/2 right-1/2 top-0 -z-10 -ml-[50vw] -mr-[50vw] h-[28rem] bg-muted/60" />
       <section className="flex flex-col gap-4 pb-36 pt-24 text-foreground">
         <h1 className="text-5xl font-bold tracking-tight">{heading}</h1>
-        <p className="text-muted-foreground prose">
-          Supporting judicial work through live transcription and enablement of
-          judges to focus on proceedings and engage with the parties.
-        </p>
+        <p className="text-muted-foreground prose">{wording("home.intro")}</p>
 
         <div className="flex flex-col gap-4 mt-12 md:flex-row">
           <StartNewRecordingButton
@@ -97,16 +96,18 @@ function WelcomePage() {
             fullWidth={false}
             className="w-full md:w-auto"
           />
-          <Button
-            asChild
-            variant="outline"
-            className="flex w-full items-center justify-center gap-2 py-6 text-lg md:w-auto"
-          >
-            <Link href={HEARING_RECORDINGS_HREF}>
-              <FileAudio className="size-5" />
-              Hearing recordings
-            </Link>
-          </Button>
+          {hasHearingRecordings && (
+            <Button
+              asChild
+              variant="outline"
+              className="flex w-full items-center justify-center gap-2 py-6 text-lg md:w-auto"
+            >
+              <Link href={HEARING_RECORDINGS_HREF}>
+                <FileAudio className="size-5" />
+                {wording("nav.recordings")}
+              </Link>
+            </Button>
+          )}
         </div>
       </section>
 

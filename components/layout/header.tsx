@@ -22,7 +22,9 @@ import {
   HEARING_RECORDINGS_HREF,
   isPathActive,
 } from "@/lib/navigation";
+import { inSentence } from "@/lib/jurisdiction-wording";
 import cn from "@/lib/utils";
+import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 
 export default function Header() {
@@ -32,6 +34,9 @@ export default function Header() {
   // and popstate guards do not catch <Link> clicks. Live dictation on /record
   // sets isRecording, not selectedRecordingMode.
   const hideNavLinks = Boolean(selectedRecordingMode) || isRecording;
+  // DIAAT-330: hearing recordings only where the jurisdiction uses them, in its words.
+  const { hasHearingRecordings, wording } = useJurisdiction();
+  const recordingsLabel = wording("nav.recordings");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -170,19 +175,19 @@ export default function Header() {
               <span className="text-base">Dictation</span>
             </Link>
           )}
-          {!hideNavLinks && (
+          {!hideNavLinks && hasHearingRecordings && (
             <Link
               href={HEARING_RECORDINGS_HREF}
               className={cn(
                 "flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5",
                 isHearingRecordingsActive && "bg-foreground/5"
               )}
-              aria-label="Go to hearing recordings"
+              aria-label={`Go to ${inSentence(recordingsLabel)}`}
               aria-current={isHearingRecordingsActive ? "page" : undefined}
-              title="Go to hearing recordings"
+              title={`Go to ${inSentence(recordingsLabel)}`}
             >
               <FileAudio className="mr-1 size-5" />
-              <span className="text-base">Hearing recordings</span>
+              <span className="text-base">{recordingsLabel}</span>
             </Link>
           )}
           {!hideNavLinks && (
@@ -250,7 +255,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!hideNavLinks && (
+              {!hideNavLinks && hasHearingRecordings && (
                 <SheetClose asChild>
                   <Link
                     href={HEARING_RECORDINGS_HREF}
@@ -263,7 +268,7 @@ export default function Header() {
                     )}
                   >
                     <FileAudio className="size-4" />
-                    Hearing recordings
+                    {recordingsLabel}
                   </Link>
                 </SheetClose>
               )}

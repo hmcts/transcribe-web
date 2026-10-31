@@ -12,6 +12,7 @@ import {
   type DictationSessionTelemetry,
   dictationSessionTelemetry,
 } from "@/lib/dictation-session";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 
 export const SUBMISSION_PATH = "/api/live-transcription/submission";
 
@@ -48,6 +49,8 @@ export async function submitDictation<T = unknown>(
         headers: {
           "Content-Type": "application/json",
           ...(authToken && { Authorization: `Bearer ${authToken}` }),
+          // DIAAT-322: made in the jurisdiction this tab works in.
+          ...jurisdictionHeaders(),
           // Relates this dictation session to the submission, server-side.
           ...(sessionId && { "X-Dictation-Session-Id": sessionId }),
         },

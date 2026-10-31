@@ -6,6 +6,11 @@ let mockPathname = "/";
 let mockSelectedRecordingMode: string | null = null;
 let mockIsRecording = false;
 
+// DIAAT-322: these screens as the IAC sees them.
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
+);
+
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
   usePathname: () => mockPathname,

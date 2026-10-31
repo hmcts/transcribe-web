@@ -40,6 +40,7 @@ import {
   describeSaveStatus,
 } from "@/lib/autosave-alerts";
 import { getAuthToken } from "@/lib/auth-utils";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import { deleteLiveDraft, getLiveDraft } from "@/lib/live-draft-api";
 import { LiveDraftError, liveDraftFailureKind } from "@/lib/live-draft-errors";
 import {
@@ -64,6 +65,7 @@ import {
   SPEECH_NO_CONTENT_EARLIER_ALERT,
 } from "@/lib/speech-alerts";
 import cn from "@/lib/utils";
+import { useWording } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 
 function formatDraftDate(isoString: string): string {
@@ -97,6 +99,7 @@ const RECORD_TRANSCRIPT_PANEL_ID = "record-transcript-panel";
 const RECORD_NOTES_PANEL_ID = "record-notes-panel";
 
 export default function RecordPage() {
+  const wording = useWording();
   const router = useRouter();
   const searchParams = useSearchParams();
   const { setIsRecording } = useTranscripts();
@@ -512,6 +515,8 @@ export default function RecordPage() {
             headers: {
               "Content-Type": "application/json",
               ...(authToken && { Authorization: `Bearer ${authToken}` }),
+              // DIAAT-322: made in the jurisdiction this tab works in.
+              ...jurisdictionHeaders(),
               // Relates this dictation session to the submission, server-side.
               ...(dictationSessionId && { "X-Dictation-Session-Id": dictationSessionId }),
             },
@@ -614,7 +619,10 @@ export default function RecordPage() {
   // list rather than rendering a second banner.
   const recordAlert = selectMostSevereAlert([
     speechReport?.alert,
-    describeAutosaveAlert({ state: autosaveState }),
+    describeAutosaveAlert({
+      state: autosaveState,
+      recordName: wording("autosave.record_name"),
+    }),
     restoreFailureAlert,
     draftExpiryAlert,
     sessionHadFailure && showPostSessionNotice
