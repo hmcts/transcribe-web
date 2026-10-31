@@ -120,6 +120,7 @@ export default function LiveDictation({
   onActiveSectionChange,
   showRecordingControls = true,
   showSectionTabs = true,
+  showSectionNames = true,
   embedded = false,
   onTranscriptChange,
   initialSectionedTranscript,
@@ -557,6 +558,7 @@ export default function LiveDictation({
               interimText={interimText}
               isListening={isListening}
               onTranscriptUpdate={handleTranscriptUpdate}
+              showSectionNames={showSectionNames}
             />
           </div>
         </div>
@@ -615,6 +617,7 @@ export default function LiveDictation({
                   interimText={interimText}
                   isListening={isListening}
                   onTranscriptUpdate={handleTranscriptUpdate}
+                  showSectionNames={showSectionNames}
                 />
               </div>
             </div>
