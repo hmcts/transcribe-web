@@ -41,6 +41,11 @@ import {
 } from "@/lib/autosave-alerts";
 import { getAuthToken } from "@/lib/auth-utils";
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
+import {
+  isLeavingForJurisdictionSwitch,
+  JurisdictionSwitchError,
+  onBeforeJurisdictionSwitch,
+} from "@/lib/jurisdiction-switch";
 import { deleteLiveDraft, getLiveDraft } from "@/lib/live-draft-api";
 import { LiveDraftError, liveDraftFailureKind } from "@/lib/live-draft-errors";
 import {
@@ -181,7 +186,24 @@ export default function RecordPage() {
     state: autosaveState,
     runExclusive: runWithoutDraftSaves,
     stop: stopDraftSaves,
+    flush: flushDraft,
   } = useLiveDraftAutosave({ getPayload: getAutosavePayload });
+
+  // DIAAT-332: before the tab switches jurisdiction, this jurisdiction's draft is
+  // saved (nothing once submitted); a failed save, or a submission in progress,
+  // stops the switch.
+  const isSubmittingRef = useRef(false);
+  useEffect(() => {
+    isSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
+  useEffect(
+    () =>
+      onBeforeJurisdictionSwitch(async () => {
+        if (isSubmittingRef.current) throw new JurisdictionSwitchError("busy");
+        await flushDraft();
+      }),
+    [flushDraft]
+  );
 
   /**
    * Delete the server draft with no autosave write before or alongside it, so
@@ -433,6 +455,8 @@ export default function RecordPage() {
       sectionedTranscript.facts.length > 0;
     if (!hasContent) return;
     const handler = (e: BeforeUnloadEvent) => {
+      // Switching jurisdiction (DIAAT-332) saved the draft first: nothing is lost.
+      if (isLeavingForJurisdictionSwitch()) return;
       e.preventDefault();
       e.returnValue = "";
     };

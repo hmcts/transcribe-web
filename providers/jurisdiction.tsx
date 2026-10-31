@@ -10,8 +10,10 @@ import {
   useMemo,
   useState,
 } from "react";
+import ChooseJurisdiction from "@/components/jurisdiction/choose-jurisdiction";
 import NoJurisdiction from "@/components/jurisdiction/no-jurisdiction";
 import {
+  chooseJurisdiction,
   fetchMyJurisdictions,
   type MyJurisdictions,
 } from "@/lib/jurisdiction-api";
@@ -21,6 +23,12 @@ import {
   NEUTRAL,
 } from "@/lib/jurisdiction-context";
 import { setTabJurisdiction } from "@/lib/jurisdiction-session";
+import {
+  JurisdictionSwitchError,
+  prepareForJurisdictionSwitch,
+  reloadInJurisdiction,
+  takeSwitchedJurisdiction,
+} from "@/lib/jurisdiction-switch";
 import type { WordingKey } from "@/lib/jurisdiction-wording";
 
 /**
@@ -66,6 +74,9 @@ export function JurisdictionProvider({
 
   const load = useCallback(async () => {
     setState({ kind: "loading" });
+    // Reloaded by a switch (DIAAT-332): the tab now works in that jurisdiction.
+    const switched = takeSwitchedJurisdiction();
+    if (switched) setTabJurisdiction(switched);
     try {
       const data = await fetchMyJurisdictions();
       // The API answers for this tab's jurisdiction, or moves the tab on.
@@ -82,12 +93,55 @@ export function JurisdictionProvider({
     void load();
   }, [load]);
 
+  /** After sign-in: work in `code`, remembered, then load it in place. */
+  const chooseFirst = useCallback(
+    async (code: string) => {
+      const chosen = await chooseJurisdiction(code);
+      // The jurisdiction the API confirmed, not the one asked for.
+      setTabJurisdiction(chosen.current?.code ?? null);
+      await load();
+    },
+    [load]
+  );
+
+  /** Later: save this tab's work, then reload it in `code`. Rejects with the step
+   * that stopped it (JurisdictionSwitchError), leaving the tab as it was. */
+  const switchTo = useCallback(async (code: string) => {
+    try {
+      await prepareForJurisdictionSwitch();
+    } catch (error) {
+      throw error instanceof JurisdictionSwitchError
+        ? error
+        : new JurisdictionSwitchError("save", { cause: error });
+    }
+    let chosen: MyJurisdictions;
+    try {
+      chosen = await chooseJurisdiction(code);
+    } catch (error) {
+      throw new JurisdictionSwitchError("switch", { cause: error });
+    }
+    if (chosen.status !== "ready" || !chosen.current) {
+      throw new JurisdictionSwitchError("switch");
+    }
+    // Again, just before leaving: anything said or typed meanwhile.
+    try {
+      await prepareForJurisdictionSwitch();
+    } catch (error) {
+      throw new JurisdictionSwitchError("save", { cause: error });
+    }
+    reloadInJurisdiction(chosen.current.code);
+  }, []);
+
   const value = useMemo(
     () =>
       state.kind === "loaded"
-        ? jurisdictionContextValue(state.data.current, state.data.jurisdictions)
+        ? jurisdictionContextValue(
+            state.data.current,
+            state.data.jurisdictions,
+            switchTo
+          )
         : NEUTRAL,
-    [state]
+    [state, switchTo]
   );
 
   let content: React.ReactNode;
@@ -100,7 +154,12 @@ export function JurisdictionProvider({
   } else if (state.data.status === "no_jurisdiction") {
     content = <NoJurisdiction />;
   } else if (state.data.status === "choose") {
-    content = <ChooseJurisdictionPending />;
+    content = (
+      <ChooseJurisdiction
+        jurisdictions={state.data.jurisdictions}
+        onChoose={chooseFirst}
+      />
+    );
   } else {
     // Not keyed by jurisdiction: a tab's jurisdiction changes only by reloading
     // the page (DIAAT-332), so the app is never remounted in place.
@@ -141,14 +200,6 @@ function JurisdictionLoadFailed({ onRetry }: { onRetry: () => void }) {
       >
         Try again
       </button>
-    </main>
-  );
-}
-
-function ChooseJurisdictionPending() {
-  return (
-    <main className="mx-auto flex min-h-screen max-w-xl items-center justify-center px-4 text-center">
-      <p>You belong to more than one jurisdiction.</p>
     </main>
   );
 }

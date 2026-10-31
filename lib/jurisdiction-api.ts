@@ -22,6 +22,18 @@ export interface MyJurisdictions {
   jurisdictions: JurisdictionSummary[];
 }
 
+/** Work in `code` from now on: remembered for requests without a tab's jurisdiction. */
+export async function chooseJurisdiction(code: string): Promise<MyJurisdictions> {
+  const response = await apiClient.request<MyJurisdictions>("/jurisdictions/active", {
+    method: "PUT",
+    body: JSON.stringify({ code }),
+  });
+  if (!response.data) {
+    throw new Error("No jurisdictions response");
+  }
+  return response.data;
+}
+
 export async function fetchMyJurisdictions(): Promise<MyJurisdictions> {
   const response =
     await apiClient.request<MyJurisdictions>("/jurisdictions/me");

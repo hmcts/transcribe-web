@@ -8,6 +8,11 @@ import {
 import { Toaster } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
+import {
+  prepareForJurisdictionSwitch,
+  reloadInJurisdiction,
+  stayInJurisdiction,
+} from "@/lib/jurisdiction-switch";
 import { LiveDraftError } from "@/lib/live-draft-errors";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
@@ -722,6 +727,46 @@ describe("Autosave failure states", () => {
       await Promise.resolve();
     });
   }
+
+  it("saves the draft before the tab switches jurisdiction (DIAAT-332)", async () => {
+    await startDictating();
+    mockPutLiveDraft.mockClear();
+
+    await act(() => prepareForJurisdictionSwitch());
+
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+    expect(mockPutLiveDraft.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ background: expect.any(Array) })
+    );
+  });
+
+  it("leaves without asking once the draft is saved for a switch (DIAAT-332)", async () => {
+    await startDictating();
+    const leave = () => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(leave()).toBe(true); // asked: the transcript is on screen
+
+    vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
+    try {
+      reloadInJurisdiction("ET");
+      expect(leave()).toBe(false);
+    } finally {
+      stayInJurisdiction();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("stops the switch when the draft cannot be saved (DIAAT-332)", async () => {
+    await startDictating();
+    mockPutLiveDraft.mockRejectedValueOnce(
+      new LiveDraftError("network", "boom")
+    );
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toThrow("boom");
+  });
 
   it("stays quiet after a single failed save", async () => {
     mockPutLiveDraft.mockRejectedValueOnce(

@@ -115,6 +115,58 @@ describe("JurisdictionProvider", () => {
     expect(getTabJurisdiction()).toBeNull();
   });
 
+  it("asks a judge in several jurisdictions to choose, then works in their choice (DIAAT-332)", async () => {
+    vi.mocked(apiClient.request).mockImplementation(async (endpoint, options) => {
+      if (endpoint === "/jurisdictions/active") {
+        expect(options?.method).toBe("PUT");
+        expect(JSON.parse(String(options?.body))).toEqual({ code: "ET" });
+        return { data: { status: "ready", current: ET, jurisdictions: [ET, IAC] } };
+      }
+      // Before the choice, then after it (the tab now names the ET).
+      return getTabJurisdiction() === "ET"
+        ? { data: { status: "ready", current: ET, jurisdictions: [ET, IAC] } }
+        : {
+            data: {
+              status: "choose",
+              current: null,
+              jurisdictions: [
+                { code: "ET", name: "Employment Tribunal", role: "judge" },
+                { code: "IAC", name: "Immigration and Asylum Chamber", role: "judge" },
+              ],
+            },
+          };
+    });
+    renderProvider();
+
+    expect(await screen.findByRole("heading", { name: "Choose your jurisdiction" })).toBeTruthy();
+    expect(screen.queryByText(/material for/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Employment Tribunal" }));
+
+    expect(await screen.findByText("material for ET")).toBeTruthy();
+    expect(getTabJurisdiction()).toBe("ET");
+  });
+
+  it("says so, and lets them choose again, when a choice fails", async () => {
+    vi.mocked(apiClient.request).mockImplementation(async (endpoint) => {
+      if (endpoint === "/jurisdictions/active") throw new Error("network");
+      return {
+        data: {
+          status: "choose",
+          current: null,
+          jurisdictions: [{ code: "ET", name: "Employment Tribunal", role: "judge" }],
+        },
+      };
+    });
+    renderProvider();
+
+    fireEvent.click(await screen.findByRole("button", { name: "Employment Tribunal" }));
+
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(
+      (screen.getByRole("button", { name: "Employment Tribunal" }) as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+
   it("offers to try again when the jurisdiction cannot be loaded", async () => {
     vi.mocked(apiClient.request).mockRejectedValueOnce(new Error("network"));
     renderProvider();
