@@ -13,6 +13,10 @@ import {
   UPLOAD_HEADERS,
 } from "@/lib/recording/upload-contract";
 import { recordingFetch } from "@/lib/recording/browser-fetch";
+import {
+  JurisdictionSwitchError,
+  onBeforeJurisdictionSwitch,
+} from "@/lib/jurisdiction-switch";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -62,6 +66,17 @@ export default function DashboardPage() {
     }, POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [refresh]);
+
+  // DIAAT-332: a switch reloads the tab, which would cancel an upload in progress.
+  const uploadingRef = useRef(false);
+  uploadingRef.current = uploading;
+  useEffect(
+    () =>
+      onBeforeJurisdictionSwitch(async () => {
+        if (uploadingRef.current) throw new JurisdictionSwitchError("busy");
+      }),
+    []
+  );
 
   const handleUpload = useCallback(
     async (file: File) => {

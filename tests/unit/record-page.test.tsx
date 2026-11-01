@@ -19,6 +19,8 @@ import { describeSpeechAlert } from "@/lib/speech-alerts";
 
 const mockSetIsRecording = vi.hoisted(() => vi.fn());
 const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
+const lastEditorProps = vi.hoisted(() => ({ current: null as any }));
+const lastFormProps = vi.hoisted(() => ({ current: null as any }));
 const mockGetLiveDraft = vi.hoisted(() => vi.fn());
 const mockPutLiveDraft = vi.hoisted(() => vi.fn());
 const mockDeleteLiveDraft = vi.hoisted(() => vi.fn());
@@ -48,7 +50,10 @@ vi.mock("@/providers/user-settings", () => ({
 }));
 
 vi.mock("@/components/editor/tiptap-editor", () => ({
-  default: () => <div>Notes editor</div>,
+  default: (props: any) => {
+    lastEditorProps.current = props;
+    return <div>Notes editor</div>;
+  },
 }));
 
 vi.mock("@/components/audio/dictation", () => ({
@@ -59,7 +64,10 @@ vi.mock("@/components/audio/dictation", () => ({
 }));
 
 vi.mock("@/components/audio/dictation/dictation-form", () => ({
-  default: () => <div>Dictation form</div>,
+  default: (props: any) => {
+    lastFormProps.current = props;
+    return <div>Dictation form</div>;
+  },
 }));
 
 vi.mock("@/lib/document-content-api", () => ({
@@ -757,6 +765,36 @@ describe("Autosave failure states", () => {
       stayInJurisdiction();
       vi.unstubAllGlobals();
     }
+  });
+
+  it("stops the switch rather than lose notes, which are never saved", async () => {
+    await startDictating();
+    await act(async () => {
+      lastEditorProps.current.onContentChange("<p>Credibility in doubt</p>");
+    });
+    mockPutLiveDraft.mockClear();
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved" });
+    expect(mockPutLiveDraft).not.toHaveBeenCalled();
+  });
+
+  it("stops the switch rather than lose a hearing form filled in before any dictation", async () => {
+    render(<RecordPage />);
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({
+        ...lastFormProps.current.initialValues,
+        appellantName: "A Person",
+      });
+    });
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved" });
+  });
+
+  it("switches with nothing to lose on an untouched page", async () => {
+    render(<RecordPage />);
+    await act(async () => {
+      await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    });
   });
 
   it("stops the switch when the draft cannot be saved (DIAAT-332)", async () => {

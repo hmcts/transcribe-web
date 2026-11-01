@@ -22,7 +22,10 @@ import { useJurisdiction } from "@/providers/jurisdiction";
 function switchFailedMessage(error: unknown, currentName: string): string {
   const step = error instanceof JurisdictionSwitchError ? error.step : "save";
   if (step === "busy") {
-    return "Wait for your submission to finish, then switch jurisdiction.";
+    return "Wait for your submission or upload to finish, then switch jurisdiction.";
+  }
+  if (step === "unsaved") {
+    return "Your notes, and hearing details entered before you dictate, are not kept when you switch. Copy them out or remove them, then switch jurisdiction.";
   }
   if (step === "switch") {
     return `Your work is saved, but the switch did not work, so you are still working in ${currentName}. Try again.`;

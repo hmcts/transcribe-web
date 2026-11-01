@@ -22,7 +22,7 @@ import {
   jurisdictionContextValue,
   NEUTRAL,
 } from "@/lib/jurisdiction-context";
-import { setTabJurisdiction } from "@/lib/jurisdiction-session";
+import { getTabJurisdiction, setTabJurisdiction } from "@/lib/jurisdiction-session";
 import {
   JurisdictionSwitchError,
   prepareForJurisdictionSwitch,
@@ -127,7 +127,13 @@ export function JurisdictionProvider({
     try {
       await prepareForJurisdictionSwitch();
     } catch (error) {
-      throw new JurisdictionSwitchError("save", { cause: error });
+      // The tab stays, so the remembered choice goes back too: new tabs, and
+      // requests without the header, must not work in the other jurisdiction.
+      const here = getTabJurisdiction();
+      if (here) await chooseJurisdiction(here).catch(() => undefined);
+      throw error instanceof JurisdictionSwitchError
+        ? error
+        : new JurisdictionSwitchError("save", { cause: error });
     }
     reloadInJurisdiction(chosen.current.code);
   }, []);

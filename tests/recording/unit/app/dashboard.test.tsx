@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "@/app/recording/page";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -172,6 +173,36 @@ describe("DashboardPage", () => {
       ) as [string, RequestInit];
       return { url, init };
     }
+
+    it("stops a jurisdiction switch while the upload is in progress (DIAAT-332)", async () => {
+      mockReadAudioDurationSeconds.mockResolvedValue(undefined);
+      let finish: (value: unknown) => void = () => undefined;
+      const fetchMock = vi.fn((_url: string, init?: RequestInit) =>
+        init?.method === "POST"
+          ? new Promise((resolve) => {
+              finish = resolve;
+            })
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({ jobs: [] }) })
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const user = userEvent.setup();
+      render(<DashboardPage />);
+      await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+
+      await user.upload(
+        screen.getByLabelText("Audio file input"),
+        new File(["bytes"], "hearing.mp3", { type: "audio/mpeg" })
+      );
+      await user.click(screen.getByRole("button", { name: /upload for transcription/i }));
+      await waitFor(() =>
+        expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true)
+      );
+
+      await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "busy" });
+      finish({ ok: true, status: 201, json: () => Promise.resolve({ job: { id: "job-1" } }) });
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    });
 
     it("sends the file as the raw body, not multipart, to /api/upload", async () => {
       mockReadAudioDurationSeconds.mockResolvedValue(9360.5);

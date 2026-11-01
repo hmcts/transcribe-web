@@ -108,7 +108,8 @@ describe("switching jurisdiction", () => {
 
   it("says the work is saved when only the switch failed", async () => {
     vi.mocked(apiClient.request).mockImplementation(async (endpoint) => {
-      if (endpoint === "/jurisdictions/active") throw new Error("403");
+      // apiClient.request returns a refusal; it never throws.
+      if (endpoint === "/jurisdictions/active") return { error: "Not one of your jurisdictions", status: 403 };
       return { data: { status: "ready", current: IAC, jurisdictions: [IAC, ET] } };
     });
     await openSwitcher();
@@ -135,7 +136,7 @@ describe("switching jurisdiction", () => {
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
       expect(String(toastError.mock.calls[0][0])).toBe(
-        "Wait for your submission to finish, then switch jurisdiction."
+        "Wait for your submission or upload to finish, then switch jurisdiction."
       );
       expect(apiClient.request).not.toHaveBeenCalledWith("/jurisdictions/active", expect.anything());
     } finally {
@@ -161,6 +162,66 @@ describe("switching jurisdiction", () => {
       expect(assign).not.toHaveBeenCalled();
       expect(apiClient.request).not.toHaveBeenCalledWith("/jurisdictions/active", expect.anything());
       expect(getTabJurisdiction()).toBe("IAC");
+    } finally {
+      unregister();
+    }
+  });
+});
+
+describe("a switch whose final save fails", () => {
+  beforeEach(() => {
+    window.sessionStorage.clear();
+    vi.mocked(apiClient.request).mockReset();
+    toastError.mockReset();
+    assign.mockReset();
+    vi.stubGlobal("location", { ...window.location, assign });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    stayInJurisdiction();
+  });
+
+  it("puts the remembered choice back, as the user is told they have not moved", async () => {
+    serve();
+    let saves = 0;
+    const unregister = onBeforeJurisdictionSwitch(async () => {
+      saves += 1;
+      if (saves === 2) throw new Error("save failed");
+    });
+    try {
+      await openSwitcher();
+      await act(async () => {
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
+      });
+
+      await waitFor(() => expect(toastError).toHaveBeenCalled());
+      expect(String(toastError.mock.calls[0][0])).toContain("you are still working in Immigration and Asylum Chamber");
+      const chosen = vi
+        .mocked(apiClient.request)
+        .mock.calls.filter(([endpoint]) => endpoint === "/jurisdictions/active")
+        .map(([, options]) => JSON.parse(String(options?.body)).code);
+      expect(chosen).toEqual(["ET", "IAC"]);
+      expect(assign).not.toHaveBeenCalled();
+      expect(getTabJurisdiction()).toBe("IAC");
+    } finally {
+      unregister();
+    }
+  });
+
+  it("says what to do with work that is never saved", async () => {
+    serve();
+    const unregister = onBeforeJurisdictionSwitch(async () => {
+      throw new JurisdictionSwitchError("unsaved");
+    });
+    try {
+      await openSwitcher();
+      await act(async () => {
+        fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
+      });
+
+      await waitFor(() => expect(toastError).toHaveBeenCalled());
+      expect(String(toastError.mock.calls[0][0])).toContain("Copy them out or remove them");
+      expect(assign).not.toHaveBeenCalled();
     } finally {
       unregister();
     }

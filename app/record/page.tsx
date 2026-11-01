@@ -210,13 +210,28 @@ export default function RecordPage() {
   useEffect(() => {
     isSubmittingRef.current = isSubmitting;
   }, [isSubmitting]);
+  // The draft holds the dictation, and the hearing form with it. Notes, and a form
+  // filled in before anything is dictated, are not saved, so they stop the switch
+  // rather than being lost with the tab.
+  const hasNotesRef = useRef(false);
+  useEffect(() => {
+    hasNotesRef.current =
+      normalizeOptionalEditorText(editorContent) !==
+      normalizeOptionalEditorText(defaultNotes);
+  }, [editorContent, defaultNotes]);
   useEffect(
     () =>
       onBeforeJurisdictionSwitch(async () => {
         if (isSubmittingRef.current) throw new JurisdictionSwitchError("busy");
+        const unsavedForm =
+          getAutosavePayload() === null &&
+          JSON.stringify(formDataRef.current) !== JSON.stringify(defaultFormValues);
+        if (hasNotesRef.current || unsavedForm) {
+          throw new JurisdictionSwitchError("unsaved");
+        }
         await flushDraft();
       }),
-    [flushDraft]
+    [flushDraft, getAutosavePayload]
   );
 
   /**
