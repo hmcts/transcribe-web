@@ -12,20 +12,31 @@ export const JURISDICTION_HEADER = "X-Jurisdiction";
 export const JURISDICTION_QUERY = "jurisdiction";
 const STORAGE_KEY = "benchnotes-jurisdiction";
 
+// Also kept in memory (this page load's), used once storage has failed: without
+// it, requests would name no jurisdiction and the API would use the remembered
+// choice, which a switch (here or in another tab) changes before its last save.
+let inMemory: string | null = null;
+let storageUsable = true;
+
 export function getTabJurisdiction(): string | null {
+  if (!storageUsable) return inMemory;
   try {
     return window.sessionStorage.getItem(STORAGE_KEY);
   } catch {
-    return null;
+    storageUsable = false;
+    return inMemory;
   }
 }
 
 export function setTabJurisdiction(code: string | null): void {
+  inMemory = code;
+  if (!storageUsable) return;
   try {
     if (code) window.sessionStorage.setItem(STORAGE_KEY, code);
     else window.sessionStorage.removeItem(STORAGE_KEY);
   } catch {
-    // Storage blocked: requests fall back to the user's remembered choice.
+    // Not stored (blocked, or full while reads still work): memory from now on.
+    storageUsable = false;
   }
 }
 

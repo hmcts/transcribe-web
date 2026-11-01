@@ -222,14 +222,29 @@ export default function RecordPage() {
   useEffect(
     () =>
       onBeforeJurisdictionSwitch(async () => {
-        if (isSubmittingRef.current) throw new JurisdictionSwitchError("busy");
-        const unsavedForm =
-          getAutosavePayload() === null &&
-          JSON.stringify(formDataRef.current) !== JSON.stringify(defaultFormValues);
-        if (hasNotesRef.current || unsavedForm) {
-          throw new JurisdictionSwitchError("unsaved");
+        const checkNothingIsLost = () => {
+          if (isSubmittingRef.current) throw new JurisdictionSwitchError("busy");
+          // The judge's name is filled in from their sign-in, here and again after
+          // the reload: only the hearing details are the judge's own work.
+          const { judgeName: _filledIn, ...entered } = formDataRef.current;
+          const { judgeName: _blank, ...blank } = defaultFormValues;
+          const unsavedForm =
+            getAutosavePayload() === null && JSON.stringify(entered) !== JSON.stringify(blank);
+          if (hasNotesRef.current || unsavedForm) {
+            throw new JurisdictionSwitchError("unsaved");
+          }
+        };
+        // The page stays editable while the draft is saved: anything typed during
+        // the save is checked, and saved, again. The reload follows this handler
+        // with nothing awaited between, so nothing can be typed after the last check.
+        for (let saves = 0; saves < 3; saves += 1) {
+          checkNothingIsLost();
+          const saving = JSON.stringify(getAutosavePayload());
+          await flushDraft();
+          checkNothingIsLost();
+          if (JSON.stringify(getAutosavePayload()) === saving) return;
         }
-        await flushDraft();
+        throw new JurisdictionSwitchError("busy"); // still changing: try again
       }),
     [flushDraft, getAutosavePayload]
   );

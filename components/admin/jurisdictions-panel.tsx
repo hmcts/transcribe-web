@@ -3,6 +3,7 @@
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -221,6 +222,11 @@ function JurisdictionEditor({
   // meanwhile (even one a refresh has since shown) is refused, not overwritten.
   const [version, setVersion] = useState(jurisdiction?.version ?? "");
 
+  // DIAAT-332: a switch reloads the tab, losing changes not saved, or a save under way.
+  const form = JSON.stringify({ code, name, enabled, autoEnrol, template, recordings, wording });
+  const [savedForm, setSavedForm] = useState(form);
+  useJurisdictionSwitchGuard({ busy: saving, unsaved: form !== savedForm });
+
   // Saving creates or replaces: adding one with an existing code would overwrite it.
   const duplicate =
     !jurisdiction && existingCodes.includes(code.trim().toUpperCase());
@@ -247,6 +253,7 @@ function JurisdictionEditor({
         version,
       });
       setVersion(saved.version);
+      setSavedForm(form);
       toast.success(`Saved ${saved.code}`);
       await onSaved(saved.code);
     } catch (err) {
@@ -378,6 +385,8 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
   const [role, setRole] = useState<AdminJurisdictionMember["role"]>("judge");
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
+  // An email typed but not added yet is a change a switch would lose.
+  useJurisdictionSwitchGuard({ busy, unsaved: email.trim() !== "" });
 
   const load = useCallback(async () => {
     try {
@@ -414,6 +423,7 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
   }
 
   async function remove(memberEmail: string) {
+    setBusy(true);
     try {
       await removeJurisdictionMember(code, memberEmail);
       toast.success(`Removed ${memberEmail} from ${code}`);
@@ -422,6 +432,8 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
       await onChanged();
     } catch (err) {
       toast.error(message(err));
+    } finally {
+      setBusy(false);
     }
   }
 

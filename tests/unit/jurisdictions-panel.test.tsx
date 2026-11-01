@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
 import type * as api from "@/lib/admin-jurisdictions-api";
 import { apiClient } from "@/lib/api-client";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 
 // DIAAT-356: a SystemAdministrator adds a jurisdiction and its judges from the admin
 // area, because nobody may run a command on the cluster.
@@ -309,6 +310,25 @@ describe("JurisdictionsPanel", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(toast.success).toHaveBeenCalledTimes(2));
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("stops a jurisdiction switch while its changes are unsaved, not once saved (DIAAT-332)", async () => {
+    serve({ jurisdictions: [ET] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    await user.type(screen.getByLabelText("Name"), "s");
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved_changes" });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+
+    // An email typed but not added yet.
+    await user.type(screen.getByLabelText("Sign-in email"), "new@example.test");
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved_changes" });
   });
 
   it("says when adding changes an existing member's role", async () => {

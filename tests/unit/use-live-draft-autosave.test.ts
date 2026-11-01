@@ -528,6 +528,55 @@ describe("flushing before leaving on purpose (DIAAT-332)", () => {
   });
 });
 
+describe("a flush queued behind a delete (DIAAT-332)", () => {
+  it("writes only once the delete has finished, so the delete cannot erase it", async () => {
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+    let finishDelete: () => void = () => undefined;
+    const deleteDraft = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishDelete = resolve;
+        })
+    );
+    let deleting: Promise<void> = Promise.resolve();
+    act(() => {
+      deleting = result.current.runExclusive(deleteDraft);
+    });
+    await flush();
+    expect(deleteDraft).toHaveBeenCalledTimes(1);
+
+    let flushed = false;
+    const flushing = result.current.flush().then(() => {
+      flushed = true;
+    });
+    await flush();
+    // Not while the delete is pending: it would land after this write.
+    expect(mockPutLiveDraft).not.toHaveBeenCalled();
+    expect(flushed).toBe(false);
+
+    finishDelete();
+    await act(() => Promise.all([deleting, flushing]));
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+    expect(flushed).toBe(true);
+  });
+
+  it("still runs after a delete that failed", async () => {
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+    const deleting = result.current.runExclusive(() =>
+      Promise.reject(new Error("delete failed"))
+    );
+    await act(async () => {
+      await expect(deleting).rejects.toThrow("delete failed");
+      await result.current.flush();
+    });
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("a flush's write (DIAAT-332)", () => {
   it("is waited for by stop(), so a submission's delete cannot land before it", async () => {
     let finish: () => void = () => undefined;

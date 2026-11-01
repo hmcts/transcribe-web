@@ -70,6 +70,44 @@ describe("the tab's jurisdiction header", () => {
   });
 });
 
+describe("the tab's jurisdiction without session storage", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.resetModules();
+  });
+
+  it("is kept in memory when storage is blocked", async () => {
+    vi.resetModules();
+    const session = await import("@/lib/jurisdiction-session");
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+
+    session.setTabJurisdiction("ET");
+
+    expect(session.jurisdictionHeaders()).toEqual({ "X-Jurisdiction": "ET" });
+  });
+
+  it("is kept in memory when writes fail but reads still work", async () => {
+    vi.resetModules();
+    window.sessionStorage.clear();
+    window.sessionStorage.setItem("benchnotes-jurisdiction", "IAC");
+    const session = await import("@/lib/jurisdiction-session");
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota exceeded");
+    });
+
+    session.setTabJurisdiction("ET");
+
+    // Not the stale IAC still readable from storage.
+    expect(session.getTabJurisdiction()).toBe("ET");
+    window.sessionStorage.clear();
+  });
+});
+
 describe("jurisdiction wording", () => {
   it("is the jurisdiction's own where it sets it", () => {
     expect(wordingFor(IAC.wording, "records.column_title")).toBe("Hearing");

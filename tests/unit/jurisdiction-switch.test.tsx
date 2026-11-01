@@ -136,7 +136,7 @@ describe("switching jurisdiction", () => {
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
       expect(String(toastError.mock.calls[0][0])).toBe(
-        "Wait for your submission or upload to finish, then switch jurisdiction."
+        "Wait for what you are submitting, uploading or saving to finish, then switch jurisdiction."
       );
       expect(apiClient.request).not.toHaveBeenCalledWith("/jurisdictions/active", expect.anything());
     } finally {

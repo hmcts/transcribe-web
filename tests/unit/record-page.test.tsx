@@ -748,6 +748,59 @@ describe("Autosave failure states", () => {
     );
   });
 
+  it("saves again what was dictated while the switch's save was in flight", async () => {
+    await startDictating();
+    mockPutLiveDraft.mockClear();
+    let finishFirst: () => void = () => undefined;
+    mockPutLiveDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+    const later = {
+      ...TEST_TRANSCRIPT,
+      facts: [{ speaker: "Judge", text: "said during the save", timestamp: "00:09" }],
+    };
+
+    let switching: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switching = prepareForJurisdictionSwitch();
+    });
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange(later);
+    });
+    await act(async () => {
+      finishFirst();
+      await switching;
+    });
+
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    expect(mockPutLiveDraft.mock.calls[1][0]).toEqual(later);
+  });
+
+  it("stops the switch for notes typed while its save was in flight", async () => {
+    await startDictating();
+    let finishFirst: () => void = () => undefined;
+    mockPutLiveDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+
+    let switching: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switching = prepareForJurisdictionSwitch();
+    });
+    await act(async () => {
+      lastEditorProps.current.onContentChange("<p>Typed meanwhile</p>");
+    });
+    finishFirst();
+
+    await expect(switching).rejects.toMatchObject({ step: "unsaved" });
+  });
+
   it("leaves without asking once the draft is saved for a switch (DIAAT-332)", async () => {
     await startDictating();
     const leave = () => {
@@ -788,6 +841,20 @@ describe("Autosave failure states", () => {
     });
 
     await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved" });
+  });
+
+  it("switches when the form holds only the judge's name it filled in itself", async () => {
+    render(<RecordPage />);
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({
+        ...lastFormProps.current.initialValues,
+        judgeName: "Judge Smith",
+      });
+    });
+
+    await act(async () => {
+      await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    });
   });
 
   it("switches with nothing to lose on an untouched page", async () => {

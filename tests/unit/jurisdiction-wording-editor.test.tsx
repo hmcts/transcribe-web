@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JurisdictionWordingEditor } from "@/components/jurisdiction/wording-editor";
 import { apiClient } from "@/lib/api-client";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import { jurisdictionContextValue } from "@/lib/jurisdiction-context";
 import { ET } from "../jurisdiction-helpers";
 
@@ -97,6 +98,33 @@ describe("JurisdictionWordingEditor", () => {
     await waitFor(() =>
       expect((screen.getByLabelText("Subtitle of the help page") as HTMLInputElement).value).toBe("Theirs")
     );
+  });
+
+  it("stops a jurisdiction switch while wording is unsaved or being saved (DIAAT-332)", async () => {
+    let finishSave: (value: unknown) => void = () => undefined;
+    request.mockImplementation(async (_endpoint: string, options?: RequestInit) => {
+      if (options?.method === "PUT") {
+        const { wording } = JSON.parse(String(options.body));
+        await new Promise((resolve) => {
+          finishSave = resolve;
+        });
+        return { data: { code: "ET", name: ET.name, keys: KEYS, wording, version: "v2" } };
+      }
+      return { data: { code: "ET", name: ET.name, keys: KEYS, wording: { "help.subtitle": "ET help" }, version: "v1" } };
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionWordingEditor />);
+
+    const subtitle = await screen.findByLabelText("Subtitle of the help page");
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    await user.type(subtitle, "!");
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved_changes" });
+
+    await user.click(screen.getByRole("button", { name: "Save wording" }));
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "busy" });
+    finishSave(undefined);
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
   });
 
   it("tells a judge who is not its admin, without asking the API", () => {

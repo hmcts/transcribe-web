@@ -17,11 +17,11 @@ export const SWITCH_PARAM = "switched-jurisdiction";
 const SWITCH_MARKER_KEY = "benchnotes-switching-to";
 
 /** Which step a switch stopped at: saving the tab's work, the switch itself, the
- * tab being busy (a submission or upload in progress), or work on it that is never saved
- * (notes) and would be lost. */
+ * tab being busy (a submission, upload or save in progress), work on it that is
+ * never saved (notes) and would be lost, or changes not yet saved (a form). */
 export class JurisdictionSwitchError extends Error {
   constructor(
-    readonly step: "save" | "switch" | "busy" | "unsaved",
+    readonly step: "save" | "switch" | "busy" | "unsaved" | "unsaved_changes",
     options?: { cause?: unknown }
   ) {
     super(`Jurisdiction switch stopped at: ${step}`, options);

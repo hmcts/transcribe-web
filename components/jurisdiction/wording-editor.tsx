@@ -3,6 +3,7 @@
 import { Loader2, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +23,17 @@ import { useJurisdiction } from "@/providers/jurisdiction";
 const message = (error: unknown) =>
   error instanceof Error ? error.message : "Something went wrong";
 
+/** The same wording; a blank line is the default, as if it were not set. */
+function sameWording(a: Record<string, string>, b: Record<string, string>): boolean {
+  const set = (w: Record<string, string>) =>
+    JSON.stringify(
+      Object.entries(w)
+        .filter(([, text]) => text.trim())
+        .sort(([x], [y]) => x.localeCompare(y))
+    );
+  return set(a) === set(b);
+}
+
 export function JurisdictionWordingEditor() {
   const { current } = useJurisdiction();
   const isAdmin = current?.role === "admin";
@@ -29,6 +41,10 @@ export function JurisdictionWordingEditor() {
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  // DIAAT-332: a switch reloads the tab, losing wording not saved, or a save under way.
+  const unsaved =
+    loaded !== null && !sameWording(draft, loaded.wording);
+  useJurisdictionSwitchGuard({ busy: saving, unsaved });
 
   const load = useCallback(async () => {
     setError(null);

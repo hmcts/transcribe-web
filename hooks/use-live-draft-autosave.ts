@@ -105,6 +105,8 @@ export function useLiveDraftAutosave({
   const stoppedRef = useRef(false);
   /** Operations in progress under runExclusive; writes wait while non-zero. */
   const exclusiveRef = useRef(0);
+  /** Settles when the last runExclusive operation queued has finished. */
+  const exclusiveQueueRef = useRef<Promise<void>>(Promise.resolve());
   /** The flush on unmount was due while writes were held. */
   const flushHeldRef = useRef(false);
   const getPayloadRef = useRef(getPayload);
@@ -291,10 +293,19 @@ export function useLiveDraftAutosave({
   const runExclusive = useCallback(
     async <T>(operation: () => Promise<T>): Promise<T> => {
       exclusiveRef.current += 1;
+      // One at a time, in order: a flush must not start its write while a delete
+      // queued before it is still pending, or the late delete would erase it.
+      const previous = exclusiveQueueRef.current;
+      let release: () => void = () => undefined;
+      exclusiveQueueRef.current = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       try {
+        await previous;
         await settleInFlight();
         return await operation();
       } finally {
+        release();
         exclusiveRef.current -= 1;
         if (exclusiveRef.current === 0) {
           const pending = pendingTriggerRef.current;

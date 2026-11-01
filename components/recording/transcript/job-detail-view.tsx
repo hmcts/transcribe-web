@@ -10,6 +10,7 @@ import { ModificationHistoryTable } from "@/components/recording/transcript/modi
 import { NeedsReviewPanel } from "@/components/recording/transcript/needs-review-panel";
 import { TranscriptAccuracy } from "@/components/recording/transcript/transcript-accuracy";
 import { TranscriptSegment } from "@/components/recording/transcript/transcript-segment";
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { apiPath } from "@/lib/recording/base-path";
 import { RECORDING_HOME } from "@/lib/recording/routes";
 import type { TranscriptionJob } from "@/lib/recording/types";
@@ -231,7 +232,20 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     setJob(body.job as TranscriptionJob);
   };
 
+  // DIAAT-332: a switch reloads the tab, which would cancel the upload.
+  const [uploadingBaseline, setUploadingBaseline] = useState(false);
+  useJurisdictionSwitchGuard({ busy: uploadingBaseline, unsaved: false });
+
   const uploadBaseline = async (file: File) => {
+    setUploadingBaseline(true);
+    try {
+      await sendBaseline(file);
+    } finally {
+      setUploadingBaseline(false);
+    }
+  };
+
+  const sendBaseline = async (file: File) => {
     // The raw file, as exactly application/octet-stream, not
     // multipart/form-data: the only shape Front Door's WAF lets through to
     // this path (lib/recording/upload-contract.ts). The route handler builds
