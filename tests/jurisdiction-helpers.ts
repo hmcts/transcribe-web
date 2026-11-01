@@ -32,16 +32,25 @@ const JURISDICTIONS = { IAC, ET } as const;
 
 type Code = keyof typeof JURISDICTIONS;
 
-export function mockJurisdictionModule(code: Code | (() => Code)) {
+/** `role`: the user's role in the jurisdiction, "judge" unless given (DIAAT-356). */
+export function mockJurisdictionModule(
+  code: Code | (() => Code),
+  role: () => CurrentJurisdiction["role"] = () => "judge"
+) {
   const current = typeof code === "function" ? code : () => code;
   const values = {
     IAC: jurisdictionContextValue(IAC, [IAC]),
     ET: jurisdictionContextValue(ET, [ET]),
   };
+  const valueFor = (c: Code) => {
+    if (role() === "judge") return values[c];
+    const own = { ...JURISDICTIONS[c], role: role() };
+    return jurisdictionContextValue(own, [own]);
+  };
   return {
     JurisdictionProvider: ({ children }: { children: React.ReactNode }) =>
       children,
-    useJurisdiction: () => values[current()],
-    useWording: () => values[current()].wording,
+    useJurisdiction: () => valueFor(current()),
+    useWording: () => valueFor(current()).wording,
   };
 }

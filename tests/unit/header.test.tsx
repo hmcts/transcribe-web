@@ -5,10 +5,14 @@ const mockPush = vi.fn();
 let mockPathname = "/";
 let mockSelectedRecordingMode: string | null = null;
 let mockIsRecording = false;
+let mockRole: "judge" | "admin" = "judge";
 
 // DIAAT-322: these screens as the IAC sees them.
 vi.mock("@/providers/jurisdiction", async () =>
-  (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule(
+    "IAC",
+    () => mockRole
+  )
 );
 
 vi.mock("next/navigation", () => ({
@@ -74,6 +78,22 @@ describe("Header", () => {
     mockPathname = "/";
     mockSelectedRecordingMode = null;
     mockIsRecording = false;
+  });
+
+  it("links an admin for the jurisdiction to its wording, and nobody else (DIAAT-356)", () => {
+    const { queryByRole, unmount } = render(<Header />);
+    expect(queryByRole("link", { name: /Wording/ })).toBeNull();
+    unmount();
+
+    mockRole = "admin";
+    try {
+      const { getByRole } = render(<Header />);
+      expect(getByRole("link", { name: /Wording/ }).getAttribute("href")).toBe(
+        "/jurisdiction-wording"
+      );
+    } finally {
+      mockRole = "judge";
+    }
   });
 
   it("renders the Bench Notes text", () => {

@@ -15,6 +15,26 @@ export interface ApiResponse<T> {
 /**
  * API client that handles authentication for both local development and production
  */
+/**
+ * A FastAPI ``detail`` as text: a string as it is, a structured refusal such as
+ * ``{code, message}`` (DIAAT-322) by its message, a validation error list by its
+ * messages. Never "[object Object]".
+ */
+export function detailMessage(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail || undefined;
+  if (Array.isArray(detail)) {
+    const messages = detail
+      .map((item) => (typeof item?.msg === "string" ? item.msg : undefined))
+      .filter(Boolean);
+    return messages.length ? messages.join("; ") : undefined;
+  }
+  if (detail && typeof detail === "object") {
+    const message = (detail as { message?: unknown }).message;
+    return typeof message === "string" && message ? message : undefined;
+  }
+  return undefined;
+}
+
 class ApiClient {
   private baseUrl: string;
 
@@ -119,7 +139,8 @@ class ApiClient {
         let bodyRequestId: string | undefined;
         try {
           const errorData = await response.json();
-          errorMessage = errorData.detail || errorData.message || errorMessage;
+          errorMessage =
+            detailMessage(errorData.detail) || errorData.message || errorMessage;
           if (errorData.request_id) {
             bodyRequestId = errorData.request_id as string;
           }
