@@ -1,6 +1,9 @@
 import { render, screen } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TranscriptPage from "@/app/recording/jobs/[jobId]/page";
+import { setTabJurisdiction } from "@/lib/jurisdiction-session";
+
+// The page loads its job in the browser, in the tab's jurisdiction (DIAAT-334).
 
 vi.mock("next/link", () => ({
   default: ({
@@ -12,22 +15,6 @@ vi.mock("next/link", () => ({
   }) => <a href={href}>{children}</a>,
 }));
 
-vi.mock("next/navigation", () => ({
-  notFound: vi.fn(() => {
-    throw new Error("NEXT_NOT_FOUND");
-  }),
-}));
-
-// The page reads the session cookie via getServerComponentAuthContext
-// (next/headers) to send the session's token to the backend; stub it here.
-vi.mock("next/headers", () => ({
-  cookies: vi.fn(async () => ({ get: () => undefined })),
-}));
-
-const { mockGetJob } = vi.hoisted(() => ({ mockGetJob: vi.fn() }));
-
-vi.mock("@/lib/recording/api-client", () => ({ getJob: mockGetJob }));
-
 const COMPLETED_JOB = {
   id: "job-pa05217-2025",
   caseReference: "PA/05217/2025",
@@ -35,6 +22,7 @@ const COMPLETED_JOB = {
   audioFileName: "hearing.wav",
   status: "COMPLETED" as const,
   progressPercent: 100,
+  uploadedAt: "2026-01-15T10:00:00Z",
   segments: [
     {
       id: "seg-0",
@@ -47,59 +35,77 @@ const COMPLETED_JOB = {
   ],
 };
 
+let fetchMock: ReturnType<typeof vi.fn>;
+
+function serve(status: number, job?: unknown) {
+  fetchMock.mockResolvedValue({
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => ({ job }),
+  });
+}
+
+async function renderPage(jobId = COMPLETED_JOB.id) {
+  render(await TranscriptPage({ params: Promise.resolve({ jobId }) }));
+}
+
 beforeEach(() => {
-  mockGetJob.mockResolvedValue(COMPLETED_JOB);
+  fetchMock = vi.fn();
+  vi.stubGlobal("fetch", fetchMock);
+  serve(200, COMPLETED_JOB);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  window.sessionStorage.clear();
 });
 
 describe("TranscriptPage", () => {
   it("renders case reference for known job", async () => {
-    render(
-      await TranscriptPage({
-        params: Promise.resolve({ jobId: COMPLETED_JOB.id }),
-      })
-    );
-    expect(screen.getByText("PA/05217/2025")).toBeDefined();
+    await renderPage();
+    expect(await screen.findByText("PA/05217/2025")).toBeDefined();
   });
 
   it("renders tribunal name", async () => {
-    render(
-      await TranscriptPage({
-        params: Promise.resolve({ jobId: COMPLETED_JOB.id }),
-      })
-    );
+    await renderPage();
     expect(
-      screen.getByText("First-tier Tribunal — Immigration and Asylum Chamber")
+      await screen.findByText("First-tier Tribunal — Immigration and Asylum Chamber")
     ).toBeDefined();
   });
 
   it("renders transcript segments", async () => {
-    render(
-      await TranscriptPage({
-        params: Promise.resolve({ jobId: COMPLETED_JOB.id }),
-      })
-    );
-    expect(screen.getAllByText("Judge").length).toBeGreaterThan(0);
+    await renderPage();
+    expect((await screen.findAllByText("Judge")).length).toBeGreaterThan(0);
   });
 
-  it("calls notFound for unknown job id", async () => {
-    mockGetJob.mockResolvedValue(null);
-    await expect(
-      TranscriptPage({ params: Promise.resolve({ jobId: "unknown" }) })
-    ).rejects.toThrow("NEXT_NOT_FOUND");
+  it("asks for the job in the tab's jurisdiction", async () => {
+    setTabJurisdiction("IAC");
+    await renderPage();
+    await screen.findByText("PA/05217/2025");
+    expect(fetchMock.mock.calls[0][1].headers["X-Jurisdiction"]).toBe("IAC");
+  });
+
+  it("shows not found for an unknown job, or one of another jurisdiction", async () => {
+    serve(404);
+    await renderPage("unknown");
+    expect(await screen.findByRole("heading", { name: "Transcript not found" })).toBeDefined();
+    expect(screen.queryByText("PA/05217/2025")).toBeNull();
+  });
+
+  it("offers to try again when the job cannot be loaded", async () => {
+    serve(502);
+    await renderPage();
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeDefined();
   });
 
   it("shows a fallback message when a completed job has no transcript segments", async () => {
-    mockGetJob.mockResolvedValue({ ...COMPLETED_JOB, segments: undefined });
-    render(
-      await TranscriptPage({
-        params: Promise.resolve({ jobId: COMPLETED_JOB.id }),
-      })
-    );
-    expect(screen.getByText(/no content to display/i)).toBeDefined();
+    serve(200, { ...COMPLETED_JOB, segments: undefined });
+    await renderPage();
+    expect(await screen.findByText(/no content to display/i)).toBeDefined();
   });
 
   it("shows an in-progress message and does not 404 for a processing job", async () => {
-    mockGetJob.mockResolvedValue({
+    serve(200, {
       ...COMPLETED_JOB,
       status: "PROCESSING",
       // Recently submitted with a known audio duration -> the time-based
@@ -108,28 +114,20 @@ describe("TranscriptPage", () => {
       audioDurationSeconds: 9360,
       segments: undefined,
     });
-    render(
-      await TranscriptPage({
-        params: Promise.resolve({ jobId: COMPLETED_JOB.id }),
-      })
-    );
-    expect(screen.getByText(/still in progress/i)).toBeDefined();
+    await renderPage();
+    expect(await screen.findByText(/still in progress/i)).toBeDefined();
     expect(screen.getByRole("progressbar")).toBeDefined();
   });
 
   it("shows the error message and does not 404 for a failed job", async () => {
-    mockGetJob.mockResolvedValue({
+    serve(200, {
       ...COMPLETED_JOB,
       status: "FAILED",
       segments: undefined,
       errorMessage: "Azure batch transcription submission failed",
     });
-    render(
-      await TranscriptPage({
-        params: Promise.resolve({ jobId: COMPLETED_JOB.id }),
-      })
-    );
-    expect(screen.getByText(/transcription failed/i)).toBeDefined();
+    await renderPage();
+    expect(await screen.findByText(/transcription failed/i)).toBeDefined();
     expect(
       screen.getByText("Azure batch transcription submission failed")
     ).toBeDefined();

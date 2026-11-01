@@ -2,7 +2,7 @@
 
 import { ChevronDown, ChevronLeft, History } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { JobProgress } from "@/components/recording/job-status/job-progress";
 import { JobStatusBadge } from "@/components/recording/job-status/job-status-badge";
 import { AudioPlayerBar } from "@/components/recording/transcript/audio-player-bar";
@@ -15,6 +15,7 @@ import { RECORDING_HOME } from "@/lib/recording/routes";
 import type { TranscriptionJob } from "@/lib/recording/types";
 import { rawUploadHeaders } from "@/lib/recording/upload-contract";
 import { cn } from "@/lib/recording/utils";
+import { recordingFetch, withTabJurisdiction } from "@/lib/recording/browser-fetch";
 
 const POLL_INTERVAL_MS = 5000;
 
@@ -29,6 +30,11 @@ interface JobDetailViewProps {
 
 export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   const [job, setJob] = useState(initialJob);
+  // An <audio> source cannot send the tab's jurisdiction as a header (DIAAT-334).
+  const audioSrc = useMemo(
+    () => withTabJurisdiction(apiPath(`/api/audio/${jobId}`)),
+    [jobId]
+  );
   const jobRef = useRef(job);
   jobRef.current = job;
 
@@ -148,7 +154,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   };
 
   const correctSegment = async (index: number, correctedText: string) => {
-    const response = await fetch(
+    const response = await recordingFetch(
       apiPath(`/api/jobs/${jobId}/segments/${index}`),
       {
         method: "PATCH",
@@ -169,7 +175,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     endWordIndex: number,
     correctedText: string
   ) => {
-    const response = await fetch(
+    const response = await recordingFetch(
       apiPath(`/api/jobs/${jobId}/segments/${index}/words`),
       {
         method: "PATCH",
@@ -185,7 +191,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   };
 
   const rollbackSegment = async (index: number) => {
-    const response = await fetch(
+    const response = await recordingFetch(
       apiPath(`/api/jobs/${jobId}/segments/${index}/rollback`),
       { method: "POST" }
     );
@@ -197,7 +203,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   };
 
   const acceptSegment = async (index: number) => {
-    const response = await fetch(
+    const response = await recordingFetch(
       apiPath(`/api/jobs/${jobId}/segments/${index}/accept`),
       { method: "POST" }
     );
@@ -212,7 +218,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     index: number,
     historyIndex: number
   ) => {
-    const response = await fetch(
+    const response = await recordingFetch(
       apiPath(
         `/api/jobs/${jobId}/segments/${index}/history/${historyIndex}/rollback`
       ),
@@ -230,7 +236,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     // multipart/form-data: the only shape Front Door's WAF lets through to
     // this path (lib/recording/upload-contract.ts). The route handler builds
     // the multipart request to the API (app/api/jobs/[jobId]/baseline).
-    const response = await fetch(apiPath(`/api/jobs/${jobId}/baseline`), {
+    const response = await recordingFetch(apiPath(`/api/jobs/${jobId}/baseline`), {
       method: "POST",
       headers: rawUploadHeaders(file),
       body: file,
@@ -255,7 +261,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
         return;
       }
       try {
-        const response = await fetch(apiPath(`/api/jobs/${jobId}`), {
+        const response = await recordingFetch(apiPath(`/api/jobs/${jobId}`), {
           cache: "no-store",
         });
         if (!response.ok) return;
@@ -315,7 +321,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       <main className="min-h-screen bg-background">
         <audio
           ref={attachAudioRef}
-          src={apiPath(`/api/audio/${job.id}`)}
+          src={audioSrc}
           preload="metadata"
           className="hidden"
         >

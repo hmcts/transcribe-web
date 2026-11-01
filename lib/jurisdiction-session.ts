@@ -7,6 +7,9 @@
  */
 
 export const JURISDICTION_HEADER = "X-Jurisdiction";
+/** The same, in the query of a URL the browser loads itself (an <audio> source),
+ * which cannot carry a header. */
+export const JURISDICTION_QUERY = "jurisdiction";
 const STORAGE_KEY = "benchnotes-jurisdiction";
 
 export function getTabJurisdiction(): string | null {

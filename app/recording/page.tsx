@@ -12,11 +12,12 @@ import {
   SERVICE_UNAVAILABLE_ERROR,
   UPLOAD_HEADERS,
 } from "@/lib/recording/upload-contract";
+import { recordingFetch } from "@/lib/recording/browser-fetch";
 
 const POLL_INTERVAL_MS = 5000;
 
 async function fetchJobs(): Promise<TranscriptionJob[]> {
-  const response = await fetch(apiPath("/api/jobs"), { cache: "no-store" });
+  const response = await recordingFetch(apiPath("/api/jobs"), { cache: "no-store" });
   if (!response.ok) {
     throw new Error(`Failed to load jobs: ${response.status}`);
   }
@@ -79,7 +80,7 @@ export default function DashboardPage() {
         // shape Front Door's WAF lets through to this path
         // (lib/recording/upload-contract.ts). The route handler builds the
         // multipart request to the API inside the cluster.
-        const response = await fetch(apiPath("/api/upload"), {
+        const response = await recordingFetch(apiPath("/api/upload"), {
           method: "POST",
           headers: rawUploadHeaders(
             file,

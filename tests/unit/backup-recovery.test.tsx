@@ -1,7 +1,17 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/indexeddb-backup", () => ({
+let mockJurisdiction: "IAC" | "ET" = "IAC";
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule(
+    () => mockJurisdiction
+  )
+);
+
+vi.mock("@/lib/indexeddb-backup", async (importOriginal) => ({
+  isBackupFor: (
+    (await importOriginal()) as typeof import("@/lib/indexeddb-backup")
+  ).isBackupFor,
   audioBackupDB: {
     getAllAudioBackups: vi.fn(),
     deleteAudioBackup: vi.fn(),
@@ -74,5 +84,52 @@ describe("BackupRecovery", () => {
     await waitFor(() =>
       expect(audioBackupDB.deleteAudioBackup).toHaveBeenCalledWith("b1")
     );
+  });
+});
+
+describe("BackupRecovery in each jurisdiction (DIAAT-334)", () => {
+  const recordedIn = (jurisdiction?: string) => ({
+    ...BACKUP,
+    id: `b-${jurisdiction ?? "before"}`,
+    fileName: `${jurisdiction ?? "before"}.webm`,
+    ...(jurisdiction && { jurisdiction }),
+  });
+
+  it("offers back only the jurisdiction's own recordings", async () => {
+    mockJurisdiction = "ET";
+    try {
+      vi.mocked(audioBackupDB.getAllAudioBackups).mockResolvedValue([
+        recordedIn("ET"),
+        recordedIn("IAC"),
+        recordedIn(),
+      ]);
+      render(<BackupRecovery onRetryUpload={vi.fn()} />);
+
+      // One of the three: the ET's own.
+      expect(await screen.findByText("1 recording waiting for upload")).toBeTruthy();
+    } finally {
+      mockJurisdiction = "IAC";
+    }
+  });
+
+  it("treats a recording from before jurisdictions as the IAC's", async () => {
+    vi.mocked(audioBackupDB.getAllAudioBackups).mockResolvedValue([recordedIn(), recordedIn("ET")]);
+    render(<BackupRecovery onRetryUpload={vi.fn()} />);
+
+    // One of the two: the one from before, not the ET's.
+    expect(await screen.findByText("1 recording waiting for upload")).toBeTruthy();
+  });
+});
+
+describe("which jurisdiction a backup belongs to (DIAAT-334)", async () => {
+  const { isBackupFor } = await vi.importActual<typeof import("@/lib/indexeddb-backup")>(
+    "@/lib/indexeddb-backup"
+  );
+
+  it("is the one it was recorded in, or the IAC from before jurisdictions", () => {
+    expect(isBackupFor({ ...BACKUP, jurisdiction: "ET" }, "ET")).toBe(true);
+    expect(isBackupFor({ ...BACKUP, jurisdiction: "ET" }, "IAC")).toBe(false);
+    expect(isBackupFor(BACKUP, "IAC")).toBe(true);
+    expect(isBackupFor(BACKUP, "ET")).toBe(false);
   });
 });

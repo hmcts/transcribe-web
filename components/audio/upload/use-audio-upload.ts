@@ -11,6 +11,16 @@ import {
   detectSupportedMimeType,
   getExtensionFromMimeType,
 } from "./upload-utils";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
+
+/** The API's own upload route (DIRECT_SDK_ACCESS off), not a storage SAS URL. */
+export function isApiProxyUpload(uploadUrl: string): boolean {
+  try {
+    return new URL(uploadUrl, window.location.href).pathname.endsWith("/api/upload-audio");
+  } catch {
+    return false;
+  }
+}
 
 interface UseAudioUploadOptions {
   setIsProcessingTranscription: (isProcessing: boolean) => void;
@@ -204,6 +214,14 @@ export default function useAudioUpload({
         if (authToken)
           xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
         xhr.setRequestHeader("x-ms-blob-type", "BlockBlob");
+        // DIAAT-334: the API's proxy upload is checked against the tab's
+        // jurisdiction. Not a direct upload to storage, which would refuse a header
+        // its CORS rules do not list.
+        if (isApiProxyUpload(uploadUrl)) {
+          for (const [name, value] of Object.entries(jurisdictionHeaders())) {
+            xhr.setRequestHeader(name, value);
+          }
+        }
         xhr.timeout = 300000; // 5 minute timeout
         xhr.send(blob);
       });
