@@ -56,6 +56,7 @@ interface BackendPhraseAlternatives {
 }
 
 interface BackendDialogueEntry {
+  id: string;
   speaker: string;
   text: string;
   start_time: number;
@@ -302,8 +303,8 @@ function toSegments(
   entries: BackendDialogueEntry[] | null
 ): TranscriptSegment[] | undefined {
   if (!entries || entries.length === 0) return undefined;
-  return entries.map((entry, index) => ({
-    id: `seg-${index}`,
+  return entries.map((entry) => ({
+    id: entry.id,
     // The backend already labels speakers (e.g. "Speaker 1") via
     // add_speaker_labels — prefixing again here produced "Speaker Speaker 1".
     speaker: entry.speaker,
@@ -538,12 +539,12 @@ export async function submitJob(
 
 export async function correctSegment(
   jobId: string,
-  index: number,
+  segmentId: string,
   correctedText: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -557,14 +558,14 @@ export async function correctSegment(
 
 export async function correctWordRange(
   jobId: string,
-  index: number,
+  segmentId: string,
   startWordIndex: number,
   endWordIndex: number,
   correctedText: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/words`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/words`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -582,11 +583,11 @@ export async function correctWordRange(
 
 export async function rollbackSegment(
   jobId: string,
-  index: number,
+  segmentId: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/rollback`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/rollback`,
     { method: "POST" },
     auth
   );
@@ -596,11 +597,11 @@ export async function rollbackSegment(
 
 export async function acceptSegment(
   jobId: string,
-  index: number,
+  segmentId: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/accept`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/accept`,
     { method: "POST" },
     auth
   );
@@ -610,13 +611,13 @@ export async function acceptSegment(
 
 export async function renameSpeaker(
   jobId: string,
-  index: number,
+  segmentId: string,
   speaker: string,
   applyToAll: boolean,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/speaker`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/speaker`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -630,11 +631,11 @@ export async function renameSpeaker(
 
 export async function mergeSegmentWithNext(
   jobId: string,
-  index: number,
+  segmentId: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/merge-next`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/merge-next`,
     { method: "POST" },
     auth
   );
@@ -644,12 +645,12 @@ export async function mergeSegmentWithNext(
 
 export async function rollbackToHistoryEntry(
   jobId: string,
-  index: number,
+  segmentId: string,
   historyIndex: number,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/history/${historyIndex}/rollback`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/history/${historyIndex}/rollback`,
     { method: "POST" },
     auth
   );

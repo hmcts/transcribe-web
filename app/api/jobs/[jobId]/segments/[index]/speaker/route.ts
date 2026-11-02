@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { BackendApiError, renameSpeaker } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+import { isSegmentId } from "@/lib/recording/segment-id";
 
 interface RouteContext {
   params: Promise<{ jobId: string; index: string }>;
@@ -8,12 +9,8 @@ interface RouteContext {
 
 export async function PATCH(request: NextRequest, { params }: RouteContext) {
   const { jobId, index } = await params;
-  const segmentIndex = Number(index);
-  if (!Number.isInteger(segmentIndex) || segmentIndex < 0) {
-    return NextResponse.json(
-      { error: "Invalid segment index" },
-      { status: 422 }
-    );
+  if (!isSegmentId(index)) {
+    return NextResponse.json({ error: "Invalid segment id" }, { status: 422 });
   }
 
   const auth = await getBackendAuthContext(request);
@@ -27,7 +24,7 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     }
     const job = await renameSpeaker(
       jobId,
-      segmentIndex,
+      index,
       speaker,
       applyToAll === true,
       auth

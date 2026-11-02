@@ -19,13 +19,15 @@ vi.mock("@/lib/recording/api-client", () => ({
 }));
 
 function makeRequest(body: unknown) {
-  return new NextRequest("http://localhost/api/jobs/job-1/segments/2/speaker", {
+  return new NextRequest(`http://localhost/api/jobs/job-1/segments/${SEGMENT_ID}/speaker`, {
     method: "PATCH",
     body: JSON.stringify(body),
   });
 }
 
-const context = (index = "2") => ({
+const SEGMENT_ID = "seg_00000000000000000000000000000002";
+
+const context = (index = SEGMENT_ID) => ({
   params: Promise.resolve({ jobId: "job-1", index }),
 });
 
@@ -49,7 +51,7 @@ describe("PATCH /api/jobs/[jobId]/segments/[index]/speaker", () => {
     expect(await response.json()).toEqual({ job: { id: "job-1" } });
     expect(mockRenameSpeaker).toHaveBeenCalledWith(
       "job-1",
-      2,
+      SEGMENT_ID,
       "Judge Smith",
       true,
       { bearerToken: null }
@@ -82,14 +84,14 @@ describe("PATCH /api/jobs/[jobId]/segments/[index]/speaker", () => {
     expect(mockRenameSpeaker).not.toHaveBeenCalled();
   });
 
-  it("rejects an invalid segment index with 422", async () => {
+  it.each(["2", "-1", "seg_xyz"])("rejects segment %s, which is not an id, with 422", async (segment) => {
     const { PATCH } = await import(
       "@/app/api/jobs/[jobId]/segments/[index]/speaker/route"
     );
 
     const response = await PATCH(
       makeRequest({ speaker: "Judge Smith" }),
-      context("-1")
+      context(segment)
     );
 
     expect(response.status).toBe(422);
