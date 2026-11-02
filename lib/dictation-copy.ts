@@ -51,6 +51,12 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
+/** Escape first, then turn line breaks into <br>: inside a <p>, raw line
+ * breaks collapse to spaces when pasted, so the judge's edits would be lost. */
+function escapeHtmlKeepingLineBreaks(text: string): string {
+  return escapeHtml(text).replace(/\r\n|\n|\r/g, "<br>");
+}
+
 /** The same, formatted, for pasting into a word processor: a paragraph per
  * utterance, then the notes as written (headings, lists, emphasis). */
 export function dictationHtml(
@@ -61,7 +67,7 @@ export function dictationHtml(
     transcript[section].map((entry) => entry.text.trim())
   )
     .filter(Boolean)
-    .map((text) => `<p>${escapeHtml(text)}</p>`)
+    .map((text) => `<p>${escapeHtmlKeepingLineBreaks(text)}</p>`)
     .join("");
   return notesText(notesHtml) ? `${dictated}${notesHtml}` : dictated;
 }
