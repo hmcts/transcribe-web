@@ -52,6 +52,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { useLegalWording } from "@/hooks/use-legal-wording";
 import type {
   AnonymityStatus,
@@ -592,6 +593,11 @@ function UsersPanel() {
   );
 }
 
+/** The same form values: what the editors compare to know what is unsaved. */
+function sameForm(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 function resolveItemTitle(content: DocumentContent, sel: Selection): string {
   if (sel.category === "hearing-types") {
     return content.hearing_types.find((h) => h.id === sel.id)?.title ?? sel.id;
@@ -706,10 +712,14 @@ function HearingTypeEditor({
   onSaved: (saved: HearingType) => Promise<void>;
   onDelete?: () => void;
 }) {
-  const [form, setForm] = useState<HearingType>(
-    item ?? { id: "", title: "", hearing_title: "", hearing_description: "" }
-  );
+  const blank = { id: "", title: "", hearing_title: "", hearing_description: "" };
+  const [form, setForm] = useState<HearingType>(item ?? blank);
   const [saving, setSaving] = useState(false);
+  // DIAAT-332: a switch reloads the tab, losing edits not saved, or a save under way.
+  useJurisdictionSwitchGuard({
+    busy: saving,
+    unsaved: !sameForm(form, item ?? blank),
+  });
 
   const set = (field: keyof HearingType, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -725,7 +735,8 @@ function HearingTypeEditor({
         await createHearingType(form);
         toast.success(`Created "${form.title}"`);
       } else {
-        await updateHearingType(form.id, form);
+        // The API's (trimmed) version is what is saved, so nothing shows as unsaved.
+        setForm(await updateHearingType(form.id, form));
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
@@ -798,11 +809,14 @@ function LegalFrameworkEditor({
   onSaved: (saved: LegalFramework) => Promise<void>;
   onDelete?: () => void;
 }) {
-  const [form, setForm] = useState<LegalFramework>(
-    item ?? { id: "", title: "", rank: 1, content: "", issues: [] }
-  );
+  const blank = { id: "", title: "", rank: 1, content: "", issues: [] };
+  const [form, setForm] = useState<LegalFramework>(item ?? blank);
   const [saving, setSaving] = useState(false);
   const [newIssue, setNewIssue] = useState("");
+  useJurisdictionSwitchGuard({
+    busy: saving,
+    unsaved: !sameForm(form, item ?? blank) || newIssue.trim() !== "",
+  });
 
   const set = <K extends keyof LegalFramework>(
     field: K,
@@ -840,7 +854,7 @@ function LegalFrameworkEditor({
         await createLegalFramework(form);
         toast.success(`Created "${form.title}"`);
       } else {
-        await updateLegalFramework(form.id, form);
+        setForm(await updateLegalFramework(form.id, form));
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
@@ -962,6 +976,7 @@ function AnonymityEditor({
 }) {
   const [form, setForm] = useState<AnonymityStatus>(item);
   const [saving, setSaving] = useState(false);
+  useJurisdictionSwitchGuard({ busy: saving, unsaved: !sameForm(form, item) });
 
   const set = (field: keyof AnonymityStatus, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -969,7 +984,7 @@ function AnonymityEditor({
   async function handleSave() {
     setSaving(true);
     try {
-      await updateAnonymityStatus(form.id, form);
+      setForm(await updateAnonymityStatus(form.id, form));
       toast.success(`Saved "${form.title}"`);
       await onSaved();
     } catch (err: unknown) {
@@ -1114,6 +1129,7 @@ function DeleteConfirmDialog({
   onConfirm: () => Promise<void>;
 }) {
   const [deleting, setDeleting] = useState(false);
+  useJurisdictionSwitchGuard({ busy: deleting, unsaved: false });
 
   async function handleConfirm() {
     setDeleting(true);

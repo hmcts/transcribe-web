@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminPage from "@/app/admin/page";
 import { apiClient } from "@/lib/api-client";
 import { jurisdictionContextValue, NEUTRAL } from "@/lib/jurisdiction-context";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import { DT, IAC } from "../jurisdiction-helpers";
 
 // DIAAT-342: the admin area edits the legal wording of the jurisdiction the tab
@@ -310,5 +311,130 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
 
     expect(await screen.findByRole("alert")).toBeTruthy();
     expect(await screen.findByRole("tab", { name: /Users/ })).toBeTruthy();
+  });
+});
+
+// DIAAT-332: switching jurisdiction reloads the tab, so it waits for edits to be
+// saved or discarded, and for a save to finish.
+describe("Admin area and switching jurisdiction", () => {
+  beforeEach(() => {
+    mockContext = asDt();
+    request.mockReset();
+    vi.mocked(getAdminRole).mockResolvedValue(null);
+  });
+
+  it("allows a switch while nothing is edited", async () => {
+    respondWith(wording());
+    render(<AdminPage />);
+    await screen.findByDisplayValue("Hearing");
+
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+  });
+
+  it("stops a switch while an edit is unsaved, and allows it once the edit is undone", async () => {
+    respondWith(wording());
+    const user = userEvent.setup();
+    render(<AdminPage />);
+
+    const title = await screen.findByDisplayValue("Hearing");
+    await user.type(title, "!");
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "unsaved_changes",
+    });
+
+    await user.type(title, "{Backspace}");
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+  });
+
+  it("stops a switch for a legal framework issue typed but not yet added", async () => {
+    respondWith(wording());
+    const user = userEvent.setup();
+    render(<AdminPage />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Credibility" })
+    );
+    await user.type(
+      await screen.findByLabelText("New issue"),
+      "Is it credible?"
+    );
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "unsaved_changes",
+    });
+  });
+
+  it("stops a switch while a save is under way, and allows it once saved", async () => {
+    respondWith(wording());
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    const title = await screen.findByDisplayValue("Hearing");
+    await user.type(title, "!");
+
+    let finishSave: (value: unknown) => void = () => undefined;
+    let stored = wording();
+    request.mockImplementation(
+      async (_endpoint: string, options?: RequestInit) => {
+        if (options?.method !== "PUT") return { data: stored, status: 200 };
+        const sent = JSON.parse(String(options.body));
+        await new Promise((resolve) => {
+          finishSave = resolve;
+        });
+        stored = { ...stored, hearing_types: [sent] };
+        return { data: sent, status: 200 };
+      }
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+    finishSave(undefined);
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    // Once the saved wording has been reloaded.
+    await waitFor(() =>
+      expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined()
+    );
+  });
+
+  it("stops a switch for an unsaved anonymity edit", async () => {
+    respondWith(
+      wording({
+        anonymity: {
+          statuses: [
+            {
+              id: "granted",
+              title: "Granted",
+              content: "c",
+              identifier: "i",
+              header: "Header",
+              order_header: "OH",
+              order_text: "OT",
+            },
+          ],
+        },
+      })
+    );
+    const user = userEvent.setup();
+    render(<AdminPage />);
+
+    await user.click(await screen.findByRole("button", { name: "Granted" }));
+    await user.type(await screen.findByDisplayValue("Header"), "!");
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "unsaved_changes",
+    });
+  });
+
+  it("stops caring once the admin area is left", async () => {
+    respondWith(wording());
+    const user = userEvent.setup();
+    const { unmount } = render(<AdminPage />);
+    await user.type(await screen.findByDisplayValue("Hearing"), "!");
+    await expect(prepareForJurisdictionSwitch()).rejects.toBeDefined();
+
+    unmount();
+
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
   });
 });
