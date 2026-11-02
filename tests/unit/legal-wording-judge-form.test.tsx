@@ -208,17 +208,84 @@ describe("The judge's hearing form and legal wording (DIAAT-342)", () => {
     expect(submittedFormData().legalIssues).toEqual(["credibility"]);
   });
 
-  it("ignores content fetched for another jurisdiction", async () => {
+  it("does not submit while another jurisdiction's wording is still loading", async () => {
+    mockFetchContent.mockReturnValue(new Promise(() => undefined)); // never loads
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+    await waitFor(() => expect(mockFetchContent).toHaveBeenCalled());
+
+    await submitWith(FORM);
+
+    expect(
+      await screen.findByText(
+        "Legal wording for Decision Tribunal hasn't loaded yet, reload and try again."
+      )
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not submit when its wording failed to load, and submits once a retry loads it", async () => {
+    mockFetchContent.mockRejectedValueOnce(new Error("down"));
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+    await waitFor(() => expect(mockFetchContent).toHaveBeenCalledTimes(1));
+    await act(async () => undefined);
+
+    await submitWith(FORM);
+    expect(
+      await screen.findByText(
+        "Legal wording for Decision Tribunal could not be loaded, reload and try again."
+      )
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // The retry path: the toast's action fetches the wording again.
+    mockFetchContent.mockResolvedValue(content(DT, false));
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(lastFormProps.current.documentContent).toBeDefined()
+    );
+
+    await submitWith(FORM);
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submittedFormData().legalIssues).toEqual([]);
+  });
+
+  it("does not use content fetched for another jurisdiction, and does not submit on it", async () => {
     // e.g. the response to a request made before the tab moved on.
     await renderPage(content({ code: "IAC", name: "IAC" }, true));
     await act(async () => undefined);
 
     expect(lastFormProps.current.documentContent).toBeUndefined();
-    // Not the IAC, so no IAC list either: nothing to ask, nothing required.
+    // Not the IAC, so no IAC list either, and no guessing about legal issues.
     expect(lastFormProps.current.legalIssuesFallback).toBe(false);
     await submitWith(FORM);
+    await screen.findByText(/hasn't loaded yet/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lets the IAC submit as before while its wording loads, from its shipped list", async () => {
+    mockJurisdiction = "IAC";
+    mockFetchContent.mockReturnValue(new Promise(() => undefined));
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+
+    await submitWith({ ...FORM, legalIssues: ["credibility"] });
+
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    expect(submittedFormData().legalIssues).toEqual([]);
+    expect(submittedFormData().legalIssues).toEqual(["credibility"]);
   });
 
   it("takes content from an older API, which does not say, as the IAC's and with legal wording", async () => {

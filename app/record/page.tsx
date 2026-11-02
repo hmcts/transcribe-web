@@ -120,6 +120,7 @@ export default function RecordPage() {
   // no section tabs, no submission.
   const { current, wording, hasDecisionTemplate } = useJurisdiction();
   const jurisdictionCode = current?.code;
+  const jurisdictionName = current?.name;
   const defaultNotes = hasDecisionTemplate
     ? DEFAULT_NOTES_EDITOR_CONTENT
     : GENERAL_NOTES_EDITOR_CONTENT;
@@ -155,6 +156,12 @@ export default function RecordPage() {
     documentContent,
     legalIssuesFallback
   );
+  // Another jurisdiction's wording is not guessed: until its own has loaded (or
+  // when it could not), a hearing is not submitted, since whether it has legal
+  // issues to ask for is not yet known.
+  const [contentFailed, setContentFailed] = useState(false);
+  const legalWordingPending =
+    hasDecisionTemplate && !legalIssuesFallback && !documentContent;
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
   const [speechDemoKey, setSpeechDemoKey] = useState(0);
@@ -308,26 +315,30 @@ export default function RecordPage() {
     previousLayoutModeRef.current = layoutMode;
   }, [layoutMode, hasDecisionTemplate]);
 
-  useEffect(() => {
+  const contentRequest = useRef(0);
+  const loadContent = useCallback(async () => {
     // The hearing form's options: the decision template's alone.
     if (!hasDecisionTemplate) return;
-    let isCancelled = false;
-
-    void (async () => {
-      try {
-        const content = await fetchUserDocumentContent();
-        if (!isCancelled) {
-          setFetched({ code: jurisdictionCode, content });
-        }
-      } catch (error) {
-        console.error("Failed to load document content", error);
+    const request = ++contentRequest.current;
+    setContentFailed(false);
+    try {
+      const content = await fetchUserDocumentContent();
+      if (request === contentRequest.current) {
+        setFetched({ code: jurisdictionCode, content });
       }
-    })();
-
-    return () => {
-      isCancelled = true;
-    };
+    } catch (error) {
+      console.error("Failed to load document content", error);
+      if (request === contentRequest.current) setContentFailed(true);
+    }
   }, [hasDecisionTemplate, jurisdictionCode]);
+
+  useEffect(() => {
+    void loadContent();
+    return () => {
+      // An answer still on its way is for a jurisdiction (or page) left behind.
+      contentRequest.current += 1;
+    };
+  }, [loadContent]);
 
   // Keep the Easy Auth session alive during idle/paused recording — the token is only
   // refreshed on API calls, so a long pause would otherwise expire the 1-hour Azure AD token.
@@ -635,6 +646,15 @@ export default function RecordPage() {
   }, [sectionedTranscript, editorContent]);
 
   const handleSubmitHearing = useCallback(async () => {
+    if (legalWordingPending) {
+      toast.error(
+        contentFailed
+          ? `Legal wording for ${jurisdictionName ?? "this jurisdiction"} could not be loaded, reload and try again.`
+          : `Legal wording for ${jurisdictionName ?? "this jurisdiction"} hasn't loaded yet, reload and try again.`,
+        { action: { label: "Try again", onClick: () => void loadContent() } }
+      );
+      return;
+    }
     const validation = getDictationFormSchema(asksLegalIssues).safeParse(formData);
     if (!validation.success) {
       const fieldErrors: Partial<Record<keyof DictationFormValues, string>> =
@@ -765,6 +785,10 @@ export default function RecordPage() {
     mode,
     stopDraftSaves,
     asksLegalIssues,
+    legalWordingPending,
+    contentFailed,
+    jurisdictionName,
+    loadContent,
   ]);
 
   // Only "healthy" counts as recording. `isRecordingActive` is intent; a
