@@ -1106,6 +1106,8 @@ export function TranscriptSegment({
     setAccepting(true);
     try {
       await onAccept?.();
+    } catch {
+      // The page reports the failure.
     } finally {
       setAccepting(false);
     }
@@ -1121,6 +1123,8 @@ export function TranscriptSegment({
     try {
       await onCorrect?.(trimmed);
       setEditing(false);
+    } catch {
+      // The page reports the failure; the editor stays open with the draft.
     } finally {
       setSaving(false);
     }

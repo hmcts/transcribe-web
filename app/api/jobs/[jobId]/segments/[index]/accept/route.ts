@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { acceptSegment, BackendApiError } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+import { isSegmentId } from "@/lib/recording/segment-id";
 
 interface RouteContext {
   params: Promise<{ jobId: string; index: string }>;
@@ -8,17 +9,13 @@ interface RouteContext {
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
   const { jobId, index } = await params;
-  const segmentIndex = Number(index);
-  if (!Number.isInteger(segmentIndex) || segmentIndex < 0) {
-    return NextResponse.json(
-      { error: "Invalid segment index" },
-      { status: 422 }
-    );
+  if (!isSegmentId(index)) {
+    return NextResponse.json({ error: "Invalid segment id" }, { status: 422 });
   }
 
   const auth = await getBackendAuthContext(request);
   try {
-    const job = await acceptSegment(jobId, segmentIndex, auth);
+    const job = await acceptSegment(jobId, index, auth);
     return NextResponse.json({ job });
   } catch (err) {
     if (err instanceof BackendApiError) {

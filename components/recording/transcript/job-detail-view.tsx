@@ -13,22 +13,16 @@ import { TranscriptSegment } from "@/components/recording/transcript/transcript-
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { apiPath } from "@/lib/recording/base-path";
 import { RECORDING_HOME } from "@/lib/recording/routes";
-import type {
-  TranscriptionJob,
-  TranscriptSegment as TranscriptSegmentType,
-} from "@/lib/recording/types";
+import type { TranscriptionJob } from "@/lib/recording/types";
 import { rawUploadHeaders } from "@/lib/recording/upload-contract";
 import { cn } from "@/lib/recording/utils";
 import { recordingFetch, withTabJurisdiction } from "@/lib/recording/browser-fetch";
 
 const POLL_INTERVAL_MS = 5000;
 
-// Segment ids are array positions, which a combine shifts. Timing and the original
-// (never corrected) text stay the same for every section except the combined one,
-// whose text always grows.
-function segmentKey(segment: TranscriptSegmentType): string {
-  return `${segment.startTime}:${segment.duration}:${segment.text.length}`;
-}
+const SECTION_GONE =
+  "This section has changed since the transcript was loaded: it may have been combined with another, for example in another tab. Reload the page to see the latest transcript.";
+const ACTION_FAILED = "That change could not be saved. Try again.";
 
 // Persists the reader's audio/transcript sync-highlight preference (DIAAT-246)
 // across visits and page reloads.
@@ -168,148 +162,55 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     }
   };
 
-  const correctSegment = async (index: number, correctedText: string) => {
-    const response = await recordingFetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}`),
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ correctedText }),
-      }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to save correction: ${response.status}`);
-    }
-    const body = await response.json();
-    applyJob(body.job as TranscriptionJob);
-  };
-
-  const correctWordRange = async (
-    index: number,
-    startWordIndex: number,
-    endWordIndex: number,
-    correctedText: string
-  ) => {
-    const response = await recordingFetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}/words`),
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startWordIndex, endWordIndex, correctedText }),
-      }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to save correction: ${response.status}`);
-    }
-    const body = await response.json();
-    applyJob(body.job as TranscriptionJob);
-  };
-
-  const rollbackSegment = async (index: number) => {
-    const response = await recordingFetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}/rollback`),
-      { method: "POST" }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to roll back segment: ${response.status}`);
-    }
-    const body = await response.json();
-    applyJob(body.job as TranscriptionJob);
-  };
-
-  const acceptSegment = async (index: number) => {
-    const response = await recordingFetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}/accept`),
-      { method: "POST" }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to accept segment: ${response.status}`);
-    }
-    const body = await response.json();
-    applyJob(body.job as TranscriptionJob);
-  };
-
-  const renameSpeaker = async (
-    index: number,
-    speaker: string,
-    applyToAll: boolean
-  ) => {
-    const response = await recordingFetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}/speaker`),
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ speaker, applyToAll }),
-      }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to rename speaker: ${response.status}`);
-    }
-    const body = await response.json();
-    applyJob(body.job as TranscriptionJob);
-  };
-
   const [combining, setCombining] = useState(false);
-  const [combineFailed, setCombineFailed] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const requestQueue = useRef<Promise<unknown>>(Promise.resolve());
 
-  // A combine renumbers the sections after it, so requests that address a
-  // section by index run one at a time, each finding its section when its turn
-  // comes.
+  // One request at a time, so a slower response can't put back an older copy
+  // of the transcript.
   const enqueue = <T,>(request: () => Promise<T>): Promise<T> => {
     const run = requestQueue.current.then(request);
     requestQueue.current = run.catch(() => undefined);
     return run;
   };
 
-  const atIndexOf = (key: string, request: (index: number) => Promise<void>) =>
-    enqueue(() => {
-      const index =
-        jobRef.current.segments?.findIndex((s) => segmentKey(s) === key) ?? -1;
-      if (index < 0) throw new Error("Section no longer exists");
-      return request(index);
-    });
-
-  const combine = (key: string, direction: "previous" | "next") =>
+  const segmentAction = (segmentId: string, path: string, init: RequestInit) =>
     enqueue(async () => {
-      const segments = jobRef.current.segments ?? [];
-      const found = segments.findIndex((s) => segmentKey(s) === key);
-      const index = direction === "previous" ? found - 1 : found;
-      if (found < 0 || index < 0 || index >= segments.length - 1) return;
-      setCombining(true);
-      setCombineFailed(false);
+      setActionError(null);
       try {
         const response = await recordingFetch(
-          apiPath(`/api/jobs/${jobId}/segments/${index}/merge-next`),
-          { method: "POST" }
+          apiPath(
+            `/api/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}${path}`
+          ),
+          init
         );
+        if (response.status === 409) setActionError(SECTION_GONE);
         if (!response.ok) {
-          throw new Error(`Failed to combine segments: ${response.status}`);
+          throw new Error(`Segment request failed: ${response.status}`);
         }
         const body = await response.json();
         applyJob(body.job as TranscriptionJob);
-      } catch {
-        setCombineFailed(true);
-      } finally {
-        setCombining(false);
+      } catch (err) {
+        setActionError((current) => current ?? ACTION_FAILED);
+        throw err;
       }
     });
 
-  const rollbackToHistoryEntry = async (
-    index: number,
-    historyIndex: number
-  ) => {
-    const response = await recordingFetch(
-      apiPath(
-        `/api/jobs/${jobId}/segments/${index}/history/${historyIndex}/rollback`
-      ),
-      { method: "POST" }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to roll back: ${response.status}`);
-    }
-    const body = await response.json();
-    applyJob(body.job as TranscriptionJob);
+  const patchJson = (body: unknown): RequestInit => ({
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const combine = (segmentId: string, nextSegmentId: string) => {
+    setCombining(true);
+    return segmentAction(segmentId, "/merge-next", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nextSegmentId }),
+    })
+      .catch(() => undefined)
+      .finally(() => setCombining(false));
   };
 
   // DIAAT-332: a switch reloads the tab, which would cancel the upload.
@@ -467,44 +368,61 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
                   and confirm or edit.
                 </p>
               )}
-              {combineFailed && (
+              {actionError && (
                 <p role="alert" className="text-sm text-destructive mb-3">
-                  These sections could not be combined. Try again.
+                  {actionError}
                 </p>
               )}
               <div className="border border-border rounded-lg divide-y divide-border">
                 {job.segments.map((segment, index, segments) => {
-                  const key = segmentKey(segment);
                   const isActive =
                     playing &&
                     position >= segment.startTime &&
                     position < segment.startTime + segment.duration;
                   return (
                     <TranscriptSegment
-                      key={key}
+                      key={segment.id}
                       segment={segment}
                       onSeek={audioAvailable ? seekTo : undefined}
                       onCorrect={(text) =>
-                        atIndexOf(key, (i) => correctSegment(i, text))
+                        segmentAction(
+                          segment.id,
+                          "",
+                          patchJson({ correctedText: text })
+                        )
                       }
                       onCorrectRange={(start, end, text) =>
-                        atIndexOf(key, (i) =>
-                          correctWordRange(i, start, end, text)
+                        segmentAction(
+                          segment.id,
+                          "/words",
+                          patchJson({
+                            startWordIndex: start,
+                            endWordIndex: end,
+                            correctedText: text,
+                          })
                         )
                       }
-                      onRollback={() => atIndexOf(key, rollbackSegment)}
+                      onRollback={() =>
+                        segmentAction(segment.id, "/rollback", { method: "POST" })
+                      }
                       onRollbackToHistory={(historyIndex) =>
-                        atIndexOf(key, (i) =>
-                          rollbackToHistoryEntry(i, historyIndex)
+                        segmentAction(
+                          segment.id,
+                          `/history/${historyIndex}/rollback`,
+                          { method: "POST" }
                         )
                       }
-                      onAccept={() => atIndexOf(key, acceptSegment)}
+                      onAccept={() =>
+                        segmentAction(segment.id, "/accept", { method: "POST" })
+                      }
                       onCombinePrevious={
-                        index > 0 ? () => combine(key, "previous") : undefined
+                        index > 0
+                          ? () => combine(segments[index - 1].id, segment.id)
+                          : undefined
                       }
                       onCombineNext={
                         index < segments.length - 1
-                          ? () => combine(key, "next")
+                          ? () => combine(segment.id, segments[index + 1].id)
                           : undefined
                       }
                       combinePending={combining}
@@ -514,8 +432,10 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
                           item.speaker === segment.speaker
                       )}
                       onRenameSpeaker={(speaker, applyToAll) =>
-                        atIndexOf(key, (i) =>
-                          renameSpeaker(i, speaker, applyToAll)
+                        segmentAction(
+                          segment.id,
+                          "/speaker",
+                          patchJson({ speaker, applyToAll })
                         )
                       }
                       isActive={isActive}

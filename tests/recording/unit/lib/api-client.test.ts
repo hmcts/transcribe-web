@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   acceptSegment,
+  correctSegment,
+  correctWordRange,
   colorForSpeaker,
   deleteJob,
   getJob,
@@ -8,6 +10,8 @@ import {
   listJobs,
   mergeSegmentWithNext,
   renameSpeaker,
+  rollbackSegment,
+  rollbackToHistoryEntry,
   submitJob,
   uploadAndSubmit,
   uploadAudio,
@@ -32,6 +36,8 @@ function mockFetchOnce(
   return fetchMock;
 }
 
+const SEGMENT_ID = "seg_00000000000000000000000000000000";
+
 const BACKEND_JOB = {
   job_id: "11111111-1111-1111-1111-111111111111",
   status: "succeeded",
@@ -41,12 +47,14 @@ const BACKEND_JOB = {
     // The backend already labels speakers (e.g. "Speaker 0") via
     // add_speaker_labels before this ever reaches the frontend.
     {
+      id: "seg_00000000000000000000000000000000",
       speaker: "Speaker 0",
       text: "Good morning.",
       start_time: 0,
       end_time: 2.5,
     },
     {
+      id: "seg_00000000000000000000000000000001",
       speaker: "Speaker 1",
       text: "Good morning, Judge.",
       start_time: 2.5,
@@ -64,6 +72,53 @@ const BACKEND_JOB = {
   model_identifier: "https://eastus.example.com/models/base/xyz",
   model_display_name: "20240614 Base — en-GB",
 };
+
+describe("segment ids", () => {
+  it("keeps the API's segment ids rather than numbering segments by position", async () => {
+    mockFetchOnce(BACKEND_JOB);
+    const job = await getJob(BACKEND_JOB.job_id, null);
+    expect(job?.segments?.map((s) => s.id)).toEqual(
+      BACKEND_JOB.dialogue_entries.map((e) => e.id)
+    );
+  });
+});
+
+describe("segment calls address the segment by id", () => {
+  it.each([
+    [
+      "correctSegment",
+      () => correctSegment(BACKEND_JOB.job_id, SEGMENT_ID, "Hi.", null),
+      "",
+      "PATCH",
+    ],
+    [
+      "correctWordRange",
+      () => correctWordRange(BACKEND_JOB.job_id, SEGMENT_ID, 0, 1, "Hi", null),
+      "/words",
+      "PATCH",
+    ],
+    [
+      "rollbackSegment",
+      () => rollbackSegment(BACKEND_JOB.job_id, SEGMENT_ID, null),
+      "/rollback",
+      "POST",
+    ],
+    [
+      "rollbackToHistoryEntry",
+      () => rollbackToHistoryEntry(BACKEND_JOB.job_id, SEGMENT_ID, 2, null),
+      "/history/2/rollback",
+      "POST",
+    ],
+  ])("%s", async (_name, call, path, method) => {
+    const fetchMock = mockFetchOnce(BACKEND_JOB);
+    await call();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain(
+      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/${SEGMENT_ID}${path}`
+    );
+    expect(init.method).toBe(method);
+  });
+});
 
 describe("listJobs", () => {
   it("maps backend jobs to frontend TranscriptionJob shape", async () => {
@@ -416,11 +471,11 @@ describe("acceptSegment", () => {
       ],
     });
 
-    const job = await acceptSegment(BACKEND_JOB.job_id, 0, null);
+    const job = await acceptSegment(BACKEND_JOB.job_id, SEGMENT_ID, null);
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(
-      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/0/accept`
+      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/${SEGMENT_ID}/accept`
     );
     expect(init.method).toBe("POST");
     // The accepted flag and the accept_all history entry survive the mapping
@@ -431,7 +486,7 @@ describe("acceptSegment", () => {
 
   it("defaults accepted to false when the backend omits it", async () => {
     mockFetchOnce(BACKEND_JOB);
-    const job = await acceptSegment(BACKEND_JOB.job_id, 0, null);
+    const job = await acceptSegment(BACKEND_JOB.job_id, SEGMENT_ID, null);
     expect(job.segments?.[0].accepted).toBe(false);
   });
 });
@@ -452,7 +507,7 @@ describe("renameSpeaker", () => {
 
     const job = await renameSpeaker(
       BACKEND_JOB.job_id,
-      0,
+      SEGMENT_ID,
       "Judge Smith",
       true,
       null
@@ -460,7 +515,7 @@ describe("renameSpeaker", () => {
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(
-      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/0/speaker`
+      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/${SEGMENT_ID}/speaker`
     );
     expect(init.method).toBe("PATCH");
     expect(JSON.parse(init.body)).toEqual({
@@ -487,13 +542,19 @@ describe("mergeSegmentWithNext", () => {
       ],
     });
 
-    const job = await mergeSegmentWithNext(BACKEND_JOB.job_id, 0, null);
+    const job = await mergeSegmentWithNext(
+      BACKEND_JOB.job_id,
+      SEGMENT_ID,
+      "seg_00000000000000000000000000000001",
+      null
+    );
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(
-      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/0/merge-next`
+      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/${SEGMENT_ID}/merge-next`
     );
     expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ next_segment_id: "seg_00000000000000000000000000000001" });
     expect(job.segments).toHaveLength(1);
     expect(job.segments?.[0].text).toBe("Good morning. Please sit.");
     expect(job.segments?.[0].duration).toBe(6);
