@@ -5,6 +5,7 @@
 // place.
 export const DICTATION_BASE_PATH = "/record";
 export const DICTATION_HREF = `${DICTATION_BASE_PATH}?mode=mic`;
+export const SPEECH_DEMO_PATH = "/speech-demo";
 export const HEARING_RECORDINGS_HREF = "/recording";
 
 // Segment-aware prefix match: "/record" must not match "/recording".

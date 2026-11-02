@@ -1,4 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { isDictationEnabled } from "@/lib/environment";
+import {
+  DICTATION_BASE_PATH,
+  isPathActive,
+  SPEECH_DEMO_PATH,
+} from "@/lib/navigation";
 
 /**
  * Next.js 16 proxy — runs on every non-static request except the recording
@@ -9,6 +15,7 @@ import { type NextRequest, NextResponse } from "next/server";
  *  1. Generate a per-response CSP nonce and forward it to Server Components via
  *     the x-nonce request header (used for the next-themes inline script).
  *  2. Send anyone without a session to the login (/auth/login).
+ *  3. Send Dictation pages home when the feature is switched off (DIAAT-366).
  *
  * The session cookie's presence is only a routing hint. What protects data is
  * the API: every backend call carries the session's bearer token (Caddy's
@@ -117,6 +124,15 @@ export function proxy(request: NextRequest) {
       );
       return NextResponse.redirect(loginUrl);
     }
+  }
+
+  // ── 3. Dictation feature flag ─────────────────────────────────────────────
+  if (
+    !isDictationEnabled() &&
+    (isPathActive(pathname, DICTATION_BASE_PATH) ||
+      isPathActive(pathname, SPEECH_DEMO_PATH))
+  ) {
+    return NextResponse.redirect(new URL("/", request.url));
   }
 
   const response = NextResponse.next({
