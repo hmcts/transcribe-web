@@ -23,7 +23,10 @@ const NEXT_ID = "seg_00000000000000000000000000000003";
 function makeRequest(body: unknown = { nextSegmentId: NEXT_ID }) {
   return new NextRequest(
     "http://localhost/api/jobs/job-1/segments/seg_00000000000000000000000000000002/merge-next",
-    { method: "POST", body: JSON.stringify(body) }
+    {
+      method: "POST",
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    }
   );
 }
 
@@ -61,8 +64,8 @@ describe("POST /api/jobs/[jobId]/segments/[index]/merge-next", () => {
     expect(mockMergeSegmentWithNext).not.toHaveBeenCalled();
   });
 
-  it.each([{}, { nextSegmentId: "2" }])(
-    "rejects a missing or invalid next segment id with 422",
+  it.each([{}, { nextSegmentId: "2" }, null, "not json"])(
+    "rejects a missing, invalid or malformed next segment id (%j) with 422",
     async (body) => {
       mockMergeSegmentWithNext.mockClear();
       const { POST } = await import(
