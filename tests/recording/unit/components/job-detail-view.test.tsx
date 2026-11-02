@@ -532,4 +532,62 @@ describe("JobDetailView combining segments", () => {
       `/api/jobs/${job.id}/segments/0/merge-next`
     );
   });
+  it("closes an open editor on a section that absorbs an overlapping one", async () => {
+    const overlapping = makeJob({
+      segments: [
+        { ...segment("seg-0", "Good", 0), duration: 5 },
+        { ...segment("seg-1", "morning.", 2), duration: 1 },
+      ],
+    });
+    const merged = makeJob({
+      segments: [{ ...segment("seg-0", "Good morning.", 0), duration: 5 }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse({ job: merged })));
+    render(<JobDetailView jobId={overlapping.id} initialJob={overlapping} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Edit segment text"]'
+      ) as HTMLElement
+    );
+    expect(screen.getByRole("textbox")).toBeDefined();
+    await userEvent.click(
+      document.querySelector(
+        '#seg-1 [aria-label="Combine with previous"]'
+      ) as HTMLElement
+    );
+
+    expect(await screen.findByText("Good morning.")).toBeDefined();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("holds a baseline upload until a pending combine has finished", async () => {
+    let finishCombine: (value: unknown) => void = () => undefined;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishCombine = resolve;
+          })
+      )
+      .mockResolvedValue(okResponse({ job }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with next"]'
+      ) as HTMLElement
+    );
+    await userEvent.upload(
+      screen.getByLabelText(/baseline transcript file input/i),
+      new File(["Judge: Good morning."], "day 2.txt", { type: "text/plain" })
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    finishCombine(okResponse({ job }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1][0]).toBe(`/api/jobs/${job.id}/baseline`);
+  });
 });

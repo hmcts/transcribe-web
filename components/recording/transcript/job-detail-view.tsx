@@ -23,10 +23,11 @@ import { recordingFetch, withTabJurisdiction } from "@/lib/recording/browser-fet
 
 const POLL_INTERVAL_MS = 5000;
 
-// Segment ids are array positions, which a combine shifts. Start and length stay
-// the same for every section except the combined one.
+// Segment ids are array positions, which a combine shifts. Timing and the original
+// (never corrected) text stay the same for every section except the combined one,
+// whose text always grows.
 function segmentKey(segment: TranscriptSegmentType): string {
-  return `${segment.startTime}:${segment.duration}`;
+  return `${segment.startTime}:${segment.duration}:${segment.text.length}`;
 }
 
 // Persists the reader's audio/transcript sync-highlight preference (DIAAT-246)
@@ -318,7 +319,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   const uploadBaseline = async (file: File) => {
     setUploadingBaseline(true);
     try {
-      await sendBaseline(file);
+      await enqueue(() => sendBaseline(file));
     } finally {
       setUploadingBaseline(false);
     }
