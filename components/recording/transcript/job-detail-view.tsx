@@ -215,6 +215,26 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     setJob(body.job as TranscriptionJob);
   };
 
+  const renameSpeaker = async (
+    index: number,
+    speaker: string,
+    applyToAll: boolean
+  ) => {
+    const response = await recordingFetch(
+      apiPath(`/api/jobs/${jobId}/segments/${index}/speaker`),
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ speaker, applyToAll }),
+      }
+    );
+    if (!response.ok) {
+      throw new Error(`Failed to rename speaker: ${response.status}`);
+    }
+    const body = await response.json();
+    setJob(body.job as TranscriptionJob);
+  };
+
   const rollbackToHistoryEntry = async (
     index: number,
     historyIndex: number
@@ -407,6 +427,9 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
                         rollbackToHistoryEntry(index, historyIndex)
                       }
                       onAccept={() => acceptSegment(index)}
+                      onRenameSpeaker={(speaker, applyToAll) =>
+                        renameSpeaker(index, speaker, applyToAll)
+                      }
                       isActive={isActive}
                       getCurrentTime={getCurrentTime}
                       syncHighlight={syncHighlight}

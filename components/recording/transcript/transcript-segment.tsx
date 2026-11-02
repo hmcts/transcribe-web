@@ -6,9 +6,10 @@ import {
   History,
   Pencil,
   RotateCcw,
+  UserPen,
   X,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { LowConfidencePopup } from "@/components/recording/transcript/low-confidence-popup";
 import { LowConfidenceResolveMenu } from "@/components/recording/transcript/low-confidence-resolve-menu";
 import { Button } from "@/components/recording/ui/button";
@@ -801,6 +802,84 @@ function HistoryPanel({
   );
 }
 
+interface SpeakerRenameFormProps {
+  inputId: string;
+  speaker: string;
+  value: string;
+  onChange: (value: string) => void;
+  onReplace: (applyToAll: boolean) => void;
+  onCancel: () => void;
+  error: string | null;
+  saving: boolean;
+}
+
+function SpeakerRenameForm({
+  inputId,
+  speaker,
+  value,
+  onChange,
+  onReplace,
+  onCancel,
+  error,
+  saving,
+}: SpeakerRenameFormProps) {
+  const errorId = `${inputId}-error`;
+  return (
+    <fieldset
+      aria-label={`Rename ${speaker}`}
+      onKeyDown={(e) => {
+        if (saving) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      className="mb-2 flex flex-wrap items-center gap-2"
+    >
+      <label htmlFor={inputId} className="sr-only">
+        New name for {speaker}
+      </label>
+      <input
+        id={inputId}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        readOnly={saving}
+        maxLength={200}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className="w-48 rounded border border-primary px-1 py-0.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+        // biome-ignore lint/a11y/noAutofocus: opening the editor is an explicit user action
+        autoFocus
+      />
+      <Button size="sm" onClick={() => onReplace(false)} disabled={saving}>
+        Replace one
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => onReplace(true)}
+        disabled={saving}
+        title={`Rename every section spoken by ${speaker}`}
+      >
+        Replace all
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
+        <X className="size-3.5" />
+        Cancel
+      </Button>
+      {error && (
+        <p
+          id={errorId}
+          role="alert"
+          className="w-full text-xs text-destructive"
+        >
+          {error}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 interface TranscriptSegmentProps {
   segment: TranscriptSegmentType;
   onSeek?: (time: number) => void;
@@ -815,6 +894,10 @@ interface TranscriptSegmentProps {
   // Marks the segment reviewed/accepted as-is (clears its low-confidence
   // highlighting) without editing the text. Distinct from onCorrect.
   onAccept?: () => Promise<void> | void;
+  onRenameSpeaker?: (
+    speaker: string,
+    applyToAll: boolean
+  ) => Promise<void> | void;
   isActive?: boolean;
   // Reads live audio position on demand — only polled (via rAF) while
   // isActive, to highlight the word currently being spoken in sync with
@@ -837,6 +920,7 @@ export function TranscriptSegment({
   onRollback,
   onRollbackToHistory,
   onAccept,
+  onRenameSpeaker,
   isActive,
   getCurrentTime,
   syncHighlight = true,
@@ -847,6 +931,29 @@ export function TranscriptSegment({
   const [saving, setSaving] = useState(false);
   const [accepting, setAccepting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [renamingSpeaker, setRenamingSpeaker] = useState(false);
+  const [speakerDraft, setSpeakerDraft] = useState(segment.speaker);
+  const [speakerError, setSpeakerError] = useState<string | null>(null);
+  const [savingSpeaker, setSavingSpeaker] = useState(false);
+  const speakerInputId = useId();
+  const renameSpeakerButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreSpeakerFocus = useRef(false);
+  const savingSpeakerRef = useRef(false);
+  useEffect(() => {
+    if (!renamingSpeaker && restoreSpeakerFocus.current) {
+      restoreSpeakerFocus.current = false;
+      renameSpeakerButtonRef.current?.focus();
+    }
+  }, [renamingSpeaker]);
+  // A "Replace all" saved from another section can rename this one, which
+  // would leave an open editor here holding the old name as its draft.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs only when the speaker changes
+  useEffect(() => {
+    if (!savingSpeakerRef.current) {
+      setRenamingSpeaker(false);
+      setSpeakerError(null);
+    }
+  }, [segment.speaker]);
   const [highlightRange, setHighlightRange] = useState<{
     start: number;
     end: number;
@@ -912,6 +1019,41 @@ export function TranscriptSegment({
   const startEditing = () => {
     setDraft(displayText);
     setEditing(true);
+  };
+
+  const startRenamingSpeaker = () => {
+    setSpeakerDraft(segment.speaker);
+    setSpeakerError(null);
+    setRenamingSpeaker(true);
+  };
+
+  const cancelRenamingSpeaker = () => {
+    restoreSpeakerFocus.current = true;
+    setRenamingSpeaker(false);
+    setSpeakerError(null);
+  };
+
+  const renameSpeaker = async (applyToAll: boolean) => {
+    const trimmed = speakerDraft.trim();
+    if (!trimmed) {
+      setSpeakerError("Enter a speaker name");
+      return;
+    }
+    if (trimmed === segment.speaker) {
+      cancelRenamingSpeaker();
+      return;
+    }
+    setSavingSpeaker(true);
+    savingSpeakerRef.current = true;
+    try {
+      await onRenameSpeaker?.(trimmed, applyToAll);
+      cancelRenamingSpeaker();
+    } catch {
+      setSpeakerError("The speaker name could not be saved. Try again.");
+    } finally {
+      savingSpeakerRef.current = false;
+      setSavingSpeaker(false);
+    }
   };
 
   const accept = async () => {
@@ -984,6 +1126,18 @@ export function TranscriptSegment({
             style={{ backgroundColor: segment.speakerColor }}
           />
           <span className="font-semibold text-sm">{segment.speaker}</span>
+          {onRenameSpeaker && !renamingSpeaker && (
+            <button
+              ref={renameSpeakerButtonRef}
+              type="button"
+              onClick={startRenamingSpeaker}
+              aria-label={`Rename speaker ${segment.speaker}`}
+              title="Rename speaker"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <UserPen className="size-3.5" />
+            </button>
+          )}
           {pct !== undefined && (
             <span
               className={cn(
@@ -1042,6 +1196,22 @@ export function TranscriptSegment({
             )}
           </div>
         </div>
+
+        {renamingSpeaker && (
+          <SpeakerRenameForm
+            inputId={speakerInputId}
+            speaker={segment.speaker}
+            value={speakerDraft}
+            onChange={(value) => {
+              setSpeakerDraft(value);
+              setSpeakerError(null);
+            }}
+            onReplace={renameSpeaker}
+            onCancel={cancelRenamingSpeaker}
+            error={speakerError}
+            saving={savingSpeaker}
+          />
+        )}
 
         {/* Text / edit form */}
         {editing ? (

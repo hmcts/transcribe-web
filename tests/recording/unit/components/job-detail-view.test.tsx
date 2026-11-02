@@ -271,3 +271,60 @@ describe("JobDetailView baseline transcript upload", () => {
     expect(await screen.findByText(/baseline wer/i)).toBeDefined();
   });
 });
+
+describe("JobDetailView speaker rename", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends the chosen scope for that section and shows the returned job", async () => {
+    const job = makeJob({
+      segments: [
+        {
+          id: "s1",
+          speaker: "Speaker 1",
+          speakerColor: "#000000",
+          text: "Good morning.",
+          startTime: 0,
+          duration: 5,
+        },
+        {
+          id: "s2",
+          speaker: "Speaker 2",
+          speakerColor: "#111111",
+          text: "Morning.",
+          startTime: 5,
+          duration: 5,
+        },
+      ],
+    });
+    const renamed = makeJob({
+      segments: job.segments?.map((s, i) =>
+        i === 1 ? { ...s, speaker: "Counsel" } : s
+      ),
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ job: renamed }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Rename speaker Speaker 2" })
+    );
+    const input = screen.getByLabelText("New name for Speaker 2");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Counsel");
+    await userEvent.click(screen.getByRole("button", { name: "Replace all" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`/api/jobs/${job.id}/segments/1/speaker`);
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({
+      speaker: "Counsel",
+      applyToAll: true,
+    });
+    expect(await screen.findByText("Counsel")).toBeDefined();
+  });
+});

@@ -608,6 +608,26 @@ export async function acceptSegment(
   return toTranscriptionJob(body);
 }
 
+export async function renameSpeaker(
+  jobId: string,
+  index: number,
+  speaker: string,
+  applyToAll: boolean,
+  auth: BackendAuthContext | null
+): Promise<TranscriptionJob> {
+  const response = await backendFetch(
+    `/api/v1/jobs/${jobId}/segments/${index}/speaker`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ speaker, apply_to_all: applyToAll }),
+    },
+    auth
+  );
+  const body: BackendJob = await response.json();
+  return toTranscriptionJob(body);
+}
+
 export async function rollbackToHistoryEntry(
   jobId: string,
   index: number,

@@ -6,6 +6,7 @@ import {
   getJob,
   getJobAudio,
   listJobs,
+  renameSpeaker,
   submitJob,
   uploadAndSubmit,
   uploadAudio,
@@ -431,6 +432,42 @@ describe("acceptSegment", () => {
     mockFetchOnce(BACKEND_JOB);
     const job = await acceptSegment(BACKEND_JOB.job_id, 0, null);
     expect(job.segments?.[0].accepted).toBe(false);
+  });
+});
+
+describe("renameSpeaker", () => {
+  it("PATCHes the segment speaker endpoint and maps the returned job", async () => {
+    const fetchMock = mockFetchOnce({
+      ...BACKEND_JOB,
+      dialogue_entries: [
+        {
+          speaker: "Judge Smith",
+          text: "Good morning.",
+          start_time: 0,
+          end_time: 2.5,
+        },
+      ],
+    });
+
+    const job = await renameSpeaker(
+      BACKEND_JOB.job_id,
+      0,
+      "Judge Smith",
+      true,
+      null
+    );
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain(
+      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/0/speaker`
+    );
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({
+      speaker: "Judge Smith",
+      apply_to_all: true,
+    });
+    expect(job.segments?.[0].speaker).toBe("Judge Smith");
+    expect(job.segments?.[0].speakerColor).toBe(colorForSpeaker("Judge Smith"));
   });
 });
 

@@ -1,0 +1,46 @@
+import { type NextRequest, NextResponse } from "next/server";
+import { BackendApiError, renameSpeaker } from "@/lib/recording/api-client";
+import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+
+interface RouteContext {
+  params: Promise<{ jobId: string; index: string }>;
+}
+
+export async function PATCH(request: NextRequest, { params }: RouteContext) {
+  const { jobId, index } = await params;
+  const segmentIndex = Number(index);
+  if (!Number.isInteger(segmentIndex) || segmentIndex < 0) {
+    return NextResponse.json(
+      { error: "Invalid segment index" },
+      { status: 422 }
+    );
+  }
+
+  const auth = await getBackendAuthContext(request);
+  try {
+    const { speaker, applyToAll } = await request.json();
+    if (typeof speaker !== "string" || speaker.trim().length === 0) {
+      return NextResponse.json(
+        { error: "speaker is required" },
+        { status: 422 }
+      );
+    }
+    const job = await renameSpeaker(
+      jobId,
+      segmentIndex,
+      speaker,
+      applyToAll === true,
+      auth
+    );
+    return NextResponse.json({ job });
+  } catch (err) {
+    if (err instanceof BackendApiError) {
+      return NextResponse.json({ error: err.message }, { status: err.status });
+    }
+    console.error("Failed to rename speaker", err);
+    return NextResponse.json(
+      { error: "Failed to rename speaker" },
+      { status: 502 }
+    );
+  }
+}
