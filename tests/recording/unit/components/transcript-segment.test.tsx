@@ -107,7 +107,7 @@ describe("TranscriptSegment", () => {
 
   it("does not show an edit button without an onCorrect handler", () => {
     render(<TranscriptSegment segment={SEGMENT} />);
-    expect(screen.queryByLabelText(/edit segment text/i)).toBeNull();
+    expect(screen.queryByLabelText(/edit section/i)).toBeNull();
   });
 
   it("lets a user edit and save a correction", async () => {
@@ -115,7 +115,7 @@ describe("TranscriptSegment", () => {
     const user = userEvent.setup();
     render(<TranscriptSegment segment={SEGMENT} onCorrect={onCorrect} />);
 
-    await user.click(screen.getByLabelText(/edit segment text/i));
+    await user.click(screen.getByLabelText(/edit section/i));
     const textarea = screen.getByRole("textbox");
     await user.clear(textarea);
     await user.type(textarea, "Corrected wording.");
@@ -129,7 +129,7 @@ describe("TranscriptSegment", () => {
     const user = userEvent.setup();
     render(<TranscriptSegment segment={SEGMENT} onCorrect={onCorrect} />);
 
-    await user.click(screen.getByLabelText(/edit segment text/i));
+    await user.click(screen.getByLabelText(/edit section/i));
     await user.click(screen.getByRole("button", { name: /cancel/i }));
 
     expect(onCorrect).not.toHaveBeenCalled();
@@ -141,7 +141,7 @@ describe("TranscriptSegment", () => {
     const user = userEvent.setup();
     render(<TranscriptSegment segment={SEGMENT} onCorrect={onCorrect} />);
 
-    await user.click(screen.getByLabelText(/edit segment text/i));
+    await user.click(screen.getByLabelText(/edit section/i));
     await user.click(screen.getByRole("button", { name: /save/i }));
 
     expect(onCorrect).not.toHaveBeenCalled();
@@ -662,7 +662,7 @@ describe("TranscriptSegment", () => {
 
     it("does not show a history button when there is no history", () => {
       render(<TranscriptSegment segment={SEGMENT} />);
-      expect(screen.queryByLabelText(/show change history/i)).toBeNull();
+      expect(screen.queryByLabelText(/view edit history/i)).toBeNull();
     });
 
     it("shows a history button and toggles the panel", async () => {
@@ -673,8 +673,16 @@ describe("TranscriptSegment", () => {
         />
       );
       expect(screen.queryByText(/change history/i)).toBeNull();
-      await user.click(screen.getByLabelText(/show change history/i));
+      const toggle = screen.getByRole("button", { name: "View edit history" });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      await user.click(toggle);
       expect(screen.getByText(/change history/i)).toBeDefined();
+      expect(toggle.getAttribute("aria-label")).toBe("Hide edit history");
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      await user.click(toggle);
+      expect(screen.queryByText(/change history/i)).toBeNull();
+      expect(toggle.getAttribute("aria-label")).toBe("View edit history");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
     });
 
     it("calls onRollbackToHistory with the entry's index", async () => {
@@ -686,7 +694,7 @@ describe("TranscriptSegment", () => {
           onRollbackToHistory={onRollbackToHistory}
         />
       );
-      await user.click(screen.getByLabelText(/show change history/i));
+      await user.click(screen.getByLabelText(/view edit history/i));
       await user.click(
         screen.getByRole("button", { name: /roll back to before this/i })
       );
@@ -706,7 +714,7 @@ describe("TranscriptSegment", () => {
           onRollback={onRollback}
         />
       );
-      await user.click(screen.getByLabelText(/show change history/i));
+      await user.click(screen.getByLabelText(/view edit history/i));
       await user.click(
         screen.getByRole("button", { name: /roll back whole section/i })
       );
@@ -720,7 +728,7 @@ describe("TranscriptSegment", () => {
           segment={{ ...SEGMENT, words: WORDS, correctionHistory: HISTORY }}
         />
       );
-      await user.click(screen.getByLabelText(/show change history/i));
+      await user.click(screen.getByLabelText(/view edit history/i));
 
       // "morning." is low-confidence, so it sits inside a positioning wrapper
       // and an orange trigger span — the ring highlight lands on the innermost
@@ -756,12 +764,12 @@ describe("TranscriptSegment", () => {
 
     it("does not show an accept button without an onAccept handler", () => {
       render(<TranscriptSegment segment={LOW_CONF} />);
-      expect(screen.queryByLabelText(/accept segment as-is/i)).toBeNull();
+      expect(screen.queryByLabelText(/accept as correct/i)).toBeNull();
     });
 
     it("shows an accept button for a low-confidence, uncorrected segment", () => {
       render(<TranscriptSegment segment={LOW_CONF} onAccept={vi.fn()} />);
-      expect(screen.getByLabelText(/accept segment as-is/i)).toBeDefined();
+      expect(screen.getByLabelText(/accept as correct/i)).toBeDefined();
     });
 
     it("offers accept for a high-average segment that still has low-confidence words", () => {
@@ -775,7 +783,7 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.getByLabelText(/accept segment as-is/i)).toBeDefined();
+      expect(screen.getByLabelText(/accept as correct/i)).toBeDefined();
     });
 
     it("offers accept when the segment-level confidence is unknown but a word is low-confidence", () => {
@@ -785,7 +793,7 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.getByLabelText(/accept segment as-is/i)).toBeDefined();
+      expect(screen.getByLabelText(/accept as correct/i)).toBeDefined();
     });
 
     it("does not offer accept when no words are highlighted, even at a low segment average", () => {
@@ -798,7 +806,7 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.queryByLabelText(/accept segment as-is/i)).toBeNull();
+      expect(screen.queryByLabelText(/accept as correct/i)).toBeNull();
     });
 
     // DIAAT-249 consistency (Copilot review on PR #64): the checkmark is
@@ -826,7 +834,7 @@ describe("TranscriptSegment", () => {
       );
       // mean = (0.95 + 0.9 + 0.5 + 0.92 + 0.88) / 5 = 0.83 > 0.65: not flagged,
       // so no orange run and no accept checkmark.
-      expect(screen.queryByLabelText(/accept segment as-is/i)).toBeNull();
+      expect(screen.queryByLabelText(/accept as correct/i)).toBeNull();
     });
 
     it("does not offer accept for a phrase-only segment with no per-word data", () => {
@@ -837,7 +845,7 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.queryByLabelText(/accept segment as-is/i)).toBeNull();
+      expect(screen.queryByLabelText(/accept as correct/i)).toBeNull();
     });
 
     it("does not offer accept once the whole segment has been rewritten (correctedText)", () => {
@@ -847,7 +855,7 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.queryByLabelText(/accept segment as-is/i)).toBeNull();
+      expect(screen.queryByLabelText(/accept as correct/i)).toBeNull();
     });
 
     // DIAAT-229 follow-up: correcting ONE low-confidence word must NOT hide the
@@ -871,7 +879,7 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.getByLabelText(/accept segment as-is/i)).toBeDefined();
+      expect(screen.getByLabelText(/accept as correct/i)).toBeDefined();
     });
 
     // DIAAT-229 follow-up: once the ONLY low-confidence word has been covered by
@@ -891,7 +899,7 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.queryByLabelText(/accept segment as-is/i)).toBeNull();
+      expect(screen.queryByLabelText(/accept as correct/i)).toBeNull();
     });
 
     it("does not offer accept once the segment has already been accepted", () => {
@@ -901,14 +909,14 @@ describe("TranscriptSegment", () => {
           onAccept={vi.fn()}
         />
       );
-      expect(screen.queryByLabelText(/accept segment as-is/i)).toBeNull();
+      expect(screen.queryByLabelText(/accept as correct/i)).toBeNull();
     });
 
     it("calls onAccept when the accept button is clicked", async () => {
       const onAccept = vi.fn().mockResolvedValue(undefined);
       const user = userEvent.setup();
       render(<TranscriptSegment segment={LOW_CONF} onAccept={onAccept} />);
-      await user.click(screen.getByLabelText(/accept segment as-is/i));
+      await user.click(screen.getByLabelText(/accept as correct/i));
       expect(onAccept).toHaveBeenCalledTimes(1);
     });
 
@@ -1590,7 +1598,11 @@ describe("TranscriptSegment", () => {
 });
 
 describe("TranscriptSegment combine buttons", () => {
-  it("shows both arrows with matching hover text and accessible names", () => {
+  it.each([
+    ["Combine with section above"],
+    ["Combine with section below"],
+  ])("shows a %s tooltip on hover", async (name) => {
+    const user = userEvent.setup();
     render(
       <TranscriptSegment
         segment={SEGMENT}
@@ -1598,29 +1610,27 @@ describe("TranscriptSegment combine buttons", () => {
         onCombineNext={vi.fn()}
       />
     );
-    const up = screen.getByRole("button", { name: "Combine with previous" });
-    const down = screen.getByRole("button", { name: "Combine with next" });
-    expect(up.getAttribute("title")).toBe("Combine with previous");
-    expect(down.getAttribute("title")).toBe("Combine with next");
+    await user.hover(screen.getByRole("button", { name }));
+    expect((await screen.findByRole("tooltip")).textContent).toBe(name);
   });
 
   it("hides the up arrow when there is no previous segment", () => {
     render(<TranscriptSegment segment={SEGMENT} onCombineNext={vi.fn()} />);
     expect(
-      screen.queryByRole("button", { name: "Combine with previous" })
+      screen.queryByRole("button", { name: "Combine with section above" })
     ).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Combine with next" })
+      screen.getByRole("button", { name: "Combine with section below" })
     ).toBeDefined();
   });
 
   it("hides the down arrow when there is no next segment", () => {
     render(<TranscriptSegment segment={SEGMENT} onCombinePrevious={vi.fn()} />);
     expect(
-      screen.queryByRole("button", { name: "Combine with next" })
+      screen.queryByRole("button", { name: "Combine with section below" })
     ).toBeNull();
     expect(
-      screen.getByRole("button", { name: "Combine with previous" })
+      screen.getByRole("button", { name: "Combine with section above" })
     ).toBeDefined();
   });
 
@@ -1635,13 +1645,13 @@ describe("TranscriptSegment combine buttons", () => {
       />
     );
     await userEvent.click(
-      screen.getByRole("button", { name: "Combine with previous" })
+      screen.getByRole("button", { name: "Combine with section above" })
     );
     expect(onCombinePrevious).toHaveBeenCalledTimes(1);
     expect(onCombineNext).not.toHaveBeenCalled();
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Combine with next" })
+      screen.getByRole("button", { name: "Combine with section below" })
     );
     expect(onCombineNext).toHaveBeenCalledTimes(1);
   });
@@ -1655,7 +1665,10 @@ describe("TranscriptSegment combine buttons", () => {
         combinePending
       />
     );
-    for (const name of ["Combine with previous", "Combine with next"]) {
+    for (const name of [
+      "Combine with section above",
+      "Combine with section below",
+    ]) {
       expect(
         (screen.getByRole("button", { name }) as HTMLButtonElement).disabled
       ).toBe(true);
@@ -1671,14 +1684,14 @@ describe("TranscriptSegment accept on an edited section still needing review", (
       <TranscriptSegment segment={edited} onAccept={vi.fn()} needsReview />
     );
     expect(
-      screen.getByRole("button", { name: "Accept segment as-is" })
+      screen.getByRole("button", { name: "Accept as correct" })
     ).toBeDefined();
   });
 
   it("does not offer accept once it no longer needs review", () => {
     render(<TranscriptSegment segment={edited} onAccept={vi.fn()} />);
     expect(
-      screen.queryByRole("button", { name: "Accept segment as-is" })
+      screen.queryByRole("button", { name: "Accept as correct" })
     ).toBeNull();
   });
 
@@ -1687,7 +1700,42 @@ describe("TranscriptSegment accept on an edited section still needing review", (
       <TranscriptSegment segment={SEGMENT} onAccept={vi.fn()} needsReview />
     );
     expect(
-      screen.queryByRole("button", { name: "Accept segment as-is" })
+      screen.queryByRole("button", { name: "Accept as correct" })
     ).toBeNull();
+  });
+});
+
+describe("TranscriptSegment action tooltips", () => {
+  it("labels the edit button and shows it as a tooltip", async () => {
+    const user = userEvent.setup();
+    render(<TranscriptSegment segment={SEGMENT} onCorrect={vi.fn()} />);
+    await user.hover(screen.getByRole("button", { name: "Edit section" }));
+    expect((await screen.findByRole("tooltip")).textContent).toBe(
+      "Edit section"
+    );
+  });
+
+  it("shows the tooltip on keyboard focus and hides it on blur", async () => {
+    const user = userEvent.setup();
+    render(<TranscriptSegment segment={SEGMENT} onCorrect={vi.fn()} />);
+    const edit = screen.getByRole("button", { name: "Edit section" });
+    await user.tab();
+    expect(document.activeElement).toBe(edit);
+    expect((await screen.findByRole("tooltip")).textContent).toBe(
+      "Edit section"
+    );
+    await user.tab();
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
+  });
+
+  it("shows a rename tooltip while keeping the speaker in the accessible name", async () => {
+    const user = userEvent.setup();
+    render(<TranscriptSegment segment={SEGMENT} onRenameSpeaker={vi.fn()} />);
+    await user.hover(
+      screen.getByRole("button", { name: "Rename speaker Judge" })
+    );
+    expect((await screen.findByRole("tooltip")).textContent).toBe(
+      "Rename speaker"
+    );
   });
 });

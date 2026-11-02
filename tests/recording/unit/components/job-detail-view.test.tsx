@@ -352,22 +352,24 @@ describe("JobDetailView combining segments", () => {
   it("offers no up arrow on the first segment and no down arrow on the last", () => {
     render(<JobDetailView jobId={job.id} initialJob={job} />);
     expect(
-      screen.getAllByRole("button", { name: "Combine with previous" })
+      screen.getAllByRole("button", { name: "Combine with section above" })
     ).toHaveLength(2);
     expect(
-      screen.getAllByRole("button", { name: "Combine with next" })
+      screen.getAllByRole("button", { name: "Combine with section below" })
     ).toHaveLength(2);
     const first = document.getElementById("seg-0") as HTMLElement;
     const last = document.getElementById("seg-2") as HTMLElement;
     expect(
-      first.querySelector('[aria-label="Combine with previous"]')
+      first.querySelector('[aria-label="Combine with section above"]')
     ).toBeNull();
-    expect(last.querySelector('[aria-label="Combine with next"]')).toBeNull();
+    expect(
+      last.querySelector('[aria-label="Combine with section below"]')
+    ).toBeNull();
   });
 
   it.each([
-    ["Combine with next", "seg-1", 1],
-    ["Combine with previous", "seg-1", 0],
+    ["Combine with section below", "seg-1", 1],
+    ["Combine with section above", "seg-1", 0],
   ])("%s on %s merges from index %i and shows the returned job", async (name, id, index) => {
     const merged = makeJob({
       segments: [
@@ -416,7 +418,7 @@ describe("JobDetailView combining segments", () => {
 
     await userEvent.click(
       document.querySelector(
-        '#seg-0 [aria-label="Combine with next"]'
+        '#seg-0 [aria-label="Combine with section below"]'
       ) as HTMLElement
     );
 
@@ -441,7 +443,7 @@ describe("JobDetailView combining segments", () => {
 
     await userEvent.click(
       document.querySelector(
-        '#seg-0 [aria-label="Combine with next"]'
+        '#seg-0 [aria-label="Combine with section below"]'
       ) as HTMLElement
     );
 
@@ -477,12 +479,12 @@ describe("JobDetailView combining segments", () => {
 
     await userEvent.click(
       document.querySelector(
-        '#seg-0 [aria-label="Combine with next"]'
+        '#seg-0 [aria-label="Combine with section below"]'
       ) as HTMLElement
     );
     await userEvent.click(
       document.querySelector(
-        '#seg-2 [aria-label="Edit segment text"]'
+        '#seg-2 [aria-label="Edit section"]'
       ) as HTMLElement
     );
     const editor = screen.getByRole("textbox");
@@ -511,7 +513,7 @@ describe("JobDetailView combining segments", () => {
 
     await userEvent.click(
       document.querySelector(
-        '#seg-2 [aria-label="Edit segment text"]'
+        '#seg-2 [aria-label="Edit section"]'
       ) as HTMLElement
     );
     const editor = screen.getByRole("textbox");
@@ -520,7 +522,7 @@ describe("JobDetailView combining segments", () => {
     await userEvent.click(screen.getByRole("button", { name: "Save" }));
     await userEvent.click(
       document.querySelector(
-        '#seg-0 [aria-label="Combine with next"]'
+        '#seg-0 [aria-label="Combine with section below"]'
       ) as HTMLElement
     );
 
@@ -547,13 +549,13 @@ describe("JobDetailView combining segments", () => {
 
     await userEvent.click(
       document.querySelector(
-        '#seg-0 [aria-label="Edit segment text"]'
+        '#seg-0 [aria-label="Edit section"]'
       ) as HTMLElement
     );
     expect(screen.getByRole("textbox")).toBeDefined();
     await userEvent.click(
       document.querySelector(
-        '#seg-1 [aria-label="Combine with previous"]'
+        '#seg-1 [aria-label="Combine with section above"]'
       ) as HTMLElement
     );
 
@@ -577,7 +579,7 @@ describe("JobDetailView combining segments", () => {
 
     await userEvent.click(
       document.querySelector(
-        '#seg-0 [aria-label="Combine with next"]'
+        '#seg-0 [aria-label="Combine with section below"]'
       ) as HTMLElement
     );
     await userEvent.upload(
