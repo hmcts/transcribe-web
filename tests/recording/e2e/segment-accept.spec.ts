@@ -33,7 +33,7 @@ test.describe("Segment accept-all", () => {
 
     // The accept control is offered for the low-confidence segment.
     const acceptButton = page
-      .getByRole("button", { name: /accept segment as-is/i })
+      .getByRole("button", { name: /accept as correct/i })
       .first();
     await expect(acceptButton).toBeVisible();
 
@@ -47,7 +47,7 @@ test.describe("Segment accept-all", () => {
     await expect(page.getByText(/^Accepted$/).first()).toBeVisible();
     // ...the accept button is gone (the segment no longer needs review)...
     await expect(
-      page.getByRole("button", { name: /accept segment as-is/i })
+      page.getByRole("button", { name: /accept as correct/i })
     ).toHaveCount(0);
     // ...and the underlying text is untouched.
     await expect(page.getByText(segmentText).first()).toBeVisible();
@@ -55,7 +55,7 @@ test.describe("Segment accept-all", () => {
     // The change is recorded in the history as an "accept" action, distinct
     // from a correction — open the history panel and check the label.
     await page
-      .getByLabel(/show change history/i)
+      .getByLabel(/view edit history/i)
       .first()
       .click();
     await expect(page.getByText(/accepted as-is/i)).toBeVisible();

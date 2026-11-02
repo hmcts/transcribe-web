@@ -103,7 +103,7 @@ test.describe("Low-confidence click-to-resolve menu", () => {
     await expect(page.getByText("Edited").first()).toBeVisible();
 
     await page
-      .getByLabel(/show change history/i)
+      .getByLabel(/view edit history/i)
       .first()
       .click();
     await expect(page.getByText(/change history/i).first()).toBeVisible();
