@@ -221,22 +221,35 @@ function JurisdictionAdmins({ jurisdictionId }: { jurisdictionId: string }) {
     };
   }, []);
 
+  // Mutations on different users can overlap, so their refreshes can finish out
+  // of order. Only the latest load may update the list, the error and the
+  // loading state; bumping the counter also retires loads in flight when the
+  // jurisdiction changes or the panel goes away.
+  const loadGenerationRef = useRef(0);
+
   const loadAdmins = useCallback(async () => {
+    loadGenerationRef.current += 1;
+    const generation = loadGenerationRef.current;
+    const isCurrent = () =>
+      mountedRef.current && generation === loadGenerationRef.current;
     setError(null);
     try {
       const list = await fetchJurisdictionAdmins(jurisdictionId);
-      if (mountedRef.current) setAdmins(list);
+      if (isCurrent()) setAdmins(list);
     } catch (err: unknown) {
-      if (mountedRef.current) {
+      if (isCurrent()) {
         setError(errorMessage(err, "Failed to load administrators"));
       }
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (isCurrent()) setLoading(false);
     }
   }, [jurisdictionId]);
 
   useEffect(() => {
     loadAdmins();
+    return () => {
+      loadGenerationRef.current += 1;
+    };
   }, [loadAdmins]);
 
   async function handleSearch() {

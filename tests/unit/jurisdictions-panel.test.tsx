@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -243,5 +244,60 @@ describe("Jurisdictions panel: administrators", () => {
         "User is not an admin of this jurisdiction"
       )
     );
+  });
+});
+
+describe("Jurisdictions panel: overlapping refreshes", () => {
+  const deferred = <T,>() => {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((res) => {
+      resolve = res;
+    });
+    return { promise, resolve };
+  };
+  const adminB = { user_id: "u2", email: "b@x.test", role: "LegalTextManager" };
+
+  it("keeps the newest list when an older refresh arrives last", async () => {
+    api.fetchJurisdictionAdmins.mockResolvedValue([ADMIN, adminB]);
+    api.removeJurisdictionAdmin.mockResolvedValue(undefined);
+    render(<JurisdictionsPanel />);
+    await screen.findByText("b@x.test");
+
+    // Refresh after removing A (still lists B) and after removing B (empty).
+    const afterRemovingA = deferred<(typeof ADMIN)[]>();
+    const afterRemovingB = deferred<(typeof ADMIN)[]>();
+    api.fetchJurisdictionAdmins
+      .mockReturnValueOnce(afterRemovingA.promise)
+      .mockReturnValueOnce(afterRemovingB.promise);
+    fireEvent.click(screen.getByRole("button", { name: "Remove ltm@x.test" }));
+    fireEvent.click(screen.getByRole("button", { name: "Remove b@x.test" }));
+    await waitFor(() =>
+      expect(api.removeJurisdictionAdmin).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(api.fetchJurisdictionAdmins).toHaveBeenCalledTimes(3)
+    );
+
+    // The newer refresh lands first, the older one last.
+    await act(async () => afterRemovingB.resolve([]));
+    await act(async () => afterRemovingA.resolve([adminB]));
+
+    expect(await screen.findByText("No administrators yet.")).toBeTruthy();
+    expect(screen.queryByText("b@x.test")).toBeNull();
+  });
+
+  it("ignores a late response after the jurisdiction changes", async () => {
+    const slowIac = deferred<(typeof ADMIN)[]>();
+    api.fetchJurisdictionAdmins.mockReturnValueOnce(slowIac.promise);
+    render(<JurisdictionsPanel />);
+    const picker = await screen.findByLabelText("Administrators of");
+    api.fetchJurisdictionAdmins.mockResolvedValueOnce([adminB]);
+
+    fireEvent.change(picker, { target: { value: "tax" } });
+    expect(await screen.findByText("b@x.test")).toBeTruthy();
+    await act(async () => slowIac.resolve([ADMIN]));
+
+    expect(screen.queryByText("ltm@x.test")).toBeNull();
+    expect(screen.getByText("b@x.test")).toBeTruthy();
   });
 });
