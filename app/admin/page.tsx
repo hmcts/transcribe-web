@@ -3,18 +3,21 @@
 import {
   BookOpen,
   Gavel,
+  Landmark,
   Loader2,
   Plus,
   Save,
   Scale,
   Shield,
+  ShieldAlert,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AppSidebar, type Selection } from "@/components/app-sidebar";
+import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
 import { AdminEditor } from "@/components/editor/admin-editor";
 import {
   AlertDialog,
@@ -49,6 +52,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
 import type {
+  AdminJurisdiction,
   AnonymityStatus,
   DocumentContent,
   HearingType,
@@ -59,7 +63,9 @@ import {
   createLegalFramework,
   deleteHearingType,
   deleteLegalFramework,
+  fetchAdminJurisdictions,
   fetchDocumentContent,
+  isJurisdictionNotFound,
   updateAnonymityStatus,
   updateHearingType,
   updateLegalFramework,
@@ -94,61 +100,11 @@ function getDefaultSelection(content: DocumentContent): Selection | null {
 }
 
 export default function AdminPage() {
-  const [content, setContent] = useState<DocumentContent | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Selection | null>(null);
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null);
-
-  const load = useCallback(async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      setError(null);
-      const data = await fetchDocumentContent();
-      setContent(data);
-      setSelection(
-        (currentSelection) => currentSelection ?? getDefaultSelection(data)
-      );
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Failed to load content";
-      setError(message);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   useEffect(() => {
     getAdminRole().then(setAdminRole).catch(() => {});
   }, []);
-
-  if (loading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error || !content) {
-    return (
-      <div className="text-center text-destructive py-12">
-        <p>{error ?? "Failed to load content"}</p>
-        <Button variant="outline" className="mt-4" onClick={() => load()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  const deleteName = deleteTarget
-    ? resolveItemTitle(content, deleteTarget)
-    : "";
 
   return (
     <div className="fixed inset-0 top-14 flex flex-col bg-background">
@@ -163,6 +119,15 @@ export default function AdminPage() {
             </TabsTrigger>
             {adminRole === "SystemAdministrator" && (
               <TabsTrigger
+                value="jurisdictions"
+                className="rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium"
+              >
+                <Landmark className="mr-1.5 h-4 w-4" />
+                Jurisdictions
+              </TabsTrigger>
+            )}
+            {adminRole === "SystemAdministrator" && (
+              <TabsTrigger
                 value="users"
                 className="rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium"
               >
@@ -174,65 +139,303 @@ export default function AdminPage() {
         </div>
 
         <TabsContent value="document-content" className="flex-1 min-h-0 overflow-hidden mt-0 data-[state=inactive]:hidden">
-          <div className="flex h-full w-full justify-center overflow-hidden">
-            <div className="h-full w-full max-w-[1280px] min-w-0">
-              <SidebarProvider
-                className="h-full min-h-0"
-                style={
-                  {
-                    "--sidebar-width": "360px",
-                  } as React.CSSProperties
-                }
-              >
-                <div className="relative">
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-y-0 right-full w-[100vw] bg-sidebar"
-                  />
-                  <AppSidebar
-                    documentContent={content}
-                    selection={selection}
-                    onItemSelect={setSelection}
-                  />
-                </div>
-                <SidebarInset className="relative overflow-y-auto bg-background">
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-y-0 left-full w-[100vw] bg-background"
-                  />
-                  {selection ? (
-                    <ContentPanel
-                      key={`${selection.category}-${selection.id}-${selection.isNew}`}
-                      content={content}
-                      selection={selection}
-                      onRefresh={() => load(true)}
-                      onSelect={setSelection}
-                      onDelete={setDeleteTarget}
-                    />
-                  ) : (
-                    <EmptyState />
-                  )}
-                </SidebarInset>
-              </SidebarProvider>
-            </div>
-          </div>
+          <DocumentContentTab />
+        </TabsContent>
+
+        <TabsContent value="jurisdictions" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
+          <JurisdictionsPanel />
         </TabsContent>
 
         <TabsContent value="users" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
           <UsersPanel />
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Document content (one jurisdiction at a time)
+// ---------------------------------------------------------------------------
+
+function DocumentContentTab() {
+  const [jurisdictions, setJurisdictions] = useState<
+    AdminJurisdiction[] | null
+  >(null);
+  const [jurisdictionsError, setJurisdictionsError] = useState<string | null>(
+    null
+  );
+  const [jurisdictionId, setJurisdictionId] = useState<string | null>(null);
+  // Bumped when the list reloads so the wording is fetched afresh even if the
+  // admin stays on the same jurisdiction.
+  const [reloadToken, setReloadToken] = useState(0);
+
+  const loadJurisdictions = useCallback(async () => {
+    setJurisdictionsError(null);
+    try {
+      const list = await fetchAdminJurisdictions();
+      setJurisdictions(list);
+      setJurisdictionId((current) =>
+        list.some((j) => j.id === current) ? current : (list[0]?.id ?? null)
+      );
+      setReloadToken((token) => token + 1);
+    } catch (err: unknown) {
+      setJurisdictionsError(
+        err instanceof Error ? err.message : "Failed to load jurisdictions"
+      );
+    }
+  }, []);
+
+  useEffect(() => {
+    loadJurisdictions();
+  }, [loadJurisdictions]);
+
+  if (jurisdictions === null && !jurisdictionsError) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (jurisdictionsError || jurisdictions === null) {
+    return (
+      <div className="text-center text-destructive py-12">
+        <p>{jurisdictionsError ?? "Failed to load jurisdictions"}</p>
+        <Button
+          variant="outline"
+          className="mt-4"
+          onClick={() => loadJurisdictions()}
+        >
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (jurisdictions.length === 0) {
+    return (
+      <NoticePanel
+        icon={<ShieldAlert className="mx-auto h-10 w-10 text-muted-foreground/40" />}
+        title="No jurisdiction assigned"
+        message="You are not yet an administrator of any jurisdiction. Ask a system administrator to assign you one."
+      />
+    );
+  }
+
+  const current = jurisdictions.find((j) => j.id === jurisdictionId);
+
+  return (
+    <div className="flex h-full flex-col">
+      <JurisdictionBar
+        jurisdictions={jurisdictions}
+        currentId={jurisdictionId}
+        onChange={setJurisdictionId}
+      />
+      <div className="min-h-0 flex-1">
+        {current && (
+          // Keyed by jurisdiction: wording, selection and pending edits belong
+          // to one jurisdiction and are discarded with it.
+          <JurisdictionWording
+            key={`${current.id}:${reloadToken}`}
+            jurisdiction={current}
+            onReloadJurisdictions={loadJurisdictions}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// One jurisdiction's wording: loading, the editor, or why it cannot be shown.
+function JurisdictionWording({
+  jurisdiction,
+  onReloadJurisdictions,
+}: {
+  jurisdiction: AdminJurisdiction;
+  onReloadJurisdictions: () => void;
+}) {
+  const jurisdictionId = jurisdiction.id;
+  const [content, setContent] = useState<DocumentContent | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  // The API answers 404 for a jurisdiction that is gone or that this admin may
+  // no longer use; both look the same.
+  const [noAccess, setNoAccess] = useState(false);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Selection | null>(null);
+  // Set when this view is replaced, so a slow response can never land in it.
+  const goneRef = useRef(false);
+
+  useEffect(() => {
+    goneRef.current = false;
+    return () => {
+      goneRef.current = true;
+    };
+  }, []);
+
+  const load = useCallback(
+    async (silent = false) => {
+      try {
+        if (!silent) setLoading(true);
+        setError(null);
+        const data = await fetchDocumentContent(jurisdictionId);
+        if (goneRef.current) return;
+        setContent(data);
+        setSelection(
+          (currentSelection) => currentSelection ?? getDefaultSelection(data)
+        );
+      } catch (err: unknown) {
+        if (goneRef.current) return;
+        if (isJurisdictionNotFound(err)) {
+          setNoAccess(true);
+          setContent(null);
+        } else {
+          setError(
+            err instanceof Error ? err.message : "Failed to load content"
+          );
+        }
+      } finally {
+        if (!silent && !goneRef.current) setLoading(false);
+      }
+    },
+    [jurisdictionId]
+  );
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Errors from a save or delete. A jurisdiction the admin can no longer use
+  // sends them back to the list of what they may open.
+  function reportError(err: unknown, fallback: string) {
+    if (isJurisdictionNotFound(err)) {
+      setNoAccess(true);
+      setContent(null);
+      setSelection(null);
+      setDeleteTarget(null);
+      return;
+    }
+    toast.error(err instanceof Error ? err.message : fallback);
+  }
+
+  if (noAccess) {
+    return (
+      <NoticePanel
+        icon={<ShieldAlert className="mx-auto h-10 w-10 text-muted-foreground/40" />}
+        title="Jurisdiction not available"
+        message="This jurisdiction does not exist or you no longer have access to it."
+        actionLabel="Reload jurisdictions"
+        onAction={onReloadJurisdictions}
+      />
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center text-destructive py-12">
+        <p>{error}</p>
+        <Button variant="outline" className="mt-4" onClick={() => load()}>
+          Retry
+        </Button>
+      </div>
+    );
+  }
+
+  if (loading || !content) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  const readOnly = !jurisdiction.can_edit;
+  const deleteName = deleteTarget
+    ? resolveItemTitle(content, deleteTarget)
+    : "";
+  const deletingLastFramework =
+    deleteTarget?.category === "legal-frameworks" &&
+    content.legal_frameworks.length === 1;
+
+  return (
+    <>
+      <div className="flex h-full w-full justify-center overflow-hidden">
+        <div className="h-full w-full max-w-[1280px] min-w-0">
+          <SidebarProvider
+            className="h-full min-h-0"
+            style={
+              {
+                "--sidebar-width": "360px",
+              } as React.CSSProperties
+            }
+          >
+            <div className="relative">
+              <div
+                aria-hidden="true"
+                className="absolute inset-y-0 right-full w-[100vw] bg-sidebar"
+              />
+              <AppSidebar
+                documentContent={content}
+                selection={selection}
+                onItemSelect={setSelection}
+                readOnly={readOnly}
+              />
+            </div>
+            <SidebarInset className="relative overflow-y-auto bg-background">
+              <div
+                aria-hidden="true"
+                className="absolute inset-y-0 left-full w-[100vw] bg-background"
+              />
+              <div className="flex h-full flex-col">
+                {readOnly && (
+                  <p
+                    role="status"
+                    className="shrink-0 border-b bg-muted px-6 py-2 text-sm text-muted-foreground"
+                  >
+                    You can view this jurisdiction&apos;s wording but not edit
+                    it. Editing needs the Legal Text Manager role.
+                  </p>
+                )}
+                <div className="min-h-0 flex-1">
+                  {selection ? (
+                    <ContentPanel
+                      key={`${selection.category}-${selection.id}-${selection.isNew}`}
+                      jurisdictionId={jurisdictionId}
+                      content={content}
+                      selection={selection}
+                      readOnly={readOnly}
+                      onRefresh={() => load(true)}
+                      onSelect={setSelection}
+                      onDelete={setDeleteTarget}
+                      onError={reportError}
+                    />
+                  ) : (
+                    <EmptyState />
+                  )}
+                </div>
+              </div>
+            </SidebarInset>
+          </SidebarProvider>
+        </div>
+      </div>
 
       <DeleteConfirmDialog
         open={!!deleteTarget}
         name={deleteName}
+        warning={
+          deletingLastFramework
+            ? "This is the last legal framework. Without one, judges for this jurisdiction will no longer have a legal issues step."
+            : undefined
+        }
         onOpenChange={(open) => !open && setDeleteTarget(null)}
+        onError={reportError}
         onConfirm={async () => {
           if (!deleteTarget) return;
           if (deleteTarget.category === "hearing-types") {
-            await deleteHearingType(deleteTarget.id);
+            await deleteHearingType(jurisdictionId, deleteTarget.id);
           } else if (deleteTarget.category === "legal-frameworks") {
-            await deleteLegalFramework(deleteTarget.id);
+            await deleteLegalFramework(jurisdictionId, deleteTarget.id);
           }
           toast.success(`Deleted "${deleteName}"`);
           if (
@@ -245,6 +448,74 @@ export default function AdminPage() {
           await load(true);
         }}
       />
+    </>
+  );
+}
+
+// Which jurisdiction is open: its name when there is one, a picker when there
+// are several. Always on screen so the admin can move on from an error.
+function JurisdictionBar({
+  jurisdictions,
+  currentId,
+  onChange,
+}: {
+  jurisdictions: AdminJurisdiction[];
+  currentId: string | null;
+  onChange: (id: string) => void;
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-3 border-b px-4 py-2">
+      {jurisdictions.length === 1 ? (
+        <>
+          <span className="text-sm text-muted-foreground">Jurisdiction</span>
+          <span className="text-sm font-medium">{jurisdictions[0].name}</span>
+        </>
+      ) : (
+        <>
+          <Label htmlFor="admin-jurisdiction">Jurisdiction</Label>
+          <Select value={currentId ?? undefined} onValueChange={onChange}>
+            <SelectTrigger id="admin-jurisdiction" className="w-auto min-w-[320px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {jurisdictions.map((j) => (
+                <SelectItem key={j.id} value={j.id}>
+                  {j.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </>
+      )}
+    </div>
+  );
+}
+
+function NoticePanel({
+  icon,
+  title,
+  message,
+  actionLabel,
+  onAction,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  message: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center p-8 text-center">
+      <div className="max-w-sm space-y-2">
+        {icon}
+        <h2 className="text-lg font-medium">{title}</h2>
+        <p className="text-sm text-muted-foreground">{message}</p>
+        {actionLabel && (
+          <Button variant="outline" className="mt-2" onClick={onAction}>
+            {actionLabel}
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -533,17 +804,23 @@ function EmptyState() {
 // ---------------------------------------------------------------------------
 
 function ContentPanel({
+  jurisdictionId,
   content,
   selection,
+  readOnly,
   onRefresh,
   onSelect,
   onDelete,
+  onError,
 }: {
+  jurisdictionId: string;
   content: DocumentContent;
   selection: Selection;
+  readOnly: boolean;
   onRefresh: () => Promise<void>;
   onSelect: (sel: Selection | null) => void;
   onDelete: (sel: Selection) => void;
+  onError: (err: unknown, fallback: string) => void;
 }) {
   if (selection.category === "hearing-types") {
     const item = selection.isNew
@@ -551,13 +828,16 @@ function ContentPanel({
       : content.hearing_types.find((h) => h.id === selection.id);
     return (
       <HearingTypeEditor
+        jurisdictionId={jurisdictionId}
         item={item}
         isNew={!!selection.isNew}
+        readOnly={readOnly}
+        onError={onError}
         onSaved={async (saved) => {
           await onRefresh();
           onSelect({ category: "hearing-types", id: saved.id });
         }}
-        onDelete={item ? () => onDelete(selection) : undefined}
+        onDelete={item && !readOnly ? () => onDelete(selection) : undefined}
       />
     );
   }
@@ -568,13 +848,17 @@ function ContentPanel({
       : content.legal_frameworks.find((f) => f.id === selection.id);
     return (
       <LegalFrameworkEditor
+        jurisdictionId={jurisdictionId}
+        hasLegalWording={content.has_legal_wording}
         item={item}
         isNew={!!selection.isNew}
+        readOnly={readOnly}
+        onError={onError}
         onSaved={async (saved) => {
           await onRefresh();
           onSelect({ category: "legal-frameworks", id: saved.id });
         }}
-        onDelete={item ? () => onDelete(selection) : undefined}
+        onDelete={item && !readOnly ? () => onDelete(selection) : undefined}
       />
     );
   }
@@ -584,7 +868,10 @@ function ContentPanel({
 
   return (
     <AnonymityEditor
+      jurisdictionId={jurisdictionId}
       item={item}
+      readOnly={readOnly}
+      onError={onError}
       onSaved={async () => {
         await onRefresh();
       }}
@@ -597,13 +884,19 @@ function ContentPanel({
 // ---------------------------------------------------------------------------
 
 function HearingTypeEditor({
+  jurisdictionId,
   item,
   isNew,
+  readOnly,
+  onError,
   onSaved,
   onDelete,
 }: {
+  jurisdictionId: string;
   item?: HearingType;
   isNew: boolean;
+  readOnly: boolean;
+  onError: (err: unknown, fallback: string) => void;
   onSaved: (saved: HearingType) => Promise<void>;
   onDelete?: () => void;
 }) {
@@ -623,15 +916,15 @@ function HearingTypeEditor({
     setSaving(true);
     try {
       if (isNew) {
-        await createHearingType(form);
+        await createHearingType(jurisdictionId, form);
         toast.success(`Created "${form.title}"`);
       } else {
-        await updateHearingType(form.id, form);
+        await updateHearingType(jurisdictionId, form.id, form);
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      onError(err, "Save failed");
     } finally {
       setSaving(false);
     }
@@ -643,6 +936,7 @@ function HearingTypeEditor({
       subtitle={isNew ? "Create a new hearing type" : form.id}
       icon={<Gavel className="h-5 w-5" />}
       saving={saving}
+      readOnly={readOnly}
       onSave={handleSave}
       onDelete={onDelete}
     >
@@ -675,6 +969,7 @@ function HearingTypeEditor({
         </FieldRow>
         <FieldRow label="Hearing Description">
           <AdminEditor
+            editable={!readOnly}
             value={form.hearing_description}
             onChange={(v) => set("hearing_description", v)}
           />
@@ -689,13 +984,21 @@ function HearingTypeEditor({
 // ---------------------------------------------------------------------------
 
 function LegalFrameworkEditor({
+  jurisdictionId,
+  hasLegalWording,
   item,
   isNew,
+  readOnly,
+  onError,
   onSaved,
   onDelete,
 }: {
+  jurisdictionId: string;
+  hasLegalWording: boolean;
   item?: LegalFramework;
   isNew: boolean;
+  readOnly: boolean;
+  onError: (err: unknown, fallback: string) => void;
   onSaved: (saved: LegalFramework) => Promise<void>;
   onDelete?: () => void;
 }) {
@@ -738,15 +1041,15 @@ function LegalFrameworkEditor({
     setSaving(true);
     try {
       if (isNew) {
-        await createLegalFramework(form);
+        await createLegalFramework(jurisdictionId, form);
         toast.success(`Created "${form.title}"`);
       } else {
-        await updateLegalFramework(form.id, form);
+        await updateLegalFramework(jurisdictionId, form.id, form);
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      onError(err, "Save failed");
     } finally {
       setSaving(false);
     }
@@ -758,10 +1061,18 @@ function LegalFrameworkEditor({
       subtitle={isNew ? "Create a new legal framework" : form.id}
       icon={<Scale className="h-5 w-5" />}
       saving={saving}
+      readOnly={readOnly}
       onSave={handleSave}
       onDelete={onDelete}
     >
       <div className="grid gap-5">
+        {isNew && !hasLegalWording && (
+          <p className="rounded-md border bg-muted px-3 py-2 text-sm text-muted-foreground">
+            This jurisdiction has no legal wording. Saving its first legal
+            framework gives its judges a legal issues step and adds Issues and
+            Legal Framework sections to their documents.
+          </p>
+        )}
         {isNew && (
           <div className="grid grid-cols-3 gap-4">
             <FieldRow label="ID" description="Unique identifier (snake_case)">
@@ -792,6 +1103,7 @@ function LegalFrameworkEditor({
 
         <FieldRow label="Content" description="The main legal text">
           <AdminEditor
+            editable={!readOnly}
             value={form.content}
             onChange={(v) => set("content", v)}
           />
@@ -855,10 +1167,16 @@ function LegalFrameworkEditor({
 // ---------------------------------------------------------------------------
 
 function AnonymityEditor({
+  jurisdictionId,
   item,
+  readOnly,
+  onError,
   onSaved,
 }: {
+  jurisdictionId: string;
   item: AnonymityStatus;
+  readOnly: boolean;
+  onError: (err: unknown, fallback: string) => void;
   onSaved: () => Promise<void>;
 }) {
   const [form, setForm] = useState<AnonymityStatus>(item);
@@ -870,11 +1188,11 @@ function AnonymityEditor({
   async function handleSave() {
     setSaving(true);
     try {
-      await updateAnonymityStatus(form.id, form);
+      await updateAnonymityStatus(jurisdictionId, form.id, form);
       toast.success(`Saved "${form.title}"`);
       await onSaved();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      onError(err, "Save failed");
     } finally {
       setSaving(false);
     }
@@ -886,11 +1204,13 @@ function AnonymityEditor({
       subtitle={form.id}
       icon={<Shield className="h-5 w-5" />}
       saving={saving}
+      readOnly={readOnly}
       onSave={handleSave}
     >
       <div className="grid gap-5">
         <FieldRow label="Content">
           <AdminEditor
+            editable={!readOnly}
             value={form.content}
             onChange={(v) => set("content", v)}
           />
@@ -911,6 +1231,7 @@ function AnonymityEditor({
         </div>
         <FieldRow label="Order Text">
           <AdminEditor
+            editable={!readOnly}
             value={form.order_text}
             onChange={(v) => set("order_text", v)}
           />
@@ -928,6 +1249,7 @@ function EditorShell({
   title,
   icon,
   saving,
+  readOnly,
   onSave,
   onDelete,
   children,
@@ -936,6 +1258,7 @@ function EditorShell({
   subtitle: string;
   icon: React.ReactNode;
   saving: boolean;
+  readOnly: boolean;
   onSave: () => void;
   onDelete?: () => void;
   children: React.ReactNode;
@@ -951,30 +1274,35 @@ function EditorShell({
             </h1>
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {onDelete && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onDelete}
-              className="text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/40"
-            >
-              <Trash2 className="mr-1.5 h-4 w-4" />
-              Delete
-            </Button>
-          )}
-          <Button size="sm" onClick={onSave} disabled={saving}>
-            {saving ? (
-              <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="mr-1.5 h-4 w-4" />
+        {!readOnly && (
+          <div className="flex items-center gap-2 shrink-0">
+            {onDelete && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={onDelete}
+                className="text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/40"
+              >
+                <Trash2 className="mr-1.5 h-4 w-4" />
+                Delete
+              </Button>
             )}
-            Save
-          </Button>
-        </div>
+            <Button size="sm" onClick={onSave} disabled={saving}>
+              {saving ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="mr-1.5 h-4 w-4" />
+              )}
+              Save
+            </Button>
+          </div>
+        )}
       </header>
       <div className="flex-1 overflow-y-auto px-6 py-6">
-        <div className="mx-auto">{children}</div>
+        {/* A disabled fieldset turns every input and button inside it off. */}
+        <fieldset disabled={readOnly} className="mx-auto min-w-0">
+          {children}
+        </fieldset>
       </div>
     </div>
   );
@@ -1003,13 +1331,17 @@ function FieldRow({
 function DeleteConfirmDialog({
   open,
   name,
+  warning,
   onOpenChange,
   onConfirm,
+  onError,
 }: {
   open: boolean;
   name: string;
+  warning?: string;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => Promise<void>;
+  onError: (err: unknown, fallback: string) => void;
 }) {
   const [deleting, setDeleting] = useState(false);
 
@@ -1018,7 +1350,7 @@ function DeleteConfirmDialog({
     try {
       await onConfirm();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
+      onError(err, "Delete failed");
     } finally {
       setDeleting(false);
     }
@@ -1032,6 +1364,7 @@ function DeleteConfirmDialog({
           <AlertDialogDescription>
             This action cannot be undone. The entry will be permanently removed
             from the document content configuration.
+            {warning && ` ${warning}`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

@@ -72,11 +72,14 @@ export function AppSidebar({
   documentContent,
   selection,
   onItemSelect,
+  readOnly = false,
   ...props
 }: React.ComponentProps<typeof Sidebar> & {
   documentContent: DocumentContent;
   selection: Selection | null;
   onItemSelect: (sel: Selection) => void;
+  // Hides the "add" actions for an admin who may view but not edit.
+  readOnly?: boolean;
 }) {
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -172,8 +175,9 @@ export function AppSidebar({
               const items = getItems(documentContent, section.key);
               const Icon = section.icon;
               const canAdd =
-                section.key === "hearing-types" ||
-                section.key === "legal-frameworks";
+                !readOnly &&
+                (section.key === "hearing-types" ||
+                  section.key === "legal-frameworks");
 
               return (
                 <SidebarMenuItem key={section.key}>
@@ -205,6 +209,17 @@ export function AppSidebar({
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
                     ))}
+                    {section.key === "legal-frameworks" &&
+                      !documentContent.has_legal_wording && (
+                        <SidebarMenuSubItem>
+                          <p className="px-2 py-1 text-xs text-sidebar-foreground/60">
+                            No legal wording: judges for this jurisdiction have
+                            no legal issues step.
+                            {!readOnly &&
+                              " Adding a framework gives them one."}
+                          </p>
+                        </SidebarMenuSubItem>
+                      )}
                     {canAdd && (
                       <SidebarMenuSubItem>
                         <SidebarMenuSubButton asChild>

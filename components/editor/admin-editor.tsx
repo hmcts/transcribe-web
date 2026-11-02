@@ -20,6 +20,8 @@ interface AdminEditorProps {
   value: string;
   onChange: (markdown: string) => void;
   className?: string;
+  // False shows the wording without letting it be changed.
+  editable?: boolean;
 }
 
 type MarkdownStorage = {
@@ -33,7 +35,12 @@ function getMarkdown(editor: Editor): string {
   return storage.markdown?.getMarkdown?.() ?? editor.getText();
 }
 
-export function AdminEditor({ value, onChange, className }: AdminEditorProps) {
+export function AdminEditor({
+  value,
+  onChange,
+  className,
+  editable = true,
+}: AdminEditorProps) {
   const editor = useEditor({
     extensions: [
       StarterKit.configure({
@@ -52,6 +59,7 @@ export function AdminEditor({ value, onChange, className }: AdminEditorProps) {
       }),
     ],
     content: value,
+    editable,
     immediatelyRender: false,
     onUpdate: ({ editor }) => {
       onChange(getMarkdown(editor));
@@ -66,6 +74,10 @@ export function AdminEditor({ value, onChange, className }: AdminEditorProps) {
       }
     }
   }, [editor, value]);
+
+  useEffect(() => {
+    editor?.setEditable(editable);
+  }, [editor, editable]);
 
   const toggleHeading = useCallback(
     (level: 1 | 2 | 3) => {
