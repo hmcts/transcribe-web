@@ -17,9 +17,12 @@ import RecordAlertBanner from "@/components/audio/recording/record-alert-banner"
 import RecordStatusRow from "@/components/audio/recording/record-status-row";
 import DictationForm from "@/components/audio/dictation/dictation-form";
 import {
+  contentForJurisdiction,
   type DictationFormValues,
   defaultFormValues,
-  dictationFormSchema,
+  getDictationFormSchema,
+  isDefaultJurisdiction,
+  jurisdictionHasLegalWording,
 } from "@/components/audio/dictation/formData";
 import {
   SECTION_CONFIG,
@@ -44,10 +47,14 @@ import { getAuthToken } from "@/lib/auth-utils";
 import { deleteLiveDraft, getLiveDraft } from "@/lib/live-draft-api";
 import { LiveDraftError, liveDraftFailureKind } from "@/lib/live-draft-errors";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
-import { fetchUserDocumentContent } from "@/lib/document-content-api";
 import {
+  fetchJurisdictions,
+  fetchUserDocumentContent,
+} from "@/lib/document-content-api";
+import {
+  createLiveTranscriptionSubmissionPayloadSchema,
   type DocumentContent,
-  liveTranscriptionSubmissionPayloadSchema,
+  type JurisdictionSummary,
   liveTranscriptionSubmissionResponseSchema,
   normalizeOptionalEditorText,
   submissionErrorResponseSchema,
@@ -106,6 +113,9 @@ export default function RecordPage() {
     useState<DictationFormValues>(defaultFormValues);
   const [documentContent, setDocumentContent] = useState<
     DocumentContent | undefined
+  >();
+  const [jurisdictions, setJurisdictions] = useState<
+    JurisdictionSummary[] | undefined
   >();
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
@@ -214,17 +224,19 @@ export default function RecordPage() {
     previousLayoutModeRef.current = layoutMode;
   }, [layoutMode]);
 
+  // The jurisdictions a judge can choose between. Until they load (or if they
+  // fail to) the form offers the default jurisdiction alone.
   useEffect(() => {
     let isCancelled = false;
 
     void (async () => {
       try {
-        const content = await fetchUserDocumentContent();
+        const options = await fetchJurisdictions();
         if (!isCancelled) {
-          setDocumentContent(content);
+          setJurisdictions(options);
         }
       } catch (error) {
-        console.error("Failed to load document content", error);
+        console.error("Failed to load jurisdictions", error);
       }
     })();
 
@@ -232,6 +244,32 @@ export default function RecordPage() {
       isCancelled = true;
     };
   }, []);
+
+  // The wording belongs to the jurisdiction the form names, so it is fetched
+  // again whenever the judge changes it. A response for a jurisdiction the form
+  // no longer names is dropped.
+  const selectedJurisdiction = formData.jurisdiction;
+  useEffect(() => {
+    let isCancelled = false;
+
+    void (async () => {
+      try {
+        const content = await fetchUserDocumentContent(selectedJurisdiction);
+        if (!isCancelled) {
+          setDocumentContent(content);
+        }
+      } catch (error) {
+        console.error("Failed to load document content", error);
+        if (!isCancelled && !isDefaultJurisdiction(selectedJurisdiction)) {
+          toast.error("Could not load the wording for this jurisdiction.");
+        }
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [selectedJurisdiction]);
 
   // Keep the Easy Auth session alive during idle/paused recording — the token is only
   // refreshed on API calls, so a long pause would otherwise expire the 1-hour Azure AD token.
@@ -452,7 +490,22 @@ export default function RecordPage() {
   );
 
   const handleSubmitHearing = useCallback(async () => {
-    const validation = dictationFormSchema.safeParse(formData);
+    const jurisdictionContent = contentForJurisdiction(
+      documentContent,
+      formData.jurisdiction
+    );
+    // Only the default jurisdiction has built-in wording to stand in while its
+    // own loads; any other must wait for it.
+    if (!jurisdictionContent && !isDefaultJurisdiction(formData.jurisdiction)) {
+      toast.error("The wording for this jurisdiction has not loaded yet.");
+      return;
+    }
+    const requiresLegalIssues = jurisdictionHasLegalWording(
+      jurisdictionContent,
+      formData.jurisdiction
+    );
+    const validation =
+      getDictationFormSchema(requiresLegalIssues).safeParse(formData);
     if (!validation.success) {
       const fieldErrors: Partial<Record<keyof DictationFormValues, string>> =
         {};
@@ -485,8 +538,16 @@ export default function RecordPage() {
             ...(authToken && { Authorization: `Bearer ${authToken}` }),
           },
           body: JSON.stringify(
-            liveTranscriptionSubmissionPayloadSchema.parse({
-              form_data: validation.data,
+            createLiveTranscriptionSubmissionPayloadSchema({
+              requiresLegalIssues,
+            }).parse({
+              form_data: {
+                ...validation.data,
+                // A jurisdiction with no legal wording submits none.
+                legalIssues: requiresLegalIssues
+                  ? validation.data.legalIssues
+                  : [],
+              },
               messages: sectionedTranscript,
               notes: normalizeOptionalEditorText(editorContent),
             })
@@ -532,7 +593,15 @@ export default function RecordPage() {
     })();
 
     submitHearingToast(submissionPromise);
-  }, [formData, sectionedTranscript, router, editorContent, mode, stopDraftSaves]);
+  }, [
+    formData,
+    documentContent,
+    sectionedTranscript,
+    router,
+    editorContent,
+    mode,
+    stopDraftSaves,
+  ]);
 
   // Only "healthy" counts as recording. `isRecordingActive` is intent; a
   // session can be collapsing behind it.
@@ -877,6 +946,7 @@ export default function RecordPage() {
                           onFormStateChange={setFormData}
                           externalErrors={formErrors}
                           documentContent={documentContent}
+                          jurisdictions={jurisdictions}
                         />
                       </div>
                     </div>
@@ -966,6 +1036,7 @@ export default function RecordPage() {
                         onFormStateChange={setFormData}
                         externalErrors={formErrors}
                         documentContent={documentContent}
+                        jurisdictions={jurisdictions}
                       />
                     </div>
                   </section>

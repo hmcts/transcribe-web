@@ -18,14 +18,19 @@ import {
 } from "@/components/ui/select";
 
 import { Separator } from "@/components/ui/separator";
-import type { DocumentContent } from "@/lib/editor-contracts";
+import type {
+  DocumentContent,
+  JurisdictionSummary,
+} from "@/lib/editor-contracts";
 import { getJudgeNameFromEmail, getJudgeTitleFromEmail } from "@/lib/utils";
 import { useUserSettings } from "@/providers/user-settings";
 import {
+  contentForJurisdiction,
   type DictationFormValues,
-  dictationFormSchema,
   getDefaultFormValues,
+  getDictationFormSchema,
   getFormFields,
+  jurisdictionHasLegalWording,
   sanitizeFormValues,
   shouldShowField,
 } from "./formData";
@@ -37,6 +42,8 @@ type DictationFormProps = {
   externalErrors?: FormErrors;
   initialValues?: DictationFormValues;
   documentContent?: DocumentContent;
+  // Options for the jurisdiction select. Defaults to the IAC alone.
+  jurisdictions?: JurisdictionSummary[];
 };
 
 const APPEAL_DATE_PICKER_PROPS = {
@@ -102,6 +109,7 @@ function DictationForm({
   externalErrors,
   initialValues,
   documentContent,
+  jurisdictions,
 }: DictationFormProps) {
   const { user } = useUserSettings();
   const [formState, setFormState] = useState<DictationFormValues>(
@@ -116,9 +124,18 @@ function DictationForm({
 
   const judgeTitle = user?.email ? getJudgeTitleFromEmail(user.email) : "";
   const judgeName = user?.email ? getJudgeNameFromEmail(user.email) : "";
+  // Wording fetched for another jurisdiction is never shown under this one.
+  const activeContent = contentForJurisdiction(
+    documentContent,
+    formState.jurisdiction
+  );
   const formFields = useMemo(
-    () => getFormFields(documentContent),
-    [documentContent]
+    () =>
+      getFormFields(activeContent, {
+        jurisdiction: formState.jurisdiction,
+        jurisdictions,
+      }),
+    [activeContent, formState.jurisdiction, jurisdictions]
   );
 
   // Sync initialValues prop to internal state when it changes (e.g., on remount)
@@ -148,10 +165,10 @@ function DictationForm({
   }, [judgeName, hasManuallyEditedJudgeName, formState.judgeName]);
 
   useEffect(() => {
-    if (!documentContent) return;
+    if (!activeContent) return;
 
-    setFormState((prev) => sanitizeFormValues(prev, documentContent));
-  }, [documentContent]);
+    setFormState((prev) => sanitizeFormValues(prev, activeContent));
+  }, [activeContent]);
 
   const headerFields = useMemo(
     () =>
@@ -228,6 +245,18 @@ function DictationForm({
 
   const handleSelectChange =
     (name: keyof DictationFormValues) => (value: string) => {
+      if (name === "jurisdiction") {
+        // Hearing type, anonymity and legal issues are that jurisdiction's own
+        // wording: none of the previous selection may carry over.
+        setFormState((prev) => ({
+          ...prev,
+          jurisdiction: value,
+          hearingType: "",
+          anonymityOrder: "",
+          legalIssues: [],
+        }));
+        return;
+      }
       updateField(name, value);
     };
 
@@ -251,7 +280,9 @@ function DictationForm({
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const result = dictationFormSchema.safeParse(formState);
+    const result = getDictationFormSchema(
+      jurisdictionHasLegalWording(activeContent, formState.jurisdiction)
+    ).safeParse(formState);
 
     if (!result.success) {
       const fieldErrors: FormErrors = {};

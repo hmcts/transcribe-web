@@ -51,6 +51,7 @@ vi.mock("@/components/audio/dictation/dictation-form", () => ({
 
 vi.mock("@/lib/document-content-api", () => ({
   fetchUserDocumentContent: vi.fn().mockResolvedValue(undefined),
+  fetchJurisdictions: vi.fn().mockResolvedValue([]),
 }));
 
 vi.mock("@/lib/admin-access", () => ({

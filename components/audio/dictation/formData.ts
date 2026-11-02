@@ -1,5 +1,9 @@
 import { z } from "zod";
-import type { DocumentContent } from "@/lib/editor-contracts";
+import {
+  DEFAULT_JURISDICTION_NAME,
+  type DocumentContent,
+  type JurisdictionSummary,
+} from "@/lib/editor-contracts";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
 
 type VisibilityRule = {
@@ -127,6 +131,34 @@ const FALLBACK_LEGAL_ISSUE_OPTIONS: FormFieldOption[] = [
   { label: "Devaseelan", value: "devaseelan" },
 ];
 
+// The built-in fallback wording below is the IAC's. It stands in only while the
+// IAC's wording has not loaded, never for another jurisdiction.
+export const isDefaultJurisdiction = (jurisdiction: string) =>
+  jurisdiction === DEFAULT_JURISDICTION_NAME;
+
+// The wording that belongs to the jurisdiction the form currently names.
+// Content fetched for another jurisdiction is ignored so a change of
+// jurisdiction can never show or submit the previous one's wording.
+export const contentForJurisdiction = (
+  documentContent: DocumentContent | undefined,
+  jurisdiction: string
+): DocumentContent | undefined =>
+  documentContent &&
+  (documentContent.jurisdiction.name === jurisdiction ||
+    documentContent.jurisdiction.id === jurisdiction)
+    ? documentContent
+    : undefined;
+
+// Whether the form asks for legal issues. Until a jurisdiction's wording has
+// loaded only the default one is assumed to have legal wording.
+export const jurisdictionHasLegalWording = (
+  documentContent: DocumentContent | undefined,
+  jurisdiction: string
+): boolean =>
+  documentContent
+    ? documentContent.has_legal_wording
+    : isDefaultJurisdiction(jurisdiction);
+
 export const dictationFormSchema = z
   .object({
     caseId: requiredString("Case number"),
@@ -214,6 +246,17 @@ export const dictationFormSchema = z
     // Future document types may require additional validation here
   });
 
+// The same form for a jurisdiction with no legal wording: no legal issues are
+// asked for, so none are required.
+const dictationFormSchemaWithoutLegalIssues = dictationFormSchema.safeExtend({
+  legalIssues: z.array(z.string()),
+});
+
+export const getDictationFormSchema = (requiresLegalIssues = true) =>
+  requiresLegalIssues
+    ? dictationFormSchema
+    : dictationFormSchemaWithoutLegalIssues;
+
 export type DictationFormValues = z.infer<typeof dictationFormSchema>;
 
 export type FieldType = "text" | "select" | "date" | "multiselect";
@@ -230,39 +273,67 @@ export type FormField = {
 };
 
 const getHearingTypeOptions = (
-  documentContent?: DocumentContent
-): FormFieldOption[] =>
-  documentContent
-    ? documentContent.hearing_types.map(({ id, title }) => ({
-        label: title,
-        value: id,
-      }))
-    : FALLBACK_HEARING_TYPE_OPTIONS;
+  documentContent?: DocumentContent,
+  jurisdiction = DEFAULT_JURISDICTION_NAME
+): FormFieldOption[] => {
+  if (documentContent) {
+    return documentContent.hearing_types.map(({ id, title }) => ({
+      label: title,
+      value: id,
+    }));
+  }
+  return isDefaultJurisdiction(jurisdiction)
+    ? FALLBACK_HEARING_TYPE_OPTIONS
+    : [];
+};
 
 const getAnonymityOrderOptions = (
-  documentContent?: DocumentContent
-): FormFieldOption[] =>
-  documentContent
-    ? documentContent.anonymity.statuses.map(({ id, identifier, title }) => ({
+  documentContent?: DocumentContent,
+  jurisdiction = DEFAULT_JURISDICTION_NAME
+): FormFieldOption[] => {
+  if (documentContent) {
+    return documentContent.anonymity.statuses.map(
+      ({ id, identifier, title }) => ({
         label: identifier || title,
         value: id,
-      }))
-    : FALLBACK_ANONYMITY_ORDER_OPTIONS;
+      })
+    );
+  }
+  return isDefaultJurisdiction(jurisdiction)
+    ? FALLBACK_ANONYMITY_ORDER_OPTIONS
+    : [];
+};
 
 const getLegalIssueOptions = (
-  documentContent?: DocumentContent
-): FormFieldOption[] =>
-  documentContent
-    ? [...documentContent.legal_frameworks]
-        .sort((left, right) => left.rank - right.rank)
-        .map(({ id, title }) => ({
-          label: title,
-          value: id,
-        }))
-    : FALLBACK_LEGAL_ISSUE_OPTIONS;
+  documentContent?: DocumentContent,
+  jurisdiction = DEFAULT_JURISDICTION_NAME
+): FormFieldOption[] => {
+  if (documentContent) {
+    return [...documentContent.legal_frameworks]
+      .sort((left, right) => left.rank - right.rank)
+      .map(({ id, title }) => ({
+        label: title,
+        value: id,
+      }));
+  }
+  return isDefaultJurisdiction(jurisdiction)
+    ? FALLBACK_LEGAL_ISSUE_OPTIONS
+    : [];
+};
+
+type FormFieldsOptions = {
+  // The jurisdiction the form currently names. Defaults to the IAC.
+  jurisdiction?: string;
+  // Options for the jurisdiction select. Defaults to the IAC alone.
+  jurisdictions?: JurisdictionSummary[];
+};
 
 export const getFormFields = (
-  documentContent?: DocumentContent
+  documentContent?: DocumentContent,
+  {
+    jurisdiction = DEFAULT_JURISDICTION_NAME,
+    jurisdictions,
+  }: FormFieldsOptions = {}
 ): FormField[] => [
   // 1. Case number
   {
@@ -332,7 +403,9 @@ export const getFormFields = (
     conditions: null,
     required: true,
     fieldType: "select",
-    options: toOptions(["First-tier Tribunal Immigration and Asylum Chamber"]),
+    options: toOptions(
+      jurisdictions?.map(({ name }) => name) ?? [DEFAULT_JURISDICTION_NAME]
+    ),
   },
   // 5. Hearing date (header field)
   {
@@ -366,7 +439,7 @@ export const getFormFields = (
       "Appellant/Respondent rep fields visible when Face to face or CVP is selected.",
     required: true,
     fieldType: "select",
-    options: getHearingTypeOptions(documentContent),
+    options: getHearingTypeOptions(documentContent, jurisdiction),
   },
   // 8. Appellant name
   {
@@ -448,7 +521,7 @@ export const getFormFields = (
       "Choice determines which blocks of text to pull from the anonymity order table.",
     required: true,
     fieldType: "select",
-    options: getAnonymityOrderOptions(documentContent),
+    options: getAnonymityOrderOptions(documentContent, jurisdiction),
   },
   // 11. Appealed decision date
   {
@@ -461,18 +534,22 @@ export const getFormFields = (
     fieldType: "date",
     options: [],
   },
-  // 12. Legal issues
-  {
-    id: 12,
-    name: "legalIssues",
-    label: "Legal issues",
-    conditional: false,
-    conditions:
-      "Choice determines which blocks of text to pull from the legal framework table.",
-    required: true,
-    fieldType: "multiselect",
-    options: getLegalIssueOptions(documentContent),
-  },
+  // 12. Legal issues (only for a jurisdiction that has legal wording)
+  ...(jurisdictionHasLegalWording(documentContent, jurisdiction)
+    ? [
+        {
+          id: 12,
+          name: "legalIssues" as const,
+          label: "Legal issues",
+          conditional: false,
+          conditions:
+            "Choice determines which blocks of text to pull from the legal framework table.",
+          required: true,
+          fieldType: "multiselect" as const,
+          options: getLegalIssueOptions(documentContent, jurisdiction),
+        },
+      ]
+    : []),
 ];
 
 export const visibilityRules: Partial<
@@ -548,7 +625,7 @@ export const getDefaultFormValues = (judgeName = ""): DictationFormValues =>
         documentType: "Decision",
         location: "Other",
         locationOther: "St Mellons",
-        jurisdiction: "First-tier Tribunal Immigration and Asylum Chamber",
+        jurisdiction: DEFAULT_JURISDICTION_NAME,
         hearingDate: getTodayDate(),
         judgeName,
         hearingType: "face_to_face",
@@ -566,7 +643,7 @@ export const getDefaultFormValues = (judgeName = ""): DictationFormValues =>
         caseId: "",
         location: "",
         locationOther: "",
-        jurisdiction: "First-tier Tribunal Immigration and Asylum Chamber",
+        jurisdiction: DEFAULT_JURISDICTION_NAME,
         hearingDate: getTodayDate(),
         judgeName,
         anonymityOrder: "",

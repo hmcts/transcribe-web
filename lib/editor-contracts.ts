@@ -8,6 +8,11 @@ const CONTENT_ID = z
   .regex(/^[a-z0-9_]+$/);
 const MAX_EDITOR_TEXT_LENGTH = 200_000;
 
+// The jurisdiction the judge's form selects by default. It is the only one that
+// has built-in fallback wording on the client (see formData.ts).
+export const DEFAULT_JURISDICTION_NAME =
+  "First-tier Tribunal Immigration and Asylum Chamber";
+
 export const notesHtmlSchema = z
   .string()
   .max(MAX_EDITOR_TEXT_LENGTH)
@@ -36,41 +41,61 @@ export const sectionedTranscriptSchema = z.object({
   facts: z.array(liveTranscriptMessageSchema),
 });
 
-export const liveTranscriptionFormDataSchema = z
-  .object({
-    caseId: NON_EMPTY_TEXT,
-    location: NON_EMPTY_TEXT,
-    locationOther: OPTIONAL_TEXT,
-    jurisdiction: NON_EMPTY_TEXT,
-    hearingDate: NON_EMPTY_TEXT,
-    judgeName: NON_EMPTY_TEXT,
-    anonymityOrder: NON_EMPTY_TEXT,
-    appellantName: NON_EMPTY_TEXT,
-    respondent: NON_EMPTY_TEXT,
-    hearingType: NON_EMPTY_TEXT,
-    appellantRepType: OPTIONAL_TEXT,
-    appellantRepDetails: OPTIONAL_TEXT,
-    respondentRepType: OPTIONAL_TEXT,
-    respondentRepName: OPTIONAL_TEXT,
-    appealableDecisionDate: NON_EMPTY_TEXT,
-    legalIssues: z.array(NON_EMPTY_TEXT).min(1),
-    documentType: NON_EMPTY_TEXT,
-    nextHearingType: OPTIONAL_TEXT.optional(),
-    nextHearingAdjudicator: OPTIONAL_TEXT.optional(),
-  })
-  .strict();
+type SubmissionSchemaOptions = {
+  // False for a jurisdiction with no legal wording: its form has no legal
+  // issues field, so the submission carries none.
+  requiresLegalIssues?: boolean;
+};
 
-export const liveTranscriptionSubmissionPayloadSchema = z
-  .object({
-    form_data: liveTranscriptionFormDataSchema,
-    messages: sectionedTranscriptSchema,
-    notes: z.string().max(MAX_EDITOR_TEXT_LENGTH).nullable().optional(),
-  })
-  .strict()
-  .transform((payload) => ({
-    ...payload,
-    notes: normalizeOptionalEditorText(payload.notes),
-  }));
+export const createLiveTranscriptionFormDataSchema = ({
+  requiresLegalIssues = true,
+}: SubmissionSchemaOptions = {}) =>
+  z
+    .object({
+      caseId: NON_EMPTY_TEXT,
+      location: NON_EMPTY_TEXT,
+      locationOther: OPTIONAL_TEXT,
+      jurisdiction: NON_EMPTY_TEXT,
+      hearingDate: NON_EMPTY_TEXT,
+      judgeName: NON_EMPTY_TEXT,
+      anonymityOrder: NON_EMPTY_TEXT,
+      appellantName: NON_EMPTY_TEXT,
+      respondent: NON_EMPTY_TEXT,
+      hearingType: NON_EMPTY_TEXT,
+      appellantRepType: OPTIONAL_TEXT,
+      appellantRepDetails: OPTIONAL_TEXT,
+      respondentRepType: OPTIONAL_TEXT,
+      respondentRepName: OPTIONAL_TEXT,
+      appealableDecisionDate: NON_EMPTY_TEXT,
+      legalIssues: requiresLegalIssues
+        ? z.array(NON_EMPTY_TEXT).min(1)
+        : z.array(NON_EMPTY_TEXT),
+      documentType: NON_EMPTY_TEXT,
+      nextHearingType: OPTIONAL_TEXT.optional(),
+      nextHearingAdjudicator: OPTIONAL_TEXT.optional(),
+    })
+    .strict();
+
+export const liveTranscriptionFormDataSchema =
+  createLiveTranscriptionFormDataSchema();
+
+export const createLiveTranscriptionSubmissionPayloadSchema = (
+  options: SubmissionSchemaOptions = {}
+) =>
+  z
+    .object({
+      form_data: createLiveTranscriptionFormDataSchema(options),
+      messages: sectionedTranscriptSchema,
+      notes: z.string().max(MAX_EDITOR_TEXT_LENGTH).nullable().optional(),
+    })
+    .strict()
+    .transform((payload) => ({
+      ...payload,
+      notes: normalizeOptionalEditorText(payload.notes),
+    }));
+
+export const liveTranscriptionSubmissionPayloadSchema =
+  createLiveTranscriptionSubmissionPayloadSchema();
 
 export type LiveTranscriptionSubmissionPayload = z.infer<
   typeof liveTranscriptionSubmissionPayloadSchema
@@ -137,7 +162,40 @@ export const anonymityStatusSchema = z.object({
 
 export type AnonymityStatus = z.infer<typeof anonymityStatusSchema>;
 
+export const jurisdictionRefSchema = z.object({
+  id: NON_EMPTY_TEXT,
+  name: NON_EMPTY_TEXT,
+});
+
+export type JurisdictionRef = z.infer<typeof jurisdictionRefSchema>;
+
+// An option for the judge's jurisdiction select.
+export const jurisdictionSummarySchema = jurisdictionRefSchema.extend({
+  has_legal_wording: z.boolean(),
+});
+
+export type JurisdictionSummary = z.infer<typeof jurisdictionSummarySchema>;
+
+// What an admin may open; can_edit is false for a read-only SystemAdministrator.
+export const adminJurisdictionSchema = jurisdictionSummarySchema.extend({
+  can_edit: z.boolean(),
+});
+
+export type AdminJurisdiction = z.infer<typeof adminJurisdictionSchema>;
+
+export const jurisdictionAdminSchema = z.object({
+  user_id: NON_EMPTY_TEXT,
+  email: NON_EMPTY_TEXT,
+  role: NON_EMPTY_TEXT,
+});
+
+export type JurisdictionAdmin = z.infer<typeof jurisdictionAdminSchema>;
+
 export const documentContentSchema = z.object({
+  jurisdiction: jurisdictionRefSchema,
+  // False when the jurisdiction has no legal frameworks: the judge's form then
+  // has no legal issues step.
+  has_legal_wording: z.boolean(),
   hearing_types: z.array(hearingTypeSchema),
   legal_frameworks: z.array(legalFrameworkSchema),
   anonymity: z.object({
