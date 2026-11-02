@@ -1520,6 +1520,40 @@ describe("TranscriptSegment", () => {
       expect(screen.getByText("Judge")).toBeDefined();
     });
 
+    it("Escape cancels from any control in the editor", async () => {
+      const { onRenameSpeaker } = await openRename();
+      screen.getByRole("button", { name: "Replace all" }).focus();
+      await userEvent.keyboard("{Escape}");
+
+      expect(screen.queryByLabelText("New name for Judge")).toBeNull();
+      expect(onRenameSpeaker).not.toHaveBeenCalled();
+    });
+
+    it("closes an open editor when the speaker is renamed elsewhere", async () => {
+      const onRenameSpeaker = vi.fn();
+      const { rerender } = render(
+        <TranscriptSegment
+          segment={SEGMENT}
+          onRenameSpeaker={onRenameSpeaker}
+        />
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Rename speaker Judge" })
+      );
+
+      rerender(
+        <TranscriptSegment
+          segment={{ ...SEGMENT, speaker: "Judge Smith" }}
+          onRenameSpeaker={onRenameSpeaker}
+        />
+      );
+
+      expect(screen.queryByLabelText("New name for Judge")).toBeNull();
+      expect(
+        screen.getByRole("button", { name: "Rename speaker Judge Smith" })
+      ).toBeDefined();
+    });
+
     it("returns focus to the rename button when the editor closes", async () => {
       await openRename();
       await userEvent.click(screen.getByRole("button", { name: "Cancel" }));

@@ -825,7 +825,17 @@ function SpeakerRenameForm({
 }: SpeakerRenameFormProps) {
   const errorId = `${inputId}-error`;
   return (
-    <div className="mb-2 flex flex-wrap items-center gap-2">
+    <fieldset
+      aria-label={`Rename ${speaker}`}
+      onKeyDown={(e) => {
+        if (saving) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      className="mb-2 flex flex-wrap items-center gap-2"
+    >
       <label htmlFor={inputId} className="sr-only">
         New name for {speaker}
       </label>
@@ -833,13 +843,6 @@ function SpeakerRenameForm({
         id={inputId}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (saving) return;
-          if (e.key === "Escape") {
-            e.preventDefault();
-            onCancel();
-          }
-        }}
         readOnly={saving}
         maxLength={200}
         aria-invalid={error ? true : undefined}
@@ -873,7 +876,7 @@ function SpeakerRenameForm({
           {error}
         </p>
       )}
-    </div>
+    </fieldset>
   );
 }
 
@@ -934,13 +937,23 @@ export function TranscriptSegment({
   const [savingSpeaker, setSavingSpeaker] = useState(false);
   const speakerInputId = useId();
   const renameSpeakerButtonRef = useRef<HTMLButtonElement>(null);
-  const wasRenamingSpeaker = useRef(false);
+  const restoreSpeakerFocus = useRef(false);
+  const savingSpeakerRef = useRef(false);
   useEffect(() => {
-    if (wasRenamingSpeaker.current && !renamingSpeaker) {
+    if (!renamingSpeaker && restoreSpeakerFocus.current) {
+      restoreSpeakerFocus.current = false;
       renameSpeakerButtonRef.current?.focus();
     }
-    wasRenamingSpeaker.current = renamingSpeaker;
   }, [renamingSpeaker]);
+  // A "Replace all" saved from another section can rename this one, which
+  // would leave an open editor here holding the old name as its draft.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs only when the speaker changes
+  useEffect(() => {
+    if (!savingSpeakerRef.current) {
+      setRenamingSpeaker(false);
+      setSpeakerError(null);
+    }
+  }, [segment.speaker]);
   const [highlightRange, setHighlightRange] = useState<{
     start: number;
     end: number;
@@ -1015,6 +1028,7 @@ export function TranscriptSegment({
   };
 
   const cancelRenamingSpeaker = () => {
+    restoreSpeakerFocus.current = true;
     setRenamingSpeaker(false);
     setSpeakerError(null);
   };
@@ -1030,13 +1044,14 @@ export function TranscriptSegment({
       return;
     }
     setSavingSpeaker(true);
+    savingSpeakerRef.current = true;
     try {
       await onRenameSpeaker?.(trimmed, applyToAll);
-      setRenamingSpeaker(false);
-      setSpeakerError(null);
+      cancelRenamingSpeaker();
     } catch {
       setSpeakerError("The speaker name could not be saved. Try again.");
     } finally {
+      savingSpeakerRef.current = false;
       setSavingSpeaker(false);
     }
   };
