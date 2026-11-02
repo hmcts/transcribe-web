@@ -673,11 +673,16 @@ describe("TranscriptSegment", () => {
         />
       );
       expect(screen.queryByText(/change history/i)).toBeNull();
-      await user.click(screen.getByLabelText(/view edit history/i));
+      const toggle = screen.getByRole("button", { name: "View edit history" });
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      await user.click(toggle);
       expect(screen.getByText(/change history/i)).toBeDefined();
-      expect(
-        screen.getByRole("button", { name: "Hide edit history" })
-      ).toBeDefined();
+      expect(toggle.getAttribute("aria-label")).toBe("Hide edit history");
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      await user.click(toggle);
+      expect(screen.queryByText(/change history/i)).toBeNull();
+      expect(toggle.getAttribute("aria-label")).toBe("View edit history");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
     });
 
     it("calls onRollbackToHistory with the entry's index", async () => {
@@ -1708,6 +1713,19 @@ describe("TranscriptSegment action tooltips", () => {
     expect((await screen.findByRole("tooltip")).textContent).toBe(
       "Edit section"
     );
+  });
+
+  it("shows the tooltip on keyboard focus and hides it on blur", async () => {
+    const user = userEvent.setup();
+    render(<TranscriptSegment segment={SEGMENT} onCorrect={vi.fn()} />);
+    const edit = screen.getByRole("button", { name: "Edit section" });
+    await user.tab();
+    expect(document.activeElement).toBe(edit);
+    expect((await screen.findByRole("tooltip")).textContent).toBe(
+      "Edit section"
+    );
+    await user.tab();
+    await waitFor(() => expect(screen.queryByRole("tooltip")).toBeNull());
   });
 
   it("shows a rename tooltip while keeping the speaker in the accessible name", async () => {
