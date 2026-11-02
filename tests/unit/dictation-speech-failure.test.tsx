@@ -97,6 +97,11 @@ vi.mock("@/providers/user-settings", () => ({
   useUserSettings: () => ({ user: null, loading: false }),
 }));
 
+// DIAAT-331: the IAC's guidance, passed in by LiveDictation.
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
+);
+
 vi.mock("@/hooks/use-media-query", () => ({
   useMediaQuery: () => false,
   default: () => false,
@@ -143,6 +148,9 @@ describe("Live dictation with a failing speech WebSocket path", () => {
     ).toBeTruthy();
     expect(
       screen.getByText(/Nothing from this session has been captured/i)
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/record this decision in another way/)
     ).toBeTruthy();
   });
 

@@ -23,6 +23,7 @@ import {
   saveTranscription,
   saveTranscriptionJob,
 } from "../lib/database";
+import { useJurisdiction } from "@/providers/jurisdiction";
 
 interface TranscriptsContextType {
   transcriptsMetadata: TranscriptionMetadata[];
@@ -94,10 +95,13 @@ function TranscriptsProviderContent({
 
   // Get current values from URL
   const transcriptId = searchParams?.get("id");
+  // DIAAT-322: material is loaded only in a jurisdiction. Pages that hold none
+  // (privacy, support...) render before, or without, one: nothing is fetched.
+  const hasJurisdiction = useJurisdiction().current !== null;
 
   // Load transcription when ID in URL changes
   useEffect(() => {
-    if (transcriptId) {
+    if (transcriptId && hasJurisdiction) {
       const loadTranscription = async () => {
         try {
           const transcription = await getTranscriptionById(transcriptId);
@@ -117,27 +121,32 @@ function TranscriptsProviderContent({
     } else if (!transcriptId) {
       setCurrentTranscription(null);
     }
-  }, [transcriptId, router]);
+  }, [transcriptId, router, hasJurisdiction]);
 
   // Function to refresh metadata - can be called manually or automatically
   const refreshMetadata = useCallback(async () => {
+    if (!hasJurisdiction) return;
     try {
       const returnedMetadata = await getAllTranscriptionMetadata();
       setTranscriptsMetadata(returnedMetadata);
     } catch (error) {
       console.error("Failed to refresh metadata:", error);
     }
-  }, []);
+  }, [hasJurisdiction]);
 
   // Initial load of metadata
   useEffect(() => {
     const loadMetadata = async () => {
+      if (!hasJurisdiction) {
+        setIsLoading(false);
+        return;
+      }
       const returnedMetadata = await getAllTranscriptionMetadata();
       setTranscriptsMetadata(returnedMetadata);
       setIsLoading(false);
     };
     loadMetadata();
-  }, []);
+  }, [hasJurisdiction]);
 
   // Auto-refresh metadata when tab gains focus
   useEffect(() => {
@@ -196,7 +205,7 @@ function TranscriptsProviderContent({
   // Add this effect to fetch transcription jobs when ID changes
   useEffect(() => {
     const loadTranscriptionJobs = async () => {
-      if (!transcriptId) {
+      if (!transcriptId || !hasJurisdiction) {
         setTranscriptionJobs([]);
         return;
       }
@@ -211,7 +220,7 @@ function TranscriptsProviderContent({
     };
 
     loadTranscriptionJobs();
-  }, [transcriptId]);
+  }, [transcriptId, hasJurisdiction]);
 
   useEffect(() => {
     const fetchPlaybackUrl = async () => {

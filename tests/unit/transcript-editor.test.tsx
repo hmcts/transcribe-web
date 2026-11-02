@@ -88,3 +88,46 @@ describe("TranscriptEditor accessibility", () => {
     ).toBeTruthy();
   });
 });
+
+describe("TranscriptEditor in the general section (DIAAT-333)", () => {
+  const sectioned = {
+    background: [
+      { speaker: "Judge", text: "The claimant was dismissed.", timestamp: "00:00" },
+    ],
+    evidence: [],
+    facts: [],
+  };
+
+  it("names no section, while listening or after", () => {
+    render(
+      <TranscriptEditor
+        sectionedTranscript={sectioned}
+        activeSection="background"
+        interimTargetSection="background"
+        interimText="Judge: and then"
+        isListening
+        onTranscriptUpdate={() => undefined}
+        showSectionNames={false}
+      />
+    );
+
+    expect(screen.getByText(/The claimant was dismissed/)).toBeTruthy();
+    expect(screen.queryByText(/Background/)).toBeNull();
+    expect(screen.getByText("Recording")).toBeTruthy();
+  });
+
+  it("names the section by default, as the IAC's do", () => {
+    render(
+      <TranscriptEditor
+        sectionedTranscript={sectioned}
+        activeSection="background"
+        interimTargetSection="background"
+        interimText="Judge: and then"
+        isListening
+        onTranscriptUpdate={() => undefined}
+      />
+    );
+
+    expect(screen.getByText("Recording to Background")).toBeTruthy();
+  });
+});

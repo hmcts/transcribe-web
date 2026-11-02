@@ -1,6 +1,7 @@
 "use client";
 
 import { getAuthToken } from "@/lib/auth-utils";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 
 /**
  * Downloads a transcript document via the /api/download proxy.
@@ -17,7 +18,7 @@ export async function downloadTranscriptDocument(
 ): Promise<void> {
   const authToken = await getAuthToken();
 
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string> = { ...jurisdictionHeaders() };
   if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
   const response = await fetch(

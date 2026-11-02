@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JobDetailView } from "@/components/recording/transcript/job-detail-view";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import type { TranscriptionJob } from "@/lib/recording/types";
 
 // DIAAT-236: the review panel sidebar must stay in view (position: sticky)
@@ -204,6 +205,30 @@ describe("JobDetailView baseline transcript upload", () => {
   // Front Door's WAF blocks multipart bodies from the browser, so the file
   // goes as the raw body, with its name and size in headers; the route
   // handler builds the multipart request to the API.
+  it("stops a jurisdiction switch while the upload is in progress (DIAAT-332)", async () => {
+    const job = makeJob();
+    let finish: (value: unknown) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      )
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.upload(
+      screen.getByLabelText(/baseline transcript file input/i),
+      new File(["Judge: Good morning."], "day 2.txt", { type: "text/plain" })
+    );
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "busy" });
+
+    finish({ ok: true, status: 200, json: () => Promise.resolve({ job }) });
+    await waitFor(() => expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined());
+  });
+
   it("sends the .txt file as the raw request body, its name and size in headers", async () => {
     const job = makeJob();
     const updated = makeJob({

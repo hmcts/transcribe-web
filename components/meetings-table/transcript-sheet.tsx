@@ -20,6 +20,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { redactSectionedTranscript } from "@/lib/transcript-redaction";
 import { cn } from "@/lib/utils";
 import type { MeetingRow } from "./types";
+import { useWording } from "@/providers/jurisdiction";
 
 interface TranscriptSheetProps {
   meeting: MeetingRow | null;
@@ -43,6 +44,7 @@ export function TranscriptSheet({
   open,
   onOpenChange,
 }: TranscriptSheetProps) {
+  const wording = useWording();
   const [activeSection, setActiveSection] =
     React.useState<TranscriptSection>("background");
   const [redactPii, setRedactPii] = React.useState(false);
@@ -171,7 +173,7 @@ export function TranscriptSheet({
 
           {!isLoading && !hasTranscriptContent(displayedTranscript) && (
             <div className="py-8 text-sm text-muted-foreground">
-              No saved transcript was found for this hearing.
+              {wording("records.no_transcript")}
             </div>
           )}
 

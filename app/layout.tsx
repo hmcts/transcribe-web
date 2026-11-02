@@ -11,6 +11,7 @@ import Header from "@/components/layout/header";
 import { Toaster } from "@/components/ui/sonner";
 import cn from "@/lib/utils";
 import AccessGate from "@/providers/access-gate";
+import { JurisdictionProvider } from "@/providers/jurisdiction";
 import PageViewTracker from "@/providers/page-view-tracker";
 import TelemetryBootstrap from "@/providers/telemetry-bootstrap";
 import { ThemeProvider } from "@/providers/theme-provider";
@@ -56,17 +57,20 @@ export default async function RootLayout({
           <UserSettingsProvider>
             <TelemetryBootstrap />
             <PageViewTracker />
-            <TranscriptsProvider>
-              <AccessGate>
-                <div className="flex min-h-screen min-w-0 flex-col">
-                  <Header />
-                  <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
-                    <main className="mt-14 w-full min-w-0">{children}</main>
+            {/* DIAAT-322: access first, then the tab's jurisdiction, then its material. */}
+            <AccessGate>
+              <JurisdictionProvider>
+                <TranscriptsProvider>
+                  <div className="flex min-h-screen min-w-0 flex-col">
+                    <Header />
+                    <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
+                      <main className="mt-14 w-full min-w-0">{children}</main>
+                    </div>
                   </div>
-                </div>
-                <Toaster />
-              </AccessGate>
-            </TranscriptsProvider>
+                  <Toaster />
+                </TranscriptsProvider>
+              </JurisdictionProvider>
+            </AccessGate>
           </UserSettingsProvider>
         </ThemeProvider>
         <CookieBanner />

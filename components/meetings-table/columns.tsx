@@ -1,10 +1,12 @@
 "use client";
 
-import type { ColumnDef } from "@tanstack/react-table";
+import type { Column, ColumnDef } from "@tanstack/react-table";
 import { Clock } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DataTableColumnHeader } from "@/components/ui/data-table-column-header";
+import type { WordingKey } from "@/lib/jurisdiction-wording";
+import { useWording } from "@/providers/jurisdiction";
 import { MeetingsRowActions } from "./row-actions";
 import type { MeetingRow } from "./types";
 
@@ -22,6 +24,17 @@ const matchesHearingType = (hearingTypes: string[], selectedType?: string) => {
     (hearingType) => hearingType.toLowerCase() === selectedType.toLowerCase()
   );
 };
+
+/** A column heading in the jurisdiction's words (DIAAT-330). */
+function WordedColumnHeader<TData>({
+  column,
+  wordingKey,
+}: {
+  column: Column<TData, unknown>;
+  wordingKey: WordingKey;
+}) {
+  return <DataTableColumnHeader column={column} title={useWording()(wordingKey)} />;
+}
 
 export const getMeetingsColumns = ({
   onOpenMeeting,
@@ -59,7 +72,7 @@ export const getMeetingsColumns = ({
     id: "title",
     accessorKey: "title",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Hearing" />
+      <WordedColumnHeader column={column} wordingKey="records.column_title" />
     ),
     cell: ({ row }) => (
       <button
@@ -113,7 +126,7 @@ export const getMeetingsColumns = ({
     id: "hearingTypes",
     accessorKey: "hearingTypes",
     header: ({ column }) => (
-      <DataTableColumnHeader column={column} title="Hearing type" />
+      <WordedColumnHeader column={column} wordingKey="records.column_type" />
     ),
     cell: ({ row }) => {
       const hearingTypes = row.original.hearingTypes;

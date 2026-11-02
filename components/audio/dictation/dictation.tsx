@@ -39,6 +39,7 @@ import { submitDictation } from "@/lib/dictation-submission";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
 import { isCapturingSpeech } from "@/lib/speech-session-health";
 import cn, { getJudgeNameFromEmail } from "@/lib/utils";
+import { useWording } from "@/providers/jurisdiction";
 import { useUserSettings } from "@/providers/user-settings";
 import TranscriptEditor from "./transcript-editor";
 import type {
@@ -119,11 +120,13 @@ export default function LiveDictation({
   onActiveSectionChange,
   showRecordingControls = true,
   showSectionTabs = true,
+  showSectionNames = true,
   embedded = false,
   onTranscriptChange,
   initialSectionedTranscript,
   onSpeechSessionChange,
 }: SpeechDemoProps) {
+  const wording = useWording();
   const router = useRouter();
   const { user } = useUserSettings();
   const { segments, error, session, connect, disconnect } =
@@ -289,6 +292,7 @@ export default function LiveDictation({
       hasCapturedSpeech,
       noSpeechWarning,
       noSpeechThresholdSeconds: Math.round(noSpeechThresholdMs / 1000),
+      speechLostGuidance: wording("alerts.speech_lost_guidance"),
     });
     if (alert?.kind === "speech-interrupted" && resumedNoticeDismissed) {
       return null;
@@ -301,6 +305,7 @@ export default function LiveDictation({
     noSpeechWarning,
     noSpeechThresholdMs,
     resumedNoticeDismissed,
+    wording,
   ]);
 
   // Detection lives here, in the one component that owns both the SDK session
@@ -553,6 +558,7 @@ export default function LiveDictation({
               interimText={interimText}
               isListening={isListening}
               onTranscriptUpdate={handleTranscriptUpdate}
+              showSectionNames={showSectionNames}
             />
           </div>
         </div>
@@ -611,6 +617,7 @@ export default function LiveDictation({
                   interimText={interimText}
                   isListening={isListening}
                   onTranscriptUpdate={handleTranscriptUpdate}
+                  showSectionNames={showSectionNames}
                 />
               </div>
             </div>

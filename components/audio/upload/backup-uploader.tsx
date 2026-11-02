@@ -4,11 +4,13 @@ import { useCallback, useState } from "react";
 import ProcessingLoader, {
   type AudioProcessingStatus,
 } from "@/components/audio/processing/processing-loader";
+import { isApiProxyUpload } from "@/components/audio/upload/use-audio-upload";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { track } from "@/lib/analytics";
 import { apiClient } from "@/lib/api-client";
 import { type AudioBackup, audioBackupDB } from "@/lib/indexeddb-backup";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import { useTranscripts } from "@/providers/transcripts";
 
 interface BackupUploaderProps {
@@ -74,6 +76,13 @@ function BackupUploader({
           if (authToken)
             xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
           xhr.setRequestHeader("x-ms-blob-type", "BlockBlob");
+          // DIAAT-334: as use-audio-upload, the API's proxy upload is checked
+          // against the tab's jurisdiction; a storage SAS URL gets no header.
+          if (isApiProxyUpload(upload_url)) {
+            for (const [name, value] of Object.entries(jurisdictionHeaders())) {
+              xhr.setRequestHeader(name, value);
+            }
+          }
           xhr.send(blob);
         });
 

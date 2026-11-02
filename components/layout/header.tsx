@@ -1,10 +1,11 @@
 "use client";
 
-import { FileAudio, HelpCircle, Menu, Mic, Shield } from "lucide-react";
+import { FileAudio, HelpCircle, Menu, Mic, PenLine, Shield } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { JurisdictionSwitcher } from "@/components/jurisdiction/jurisdiction-switcher";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,16 +23,26 @@ import {
   HEARING_RECORDINGS_HREF,
   isPathActive,
 } from "@/lib/navigation";
+import { inSentence } from "@/lib/jurisdiction-wording";
 import cn from "@/lib/utils";
+import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 
 export default function Header() {
-  const { isRecording, selectedRecordingMode } = useTranscripts();
+  const { isRecording, selectedRecordingMode, isProcessingTranscription } =
+    useTranscripts();
   // Hide the links away from the current page while a session is live: a
   // client-side navigation would unmount it, and the provider's beforeunload
   // and popstate guards do not catch <Link> clicks. Live dictation on /record
   // sets isRecording, not selectedRecordingMode.
   const hideNavLinks = Boolean(selectedRecordingMode) || isRecording;
+  // DIAAT-332: no switching jurisdiction while an upload is being processed.
+  const hideSwitcher = hideNavLinks || Boolean(isProcessingTranscription);
+  // DIAAT-330: hearing recordings only where the jurisdiction uses them, in its words.
+  const { current, hasHearingRecordings, wording } = useJurisdiction();
+  // DIAAT-356: an admin for the jurisdiction they work in can change its wording.
+  const isJurisdictionAdmin = current?.role === "admin";
+  const recordingsLabel = wording("nav.recordings");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -152,6 +163,16 @@ export default function Header() {
               <span className="text-base">Admin</span>
             </Link>
           )}
+          {!hideNavLinks && isJurisdictionAdmin && (
+            <Link
+              href="/jurisdiction-wording"
+              className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
+              title={`Change ${current.code} wording`}
+            >
+              <PenLine className="mr-1 size-5" />
+              <span className="text-base">Wording</span>
+            </Link>
+          )}
           {/* MERGE NOTE: entry points for both feature areas (dictation and
               hearing recordings). Without nav links the merged app would ship
               two unreachable halves rather than one application. */}
@@ -170,19 +191,19 @@ export default function Header() {
               <span className="text-base">Dictation</span>
             </Link>
           )}
-          {!hideNavLinks && (
+          {!hideNavLinks && hasHearingRecordings && (
             <Link
               href={HEARING_RECORDINGS_HREF}
               className={cn(
                 "flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5",
                 isHearingRecordingsActive && "bg-foreground/5"
               )}
-              aria-label="Go to hearing recordings"
+              aria-label={`Go to ${inSentence(recordingsLabel)}`}
               aria-current={isHearingRecordingsActive ? "page" : undefined}
-              title="Go to hearing recordings"
+              title={`Go to ${inSentence(recordingsLabel)}`}
             >
               <FileAudio className="mr-1 size-5" />
-              <span className="text-base">Hearing recordings</span>
+              <span className="text-base">{recordingsLabel}</span>
             </Link>
           )}
           {!hideNavLinks && (
@@ -195,6 +216,9 @@ export default function Header() {
               <HelpCircle className="mr-1 size-5" />
               <span className="text-base">Help</span>
             </Link>
+          )}
+          {!hideSwitcher && (
+            <JurisdictionSwitcher className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
           )}
           <ThemeToggle />
         </nav>
@@ -215,6 +239,9 @@ export default function Header() {
               <SheetTitle>Navigation</SheetTitle>
             </SheetHeader>
             <div className="flex flex-col gap-2">
+              {!hideSwitcher && (
+                <JurisdictionSwitcher className="h-10 justify-start px-3 text-sm font-medium" />
+              )}
               <SheetClose asChild>
                 <Link
                   href="/"
@@ -235,6 +262,17 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
+              {!hideNavLinks && isJurisdictionAdmin && (
+                <SheetClose asChild>
+                  <Link
+                    href="/jurisdiction-wording"
+                    className="inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground"
+                  >
+                    <PenLine className="size-4" />
+                    Wording
+                  </Link>
+                </SheetClose>
+              )}
               {!hideNavLinks && (
                 <SheetClose asChild>
                   <Link
@@ -250,7 +288,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!hideNavLinks && (
+              {!hideNavLinks && hasHearingRecordings && (
                 <SheetClose asChild>
                   <Link
                     href={HEARING_RECORDINGS_HREF}
@@ -263,7 +301,7 @@ export default function Header() {
                     )}
                   >
                     <FileAudio className="size-4" />
-                    Hearing recordings
+                    {recordingsLabel}
                   </Link>
                 </SheetClose>
               )}

@@ -147,6 +147,22 @@ describe("rawBackendFetch header assembly", () => {
     expect(init.headers.Authorization).toBeUndefined();
   });
 
+  it("passes on the tab's jurisdiction (DIAAT-334)", async () => {
+    const fetchMock = mockFetchOnce(emptyList);
+    await listJobs(undefined, { bearerToken: "user-token", jurisdiction: "IAC" });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["X-Jurisdiction"]).toBe("IAC");
+  });
+
+  it("names no jurisdiction when the request did not (a server component)", async () => {
+    const fetchMock = mockFetchOnce(emptyList);
+    await listJobs(undefined, { bearerToken: "user-token" });
+
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers["X-Jurisdiction"]).toBeUndefined();
+  });
+
   it("never sends Easy Auth identity headers", async () => {
     const fetchMock = mockFetchOnce(emptyList);
     await listJobs(undefined, { bearerToken: "user-token" });

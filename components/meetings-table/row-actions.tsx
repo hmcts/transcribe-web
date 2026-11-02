@@ -18,6 +18,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import type { MeetingRow } from "./types";
+import { useWording } from "@/providers/jurisdiction";
 
 interface MeetingsRowActionsProps {
   meeting: MeetingRow;
@@ -36,6 +37,7 @@ export function MeetingsRowActions({
   onDownloadDocument,
   onToggleDone,
 }: MeetingsRowActionsProps) {
+  const wording = useWording();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -51,7 +53,7 @@ export function MeetingsRowActions({
       <DropdownMenuContent align="end" className="w-48">
         <DropdownMenuItem onClick={() => onOpenMeeting(meeting)}>
           <Eye className="mr-2 size-4" />
-          Open hearing
+          {wording("records.open")}
         </DropdownMenuItem>
         <DropdownMenuItem onClick={() => onRenameMeeting(meeting)}>
           <Pencil className="mr-2 size-4" />

@@ -1,6 +1,13 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+let mockJurisdiction: "IAC" | "ET" = "IAC";
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule(
+    () => mockJurisdiction
+  )
+);
+
 vi.mock("@/lib/indexeddb-backup", () => ({
   audioBackupDB: {
     saveAudioBackup: vi.fn().mockResolvedValue(undefined),
@@ -56,6 +63,24 @@ describe("useRecordingBackup", () => {
     });
 
     expect(audioBackupDB.saveAudioBackup).toHaveBeenCalled();
+  });
+
+  it("records which jurisdiction the backup was made in (DIAAT-334)", async () => {
+    mockJurisdiction = "ET";
+    try {
+      const { mediaRecorderRef, mediaChunksRef } = makeRefs();
+      const { result } = renderHook(() =>
+        useRecordingBackup(mediaRecorderRef, mediaChunksRef, 0)
+      );
+
+      await act(async () => {
+        await result.current.createPeriodicBackup();
+      });
+
+      expect(vi.mocked(audioBackupDB.saveAudioBackup).mock.calls.at(-1)?.[0].jurisdiction).toBe("ET");
+    } finally {
+      mockJurisdiction = "IAC";
+    }
   });
 
   it("createPeriodicBackup does nothing when mediaRecorder is null", async () => {

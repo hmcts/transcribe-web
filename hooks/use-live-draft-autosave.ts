@@ -54,6 +54,13 @@ export interface UseLiveDraftAutosaveResult {
    * submission deletes the draft.
    */
   stop: () => Promise<void>;
+  /**
+   * Write the current payload now and resolve once it is stored; reject if it
+   * could not be. Nothing else writes meanwhile. Does nothing once stopped (the
+   * draft was submitted). For leaving the page on purpose (DIAAT-332: switching
+   * jurisdiction), where the caller must know the work is safe.
+   */
+  flush: () => Promise<void>;
 }
 
 /**
@@ -98,6 +105,8 @@ export function useLiveDraftAutosave({
   const stoppedRef = useRef(false);
   /** Operations in progress under runExclusive; writes wait while non-zero. */
   const exclusiveRef = useRef(0);
+  /** Settles when the last runExclusive operation queued has finished. */
+  const exclusiveQueueRef = useRef<Promise<void>>(Promise.resolve());
   /** The flush on unmount was due while writes were held. */
   const flushHeldRef = useRef(false);
   const getPayloadRef = useRef(getPayload);
@@ -107,6 +116,20 @@ export function useLiveDraftAutosave({
     stateRef.current = next;
     setState(next);
   }, []);
+
+  /** A write landed: report the end of any outage, and record the save. */
+  const markSaved = useCallback(() => {
+    const previous = stateRef.current;
+    if (previous.consecutiveFailures > 0) {
+      liveDraftTelemetry.saveRecovered({
+        consecutiveFailures: previous.consecutiveFailures,
+        outageMs:
+          previous.failingSince === null ? 0 : Date.now() - previous.failingSince,
+      });
+    }
+    escalatedRef.current = false;
+    commit(recordAutosaveSuccess(Date.now()));
+  }, [commit]);
 
   const clearRetry = useCallback(() => {
     if (retryTimerRef.current !== null) {
@@ -167,18 +190,7 @@ export function useLiveDraftAutosave({
             return;
           }
 
-          const previous = stateRef.current;
-          if (previous.consecutiveFailures > 0) {
-            liveDraftTelemetry.saveRecovered({
-              consecutiveFailures: previous.consecutiveFailures,
-              outageMs:
-                previous.failingSince === null
-                  ? 0
-                  : Date.now() - previous.failingSince,
-            });
-          }
-          escalatedRef.current = false;
-          commit(recordAutosaveSuccess(Date.now()));
+          markSaved();
 
           // Flush any save that arrived while this PUT was in-flight.
           const pending = pendingTriggerRef.current;
@@ -241,7 +253,7 @@ export function useLiveDraftAutosave({
           inFlightPromiseRef.current = null;
       });
     },
-    [clearRetry, commit, flushAfterUnmount]
+    [clearRetry, commit, flushAfterUnmount, markSaved]
   );
 
   attemptRef.current = attempt;
@@ -281,10 +293,19 @@ export function useLiveDraftAutosave({
   const runExclusive = useCallback(
     async <T>(operation: () => Promise<T>): Promise<T> => {
       exclusiveRef.current += 1;
+      // One at a time, in order: a flush must not start its write while a delete
+      // queued before it is still pending, or the late delete would erase it.
+      const previous = exclusiveQueueRef.current;
+      let release: () => void = () => undefined;
+      exclusiveQueueRef.current = new Promise<void>((resolve) => {
+        release = resolve;
+      });
       try {
+        await previous;
         await settleInFlight();
         return await operation();
       } finally {
+        release();
         exclusiveRef.current -= 1;
         if (exclusiveRef.current === 0) {
           const pending = pendingTriggerRef.current;
@@ -310,5 +331,39 @@ export function useLiveDraftAutosave({
     await settleInFlight();
   }, [clearRetry, settleInFlight]);
 
-  return { state, saveNow, runExclusive, stop };
+  const flush = useCallback(async () => {
+    try {
+      await runExclusive(async () => {
+        if (stoppedRef.current) return;
+        const payload = getPayloadRef.current();
+        if (!payload) return;
+        // In flight like any write, so stop() and a delete wait for it.
+        const write = putLiveDraft(payload.transcript, payload.formData);
+        const settled = write.then(
+          () => undefined,
+          () => undefined
+        );
+        inFlightRef.current = true;
+        inFlightPromiseRef.current = settled;
+        try {
+          await write;
+        } finally {
+          inFlightRef.current = false;
+          if (inFlightPromiseRef.current === settled) {
+            inFlightPromiseRef.current = null;
+          }
+        }
+        clearRetry(); // superseded
+        if (isMountedRef.current) markSaved();
+      });
+    } catch (error) {
+      // Back to the usual path, which records the failure, alerts and retries.
+      if (isMountedRef.current && !stoppedRef.current) {
+        attemptRef.current?.("retry");
+      }
+      throw error;
+    }
+  }, [runExclusive, clearRetry, markSaved]);
+
+  return { state, saveNow, runExclusive, stop, flush };
 }

@@ -5,6 +5,18 @@ interface AudioBackup {
   timestamp: number;
   mimeType: string;
   recordingDuration?: number;
+  /** DIAAT-334: the jurisdiction it was recorded in; offered back only there.
+   * Absent on a backup from before jurisdictions: see isBackupFor. */
+  jurisdiction?: string;
+}
+
+/** Every backup from before jurisdictions was the IAC's (as migration 0004 puts
+ * every earlier record in the IAC). */
+const JURISDICTION_BEFORE_DIAAT_322 = "IAC";
+
+/** Whether a backup belongs to `jurisdiction`, so may be recovered there. */
+export function isBackupFor(backup: AudioBackup, jurisdiction: string): boolean {
+  return (backup.jurisdiction ?? JURISDICTION_BEFORE_DIAAT_322) === jurisdiction;
 }
 
 interface AudioChunk {

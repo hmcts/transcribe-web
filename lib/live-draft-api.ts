@@ -1,4 +1,5 @@
 import { getAuthToken } from "@/lib/auth-utils";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import {
   LiveDraftError,
   classifyLiveDraftStatus,
@@ -14,7 +15,11 @@ export interface LiveDraftApiResponse {
 
 async function authHeaders(): Promise<Record<string, string>> {
   const token = await getAuthToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  // DIAAT-322: each jurisdiction has its own draft; this tab's is the one meant.
+  return {
+    ...(token && { Authorization: `Bearer ${token}` }),
+    ...jurisdictionHeaders(),
+  };
 }
 
 /**
