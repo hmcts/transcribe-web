@@ -1422,4 +1422,135 @@ describe("TranscriptSegment", () => {
       expect(screen.queryByRole("tooltip")).toBeNull();
     });
   });
+
+  describe("renaming the speaker", () => {
+    const openRename = async () => {
+      const onRenameSpeaker = vi.fn().mockResolvedValue(undefined);
+      render(
+        <TranscriptSegment
+          segment={SEGMENT}
+          onRenameSpeaker={onRenameSpeaker}
+        />
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Rename speaker Judge" })
+      );
+      const input = screen.getByLabelText("New name for Judge");
+      return { onRenameSpeaker, input };
+    };
+
+    it("offers no rename control without an onRenameSpeaker handler", () => {
+      render(<TranscriptSegment segment={SEGMENT} />);
+      expect(
+        screen.queryByRole("button", { name: /rename speaker/i })
+      ).toBeNull();
+    });
+
+    it("opens with the current name and both replace choices", async () => {
+      const { input } = await openRename();
+      expect((input as HTMLInputElement).value).toBe("Judge");
+      expect(screen.getByRole("button", { name: "Replace one" })).toBeDefined();
+      expect(screen.getByRole("button", { name: "Replace all" })).toBeDefined();
+    });
+
+    it("replace one renames just this section", async () => {
+      const { onRenameSpeaker, input } = await openRename();
+      await userEvent.clear(input);
+      await userEvent.type(input, "  Judge Smith ");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Replace one" })
+      );
+
+      expect(onRenameSpeaker).toHaveBeenCalledWith("Judge Smith", false);
+      await waitFor(() =>
+        expect(screen.queryByLabelText("New name for Judge")).toBeNull()
+      );
+    });
+
+    it("replace all renames every section by this speaker", async () => {
+      const { onRenameSpeaker, input } = await openRename();
+      await userEvent.clear(input);
+      await userEvent.type(input, "Judge Smith");
+      await userEvent.click(
+        screen.getByRole("button", { name: "Replace all" })
+      );
+
+      expect(onRenameSpeaker).toHaveBeenCalledWith("Judge Smith", true);
+    });
+
+    it("shows an error and does not save an empty name", async () => {
+      const { onRenameSpeaker, input } = await openRename();
+      await userEvent.clear(input);
+      await userEvent.click(
+        screen.getByRole("button", { name: "Replace all" })
+      );
+
+      expect(onRenameSpeaker).not.toHaveBeenCalled();
+      expect(screen.getByRole("alert").textContent).toBe(
+        "Enter a speaker name"
+      );
+      expect(input.getAttribute("aria-invalid")).toBe("true");
+    });
+
+    it("closes without saving when the name is unchanged", async () => {
+      const { onRenameSpeaker } = await openRename();
+      await userEvent.click(
+        screen.getByRole("button", { name: "Replace one" })
+      );
+
+      expect(onRenameSpeaker).not.toHaveBeenCalled();
+      expect(screen.queryByLabelText("New name for Judge")).toBeNull();
+    });
+
+    it("cancel and Escape discard the edit", async () => {
+      const { onRenameSpeaker, input } = await openRename();
+      await userEvent.type(input, " Smith");
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(screen.queryByLabelText("New name for Judge")).toBeNull();
+
+      await userEvent.click(
+        screen.getByRole("button", { name: "Rename speaker Judge" })
+      );
+      await userEvent.type(
+        screen.getByLabelText("New name for Judge"),
+        " Smith{Escape}"
+      );
+      expect(screen.queryByLabelText("New name for Judge")).toBeNull();
+      expect(onRenameSpeaker).not.toHaveBeenCalled();
+      expect(screen.getByText("Judge")).toBeDefined();
+    });
+
+    it("returns focus to the rename button when the editor closes", async () => {
+      await openRename();
+      await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: "Rename speaker Judge" })
+      );
+    });
+
+    it("keeps the editor open with an error when saving fails", async () => {
+      const onRenameSpeaker = vi.fn().mockRejectedValue(new Error("boom"));
+      render(
+        <TranscriptSegment
+          segment={SEGMENT}
+          onRenameSpeaker={onRenameSpeaker}
+        />
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Rename speaker Judge" })
+      );
+      await userEvent.type(
+        screen.getByLabelText("New name for Judge"),
+        " Smith"
+      );
+      await userEvent.click(
+        screen.getByRole("button", { name: "Replace one" })
+      );
+
+      expect((await screen.findByRole("alert")).textContent).toMatch(
+        /could not be saved/
+      );
+      expect(screen.getByLabelText("New name for Judge")).toBeDefined();
+    });
+  });
 });
