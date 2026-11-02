@@ -13,12 +13,22 @@ import { TranscriptSegment } from "@/components/recording/transcript/transcript-
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { apiPath } from "@/lib/recording/base-path";
 import { RECORDING_HOME } from "@/lib/recording/routes";
-import type { TranscriptionJob } from "@/lib/recording/types";
+import type {
+  TranscriptionJob,
+  TranscriptSegment as TranscriptSegmentType,
+} from "@/lib/recording/types";
 import { rawUploadHeaders } from "@/lib/recording/upload-contract";
 import { cn } from "@/lib/recording/utils";
 import { recordingFetch, withTabJurisdiction } from "@/lib/recording/browser-fetch";
 
 const POLL_INTERVAL_MS = 5000;
+
+// Segment ids are array positions, which a combine shifts. Timing and the original
+// (never corrected) text stay the same for every section except the combined one,
+// whose text always grows.
+function segmentKey(segment: TranscriptSegmentType): string {
+  return `${segment.startTime}:${segment.duration}:${segment.text.length}`;
+}
 
 // Persists the reader's audio/transcript sync-highlight preference (DIAAT-246)
 // across visits and page reloads.
@@ -38,6 +48,10 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   );
   const jobRef = useRef(job);
   jobRef.current = job;
+  const applyJob = (next: TranscriptionJob) => {
+    jobRef.current = next;
+    setJob(next);
+  };
 
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const audioCleanupRef = useRef<(() => void) | null>(null);
@@ -167,7 +181,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       throw new Error(`Failed to save correction: ${response.status}`);
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
 
   const correctWordRange = async (
@@ -188,7 +202,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       throw new Error(`Failed to save correction: ${response.status}`);
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
 
   const rollbackSegment = async (index: number) => {
@@ -200,7 +214,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       throw new Error(`Failed to roll back segment: ${response.status}`);
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
 
   const acceptSegment = async (index: number) => {
@@ -212,7 +226,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       throw new Error(`Failed to accept segment: ${response.status}`);
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
 
   const renameSpeaker = async (
@@ -232,8 +246,54 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       throw new Error(`Failed to rename speaker: ${response.status}`);
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
+
+  const [combining, setCombining] = useState(false);
+  const [combineFailed, setCombineFailed] = useState(false);
+  const requestQueue = useRef<Promise<unknown>>(Promise.resolve());
+
+  // A combine renumbers the sections after it, so requests that address a
+  // section by index run one at a time, each finding its section when its turn
+  // comes.
+  const enqueue = <T,>(request: () => Promise<T>): Promise<T> => {
+    const run = requestQueue.current.then(request);
+    requestQueue.current = run.catch(() => undefined);
+    return run;
+  };
+
+  const atIndexOf = (key: string, request: (index: number) => Promise<void>) =>
+    enqueue(() => {
+      const index =
+        jobRef.current.segments?.findIndex((s) => segmentKey(s) === key) ?? -1;
+      if (index < 0) throw new Error("Section no longer exists");
+      return request(index);
+    });
+
+  const combine = (key: string, direction: "previous" | "next") =>
+    enqueue(async () => {
+      const segments = jobRef.current.segments ?? [];
+      const found = segments.findIndex((s) => segmentKey(s) === key);
+      const index = direction === "previous" ? found - 1 : found;
+      if (found < 0 || index < 0 || index >= segments.length - 1) return;
+      setCombining(true);
+      setCombineFailed(false);
+      try {
+        const response = await recordingFetch(
+          apiPath(`/api/jobs/${jobId}/segments/${index}/merge-next`),
+          { method: "POST" }
+        );
+        if (!response.ok) {
+          throw new Error(`Failed to combine segments: ${response.status}`);
+        }
+        const body = await response.json();
+        applyJob(body.job as TranscriptionJob);
+      } catch {
+        setCombineFailed(true);
+      } finally {
+        setCombining(false);
+      }
+    });
 
   const rollbackToHistoryEntry = async (
     index: number,
@@ -249,7 +309,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       throw new Error(`Failed to roll back: ${response.status}`);
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
 
   // DIAAT-332: a switch reloads the tab, which would cancel the upload.
@@ -259,7 +319,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   const uploadBaseline = async (file: File) => {
     setUploadingBaseline(true);
     try {
-      await sendBaseline(file);
+      await enqueue(() => sendBaseline(file));
     } finally {
       setUploadingBaseline(false);
     }
@@ -283,7 +343,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       );
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
 
   useEffect(() => {
@@ -407,28 +467,56 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
                   and confirm or edit.
                 </p>
               )}
+              {combineFailed && (
+                <p role="alert" className="text-sm text-destructive mb-3">
+                  These sections could not be combined. Try again.
+                </p>
+              )}
               <div className="border border-border rounded-lg divide-y divide-border">
-                {job.segments.map((segment, index) => {
+                {job.segments.map((segment, index, segments) => {
+                  const key = segmentKey(segment);
                   const isActive =
                     playing &&
                     position >= segment.startTime &&
                     position < segment.startTime + segment.duration;
                   return (
                     <TranscriptSegment
-                      key={segment.id}
+                      key={key}
                       segment={segment}
                       onSeek={audioAvailable ? seekTo : undefined}
-                      onCorrect={(text) => correctSegment(index, text)}
+                      onCorrect={(text) =>
+                        atIndexOf(key, (i) => correctSegment(i, text))
+                      }
                       onCorrectRange={(start, end, text) =>
-                        correctWordRange(index, start, end, text)
+                        atIndexOf(key, (i) =>
+                          correctWordRange(i, start, end, text)
+                        )
                       }
-                      onRollback={() => rollbackSegment(index)}
+                      onRollback={() => atIndexOf(key, rollbackSegment)}
                       onRollbackToHistory={(historyIndex) =>
-                        rollbackToHistoryEntry(index, historyIndex)
+                        atIndexOf(key, (i) =>
+                          rollbackToHistoryEntry(i, historyIndex)
+                        )
                       }
-                      onAccept={() => acceptSegment(index)}
+                      onAccept={() => atIndexOf(key, acceptSegment)}
+                      onCombinePrevious={
+                        index > 0 ? () => combine(key, "previous") : undefined
+                      }
+                      onCombineNext={
+                        index < segments.length - 1
+                          ? () => combine(key, "next")
+                          : undefined
+                      }
+                      combinePending={combining}
+                      needsReview={job.lowConfidenceSegments?.some(
+                        (item) =>
+                          item.startTime === segment.startTime &&
+                          item.speaker === segment.speaker
+                      )}
                       onRenameSpeaker={(speaker, applyToAll) =>
-                        renameSpeaker(index, speaker, applyToAll)
+                        atIndexOf(key, (i) =>
+                          renameSpeaker(i, speaker, applyToAll)
+                        )
                       }
                       isActive={isActive}
                       getCurrentTime={getCurrentTime}
