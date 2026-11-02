@@ -438,3 +438,106 @@ describe("Admin area and switching jurisdiction", () => {
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
   });
 });
+
+describe("Admin area: saves and deletes while requests are pending", () => {
+  beforeEach(() => {
+    mockContext = asDt();
+    request.mockReset();
+    vi.mocked(toast.success).mockClear();
+    vi.mocked(getAdminRole).mockResolvedValue(null);
+  });
+
+  const hearingType = (id: string, title: string) => ({
+    id,
+    title,
+    hearing_title: `${title} hearing`,
+    hearing_description: `${title} description`,
+  });
+
+  it("selects from the refreshed wording after deleting the selected item, not the deleted one", async () => {
+    const before = wording({
+      hearing_types: [
+        hearingType("first", "First"),
+        hearingType("second", "Second"),
+      ],
+    });
+    const after = wording({ hearing_types: [hearingType("second", "Second")] });
+    let finishReload: () => void = () => undefined;
+    let deleted = false;
+    request.mockImplementation(
+      async (_endpoint: string, options?: RequestInit) => {
+        if (options?.method === "DELETE") {
+          deleted = true;
+          return { data: null, status: 204 };
+        }
+        if (options?.method === "PUT") {
+          return { data: JSON.parse(String(options.body)), status: 200 };
+        }
+        if (!deleted) return { data: before, status: 200 };
+        await new Promise<void>((resolve) => {
+          finishReload = resolve;
+        });
+        return { data: after, status: 200 };
+      }
+    );
+    const user = userEvent.setup();
+    render(<AdminPage />);
+
+    await screen.findByDisplayValue("First hearing");
+    await user.click(screen.getByRole("button", { name: /Delete/ }));
+    const dialog = await screen.findByRole("alertdialog");
+    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deleted).toBe(true));
+    await waitFor(() =>
+      expect(screen.queryByDisplayValue("First hearing")).toBeNull()
+    );
+    finishReload();
+
+    await screen.findByDisplayValue("Second hearing");
+    request.mockClear();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith(
+        "/admin/document-content/hearing-types/second",
+        expect.objectContaining({ method: "PUT" })
+      )
+    );
+    expect(request).not.toHaveBeenCalledWith(
+      "/admin/document-content/hearing-types/first",
+      expect.anything()
+    );
+  });
+
+  it("keeps what was typed while a save was under way, as unsaved", async () => {
+    respondWith(wording());
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    const title = await screen.findByDisplayValue("Hearing");
+    await user.type(title, "!");
+
+    let finishSave: () => void = () => undefined;
+    let stored = wording();
+    request.mockImplementation(
+      async (_endpoint: string, options?: RequestInit) => {
+        if (options?.method !== "PUT") return { data: stored, status: 200 };
+        const sent = JSON.parse(String(options.body));
+        await new Promise<void>((resolve) => {
+          finishSave = resolve;
+        });
+        stored = { ...stored, hearing_types: [sent] };
+        return { data: sent, status: 200 };
+      }
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.type(title, "?");
+    finishSave();
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.getByDisplayValue("Hearing!?")).toBeTruthy()
+    );
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "unsaved_changes",
+    });
+  });
+});

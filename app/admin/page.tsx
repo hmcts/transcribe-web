@@ -195,9 +195,11 @@ function LegalWordingTab({
   // What the API calls it, else what this tab was told.
   const label = content?.jurisdiction?.name ?? name ?? code ?? undefined;
 
+  // Only on new content: a selection cleared by a delete waits for the refreshed content.
   useEffect(() => {
-    if (content && !selection) setSelection(getDefaultSelection(content));
-  }, [content, selection]);
+    if (content)
+      setSelection((current) => current ?? getDefaultSelection(content));
+  }, [content]);
 
   if (!code) {
     return (
@@ -598,6 +600,16 @@ function sameForm(a: unknown, b: unknown): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
+// The saved version replaces the form only if nothing was typed while the save was under
+// way; later edits stay, and show as unsaved.
+function keepLaterEdits<T>(
+  setForm: (update: (prev: T) => T) => void,
+  submitted: T,
+  saved: T,
+): void {
+  setForm((prev) => (sameForm(prev, submitted) ? saved : prev));
+}
+
 function resolveItemTitle(content: DocumentContent, sel: Selection): string {
   if (sel.category === "hearing-types") {
     return content.hearing_types.find((h) => h.id === sel.id)?.title ?? sel.id;
@@ -730,13 +742,15 @@ function HearingTypeEditor({
       return;
     }
     setSaving(true);
+    const submitted = form;
     try {
       if (isNew) {
         await createHearingType(form);
         toast.success(`Created "${form.title}"`);
       } else {
         // The API's (trimmed) version is what is saved, so nothing shows as unsaved.
-        setForm(await updateHearingType(form.id, form));
+        const saved = await updateHearingType(form.id, form);
+        keepLaterEdits(setForm, submitted, saved);
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
@@ -849,12 +863,14 @@ function LegalFrameworkEditor({
       return;
     }
     setSaving(true);
+    const submitted = form;
     try {
       if (isNew) {
         await createLegalFramework(form);
         toast.success(`Created "${form.title}"`);
       } else {
-        setForm(await updateLegalFramework(form.id, form));
+        const saved = await updateLegalFramework(form.id, form);
+        keepLaterEdits(setForm, submitted, saved);
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
@@ -983,8 +999,10 @@ function AnonymityEditor({
 
   async function handleSave() {
     setSaving(true);
+    const submitted = form;
     try {
-      setForm(await updateAnonymityStatus(form.id, form));
+      const saved = await updateAnonymityStatus(form.id, form);
+      keepLaterEdits(setForm, submitted, saved);
       toast.success(`Saved "${form.title}"`);
       await onSaved();
     } catch (err: unknown) {
