@@ -28,7 +28,17 @@ export const ET: CurrentJurisdiction = {
   wording: {},
 };
 
-const JURISDICTIONS = { IAC, ET } as const;
+/** A jurisdiction other than the IAC that uses the decision template (DIAAT-342). */
+export const DT: CurrentJurisdiction = {
+  code: "DT",
+  name: "Decision Tribunal",
+  role: "judge",
+  template: "iac_decision",
+  features: { hearing_recordings: false },
+  wording: {},
+};
+
+const JURISDICTIONS = { IAC, ET, DT } as const;
 
 type Code = keyof typeof JURISDICTIONS;
 
@@ -41,6 +51,7 @@ export function mockJurisdictionModule(
   const values = {
     IAC: jurisdictionContextValue(IAC, [IAC]),
     ET: jurisdictionContextValue(ET, [ET]),
+    DT: jurisdictionContextValue(DT, [DT]),
   };
   const valueFor = (c: Code) => {
     if (role() === "judge") return values[c];
