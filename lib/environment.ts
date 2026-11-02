@@ -25,6 +25,15 @@ function isEnabled(value: string | undefined): boolean {
   return value?.toLowerCase() === "true";
 }
 
+/**
+ * DIAAT-366: Dictation is switched off in prod (charts/transcribe-web/values.yaml).
+ * Read at runtime, not build time, because CNP builds one image for every
+ * environment. Anything but "false" leaves it on, so local dev and tests keep it.
+ */
+export function isDictationEnabled(): boolean {
+  return getEnv("NEXT_PUBLIC_DICTATION_ENABLED")?.toLowerCase() !== "false";
+}
+
 export function isLocalhostRuntime(): boolean {
   if (typeof window === "undefined") {
     return false;

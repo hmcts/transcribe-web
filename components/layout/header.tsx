@@ -17,6 +17,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { getAdminAccessStatus } from "@/lib/admin-access";
+import { isDictationEnabled } from "@/lib/environment";
 import {
   DICTATION_BASE_PATH,
   DICTATION_HREF,
@@ -49,6 +50,7 @@ export default function Header() {
   const lastScrollY = useRef(0);
   const [isHidden, setIsHidden] = useState(false);
   const [isAdminUser, setIsAdminUser] = useState(false);
+  const showDictation = !hideNavLinks && isDictationEnabled();
   const isDictationActive = isPathActive(pathname, DICTATION_BASE_PATH);
   const isHearingRecordingsActive = isPathActive(
     pathname,
@@ -176,7 +178,7 @@ export default function Header() {
           {/* MERGE NOTE: entry points for both feature areas (dictation and
               hearing recordings). Without nav links the merged app would ship
               two unreachable halves rather than one application. */}
-          {!hideNavLinks && (
+          {showDictation && (
             <Link
               href={DICTATION_HREF}
               className={cn(
@@ -273,7 +275,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!hideNavLinks && (
+              {showDictation && (
                 <SheetClose asChild>
                   <Link
                     href={DICTATION_HREF}

@@ -78,6 +78,33 @@ describe("Header", () => {
     mockPathname = "/";
     mockSelectedRecordingMode = null;
     mockIsRecording = false;
+    vi.unstubAllEnvs();
+  });
+
+  describe("with Dictation switched off (DIAAT-366)", () => {
+    it("leaves Dictation out of the desktop nav and keeps the rest", () => {
+      vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
+      const nav = within(render(<Header />).getByRole("navigation"));
+      expect(nav.queryByRole("link", { name: "Go to dictation" })).toBeNull();
+      expect(
+        nav.getByRole("link", { name: "Go to hearing recordings" })
+      ).toBeTruthy();
+      expect(nav.getByRole("link", { name: "Go to help" })).toBeTruthy();
+    });
+
+    it("leaves Dictation out of the mobile menu and keeps the rest", () => {
+      vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
+      render(<Header />);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open navigation menu" })
+      );
+      const menu = within(screen.getByRole("dialog"));
+      expect(menu.queryByRole("link", { name: "Dictation" })).toBeNull();
+      expect(
+        menu.getByRole("link", { name: "Hearing recordings" })
+      ).toBeTruthy();
+      expect(menu.getByRole("link", { name: "Help" })).toBeTruthy();
+    });
   });
 
   it("links an admin for the jurisdiction to its wording, and nobody else (DIAAT-356)", () => {

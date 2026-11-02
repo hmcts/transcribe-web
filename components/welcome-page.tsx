@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import StartNewRecordingButton from "@/components/ui/start-new-recording-button";
 import useMediaQuery from "@/hooks/use-media-query";
 import { track } from "@/lib/analytics";
+import { isDictationEnabled } from "@/lib/environment";
 import type { AudioBackup } from "@/lib/indexeddb-backup";
 import { HEARING_RECORDINGS_HREF } from "@/lib/navigation";
 import { getFullNameFromEmail } from "@/lib/utils";
@@ -45,6 +46,8 @@ function WelcomePage() {
   const [retryingBackup, setRetryingBackup] =
     React.useState<AudioBackup | null>(null);
   const _isMobile = useMediaQuery("(max-width: 768px)");
+
+  const showDictation = isDictationEnabled();
 
   const displayName = user?.email ? getFullNameFromEmail(user.email) : "";
   const heading = displayName ? `Welcome back, ${displayName}` : "Welcome back";
@@ -89,26 +92,30 @@ function WelcomePage() {
         <h1 className="text-5xl font-bold tracking-tight">{heading}</h1>
         <p className="text-muted-foreground prose">{wording("home.intro")}</p>
 
-        <div className="flex flex-col gap-4 mt-12 md:flex-row">
-          <StartNewRecordingButton
-            onClick={() => startMeetingWithMode("mic")}
-            size="large"
-            fullWidth={false}
-            className="w-full md:w-auto"
-          />
-          {hasHearingRecordings && (
-            <Button
-              asChild
-              variant="outline"
-              className="flex w-full items-center justify-center gap-2 py-6 text-lg md:w-auto"
-            >
-              <Link href={HEARING_RECORDINGS_HREF}>
-                <FileAudio className="size-5" />
-                {wording("nav.recordings")}
-              </Link>
-            </Button>
-          )}
-        </div>
+        {(showDictation || hasHearingRecordings) && (
+          <div className="flex flex-col gap-4 mt-12 md:flex-row">
+            {showDictation && (
+              <StartNewRecordingButton
+                onClick={() => startMeetingWithMode("mic")}
+                size="large"
+                fullWidth={false}
+                className="w-full md:w-auto"
+              />
+            )}
+            {hasHearingRecordings && (
+              <Button
+                asChild
+                variant="outline"
+                className="flex w-full items-center justify-center gap-2 py-6 text-lg md:w-auto"
+              >
+                <Link href={HEARING_RECORDINGS_HREF}>
+                  <FileAudio className="size-5" />
+                  {wording("nav.recordings")}
+                </Link>
+              </Button>
+            )}
+          </div>
+        )}
       </section>
 
       {transcriptsMetadata.length > 0 && (
