@@ -18,10 +18,12 @@ vi.mock("@/lib/recording/api-client", () => ({
   BackendApiError: MockBackendApiError,
 }));
 
-function makeRequest() {
+const NEXT_ID = "seg_00000000000000000000000000000003";
+
+function makeRequest(body: unknown = { nextSegmentId: NEXT_ID }) {
   return new NextRequest(
     "http://localhost/api/jobs/job-1/segments/seg_00000000000000000000000000000002/merge-next",
-    { method: "POST" }
+    { method: "POST", body: JSON.stringify(body) }
   );
 }
 
@@ -42,7 +44,7 @@ describe("POST /api/jobs/[jobId]/segments/[index]/merge-next", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ job: { id: "job-1" } });
-    expect(mockMergeSegmentWithNext).toHaveBeenCalledWith("job-1", SEGMENT_ID, {
+    expect(mockMergeSegmentWithNext).toHaveBeenCalledWith("job-1", SEGMENT_ID, NEXT_ID, {
       bearerToken: null,
     });
   });
@@ -58,6 +60,21 @@ describe("POST /api/jobs/[jobId]/segments/[index]/merge-next", () => {
     expect(response.status).toBe(422);
     expect(mockMergeSegmentWithNext).not.toHaveBeenCalled();
   });
+
+  it.each([{}, { nextSegmentId: "2" }])(
+    "rejects a missing or invalid next segment id with 422",
+    async (body) => {
+      mockMergeSegmentWithNext.mockClear();
+      const { POST } = await import(
+        "@/app/api/jobs/[jobId]/segments/[index]/merge-next/route"
+      );
+
+      const response = await POST(makeRequest(body), context(SEGMENT_ID));
+
+      expect(response.status).toBe(422);
+      expect(mockMergeSegmentWithNext).not.toHaveBeenCalled();
+    }
+  );
 
   it("passes a backend error status through", async () => {
     mockMergeSegmentWithNext.mockRejectedValue(

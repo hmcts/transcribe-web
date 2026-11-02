@@ -542,13 +542,19 @@ describe("mergeSegmentWithNext", () => {
       ],
     });
 
-    const job = await mergeSegmentWithNext(BACKEND_JOB.job_id, SEGMENT_ID, null);
+    const job = await mergeSegmentWithNext(
+      BACKEND_JOB.job_id,
+      SEGMENT_ID,
+      "seg_00000000000000000000000000000001",
+      null
+    );
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toContain(
       `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/${SEGMENT_ID}/merge-next`
     );
     expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ next_segment_id: "seg_00000000000000000000000000000001" });
     expect(job.segments).toHaveLength(1);
     expect(job.segments?.[0].text).toBe("Good morning. Please sit.");
     expect(job.segments?.[0].duration).toBe(6);

@@ -632,11 +632,16 @@ export async function renameSpeaker(
 export async function mergeSegmentWithNext(
   jobId: string,
   segmentId: string,
+  nextSegmentId: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
     `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/merge-next`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ next_segment_id: nextSegmentId }),
+    },
     auth
   );
   const body: BackendJob = await response.json();

@@ -18,7 +18,14 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
 
   const auth = await getBackendAuthContext(request);
   try {
-    const job = await mergeSegmentWithNext(jobId, index, auth);
+    const { nextSegmentId } = await request.json();
+    if (typeof nextSegmentId !== "string" || !isSegmentId(nextSegmentId)) {
+      return NextResponse.json(
+        { error: "nextSegmentId is required" },
+        { status: 422 }
+      );
+    }
+    const job = await mergeSegmentWithNext(jobId, index, nextSegmentId, auth);
     return NextResponse.json({ job });
   } catch (err) {
     if (err instanceof BackendApiError) {

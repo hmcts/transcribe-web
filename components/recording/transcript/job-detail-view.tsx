@@ -202,9 +202,13 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     body: JSON.stringify(body),
   });
 
-  const combineWithNext = (segmentId: string) => {
+  const combine = (segmentId: string, nextSegmentId: string) => {
     setCombining(true);
-    return segmentAction(segmentId, "/merge-next", { method: "POST" })
+    return segmentAction(segmentId, "/merge-next", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nextSegmentId }),
+    })
       .catch(() => undefined)
       .finally(() => setCombining(false));
   };
@@ -413,12 +417,12 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
                       }
                       onCombinePrevious={
                         index > 0
-                          ? () => combineWithNext(segments[index - 1].id)
+                          ? () => combine(segments[index - 1].id, segment.id)
                           : undefined
                       }
                       onCombineNext={
                         index < segments.length - 1
-                          ? () => combineWithNext(segment.id)
+                          ? () => combine(segment.id, segments[index + 1].id)
                           : undefined
                       }
                       combinePending={combining}

@@ -366,9 +366,9 @@ describe("JobDetailView combining segments", () => {
   });
 
   it.each([
-    ["Combine with section below", "seg-1", "seg-1"],
-    ["Combine with section above", "seg-1", "seg-0"],
-  ])("%s on %s merges from %s and shows the returned job", async (name, id, target) => {
+    ["Combine with section below", "seg-1", "seg-1", "seg-2"],
+    ["Combine with section above", "seg-1", "seg-0", "seg-1"],
+  ])("%s on %s merges %s with %s and shows the returned job", async (name, id, target, next) => {
     const merged = makeJob({
       segments: [
         segment("seg-0", "Good morning.", 0),
@@ -392,6 +392,7 @@ describe("JobDetailView combining segments", () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe(`/api/jobs/${job.id}/segments/${target}/merge-next`);
     expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ nextSegmentId: next });
     expect(await screen.findByText("Good morning.")).toBeDefined();
   });
 
