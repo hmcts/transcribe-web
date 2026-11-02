@@ -6,6 +6,7 @@ import {
   getJob,
   getJobAudio,
   listJobs,
+  mergeSegmentWithNext,
   renameSpeaker,
   submitJob,
   uploadAndSubmit,
@@ -468,6 +469,34 @@ describe("renameSpeaker", () => {
     });
     expect(job.segments?.[0].speaker).toBe("Judge Smith");
     expect(job.segments?.[0].speakerColor).toBe(colorForSpeaker("Judge Smith"));
+  });
+});
+
+describe("mergeSegmentWithNext", () => {
+  it("POSTs to the segment merge-next endpoint and maps the returned job", async () => {
+    const fetchMock = mockFetchOnce({
+      ...BACKEND_JOB,
+      dialogue_entries: [
+        {
+          speaker: "Speaker 0",
+          text: "Good morning. Please sit.",
+          start_time: 0,
+          end_time: 6,
+          confidence: 0.4,
+        },
+      ],
+    });
+
+    const job = await mergeSegmentWithNext(BACKEND_JOB.job_id, 0, null);
+
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toContain(
+      `/api/v1/jobs/${BACKEND_JOB.job_id}/segments/0/merge-next`
+    );
+    expect(init.method).toBe("POST");
+    expect(job.segments).toHaveLength(1);
+    expect(job.segments?.[0].text).toBe("Good morning. Please sit.");
+    expect(job.segments?.[0].duration).toBe(6);
   });
 });
 

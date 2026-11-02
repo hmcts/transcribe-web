@@ -1588,3 +1588,106 @@ describe("TranscriptSegment", () => {
     });
   });
 });
+
+describe("TranscriptSegment combine buttons", () => {
+  it("shows both arrows with matching hover text and accessible names", () => {
+    render(
+      <TranscriptSegment
+        segment={SEGMENT}
+        onCombinePrevious={vi.fn()}
+        onCombineNext={vi.fn()}
+      />
+    );
+    const up = screen.getByRole("button", { name: "Combine with previous" });
+    const down = screen.getByRole("button", { name: "Combine with next" });
+    expect(up.getAttribute("title")).toBe("Combine with previous");
+    expect(down.getAttribute("title")).toBe("Combine with next");
+  });
+
+  it("hides the up arrow when there is no previous segment", () => {
+    render(<TranscriptSegment segment={SEGMENT} onCombineNext={vi.fn()} />);
+    expect(
+      screen.queryByRole("button", { name: "Combine with previous" })
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Combine with next" })
+    ).toBeDefined();
+  });
+
+  it("hides the down arrow when there is no next segment", () => {
+    render(<TranscriptSegment segment={SEGMENT} onCombinePrevious={vi.fn()} />);
+    expect(
+      screen.queryByRole("button", { name: "Combine with next" })
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Combine with previous" })
+    ).toBeDefined();
+  });
+
+  it("calls the matching handler when clicked", async () => {
+    const onCombinePrevious = vi.fn();
+    const onCombineNext = vi.fn();
+    render(
+      <TranscriptSegment
+        segment={SEGMENT}
+        onCombinePrevious={onCombinePrevious}
+        onCombineNext={onCombineNext}
+      />
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Combine with previous" })
+    );
+    expect(onCombinePrevious).toHaveBeenCalledTimes(1);
+    expect(onCombineNext).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Combine with next" })
+    );
+    expect(onCombineNext).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables both arrows while a combine is pending", () => {
+    render(
+      <TranscriptSegment
+        segment={SEGMENT}
+        onCombinePrevious={vi.fn()}
+        onCombineNext={vi.fn()}
+        combinePending
+      />
+    );
+    for (const name of ["Combine with previous", "Combine with next"]) {
+      expect(
+        (screen.getByRole("button", { name }) as HTMLButtonElement).disabled
+      ).toBe(true);
+    }
+  });
+});
+
+describe("TranscriptSegment accept on an edited section still needing review", () => {
+  const edited: SegmentType = { ...SEGMENT, correctedText: "Good morning." };
+
+  it("offers accept when the backend still lists it for review", () => {
+    render(
+      <TranscriptSegment segment={edited} onAccept={vi.fn()} needsReview />
+    );
+    expect(
+      screen.getByRole("button", { name: "Accept segment as-is" })
+    ).toBeDefined();
+  });
+
+  it("does not offer accept once it no longer needs review", () => {
+    render(<TranscriptSegment segment={edited} onAccept={vi.fn()} />);
+    expect(
+      screen.queryByRole("button", { name: "Accept segment as-is" })
+    ).toBeNull();
+  });
+
+  it("does not offer accept for an unedited section with no highlights", () => {
+    render(
+      <TranscriptSegment segment={SEGMENT} onAccept={vi.fn()} needsReview />
+    );
+    expect(
+      screen.queryByRole("button", { name: "Accept segment as-is" })
+    ).toBeNull();
+  });
+});

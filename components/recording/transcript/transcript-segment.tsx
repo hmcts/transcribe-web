@@ -2,6 +2,8 @@
 
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Check,
   History,
   Pencil,
@@ -894,6 +896,12 @@ interface TranscriptSegmentProps {
   // Marks the segment reviewed/accepted as-is (clears its low-confidence
   // highlighting) without editing the text. Distinct from onCorrect.
   onAccept?: () => Promise<void> | void;
+  // Omitted on the first/last segment, which hides that button.
+  onCombinePrevious?: () => Promise<void> | void;
+  onCombineNext?: () => Promise<void> | void;
+  combinePending?: boolean;
+  // The backend still lists this segment under "needs review".
+  needsReview?: boolean;
   onRenameSpeaker?: (
     speaker: string,
     applyToAll: boolean
@@ -920,6 +928,10 @@ export function TranscriptSegment({
   onRollback,
   onRollbackToHistory,
   onAccept,
+  onCombinePrevious,
+  onCombineNext,
+  combinePending = false,
+  needsReview = false,
   onRenameSpeaker,
   isActive,
   getCurrentTime,
@@ -1013,8 +1025,12 @@ export function TranscriptSegment({
   // the per-word highlighting, so segments that showed highlighted words but
   // had a high segment average (or no segment-level confidence at all) never
   // offered the checkmark (DIAAT-229).
+  // A section combined from an edited part and an unreviewed one shows as
+  // edited with no highlights, but stays in "needs review" until accepted.
   const canAccept =
-    !!onAccept && hasRemainingLowConfidenceHighlights && !accepted;
+    !!onAccept &&
+    !accepted &&
+    (hasRemainingLowConfidenceHighlights || (needsReview && hasCorrections));
 
   const startEditing = () => {
     setDraft(displayText);
@@ -1182,6 +1198,30 @@ export function TranscriptSegment({
                 className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
               >
                 <Check className="size-4" />
+              </button>
+            )}
+            {onCombinePrevious && !editing && (
+              <button
+                type="button"
+                onClick={onCombinePrevious}
+                disabled={combinePending}
+                aria-label="Combine with previous"
+                title="Combine with previous"
+                className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                <ArrowUp className="size-3.5" />
+              </button>
+            )}
+            {onCombineNext && !editing && (
+              <button
+                type="button"
+                onClick={onCombineNext}
+                disabled={combinePending}
+                aria-label="Combine with next"
+                title="Combine with next"
+                className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+              >
+                <ArrowDown className="size-3.5" />
               </button>
             )}
             {onCorrect && !editing && (

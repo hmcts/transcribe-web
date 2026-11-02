@@ -328,3 +328,208 @@ describe("JobDetailView speaker rename", () => {
     expect(await screen.findByText("Counsel")).toBeDefined();
   });
 });
+
+describe("JobDetailView combining segments", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const segment = (id: string, text: string, startTime: number) => ({
+    id,
+    speaker: "Judge",
+    speakerColor: "#000000",
+    text,
+    startTime,
+    duration: 2,
+  });
+
+  const job = makeJob({
+    segments: [
+      segment("seg-0", "Good", 0),
+      segment("seg-1", "morning.", 2),
+      segment("seg-2", "Please sit.", 4),
+    ],
+  });
+
+  it("offers no up arrow on the first segment and no down arrow on the last", () => {
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    expect(
+      screen.getAllByRole("button", { name: "Combine with previous" })
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", { name: "Combine with next" })
+    ).toHaveLength(2);
+    const first = document.getElementById("seg-0") as HTMLElement;
+    const last = document.getElementById("seg-2") as HTMLElement;
+    expect(
+      first.querySelector('[aria-label="Combine with previous"]')
+    ).toBeNull();
+    expect(last.querySelector('[aria-label="Combine with next"]')).toBeNull();
+  });
+
+  it.each([
+    ["Combine with next", "seg-1", 1],
+    ["Combine with previous", "seg-1", 0],
+  ])("%s on %s merges from index %i and shows the returned job", async (name, id, index) => {
+    const merged = makeJob({
+      segments: [
+        segment("seg-0", "Good morning.", 0),
+        segment("seg-1", "Please sit.", 4),
+      ],
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ job: merged }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    const row = document.getElementById(id) as HTMLElement;
+    await userEvent.click(
+      row.querySelector(`[aria-label="${name}"]`) as HTMLElement
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`/api/jobs/${job.id}/segments/${index}/merge-next`);
+    expect(init.method).toBe("POST");
+    expect(await screen.findByText("Good morning.")).toBeDefined();
+  });
+
+  const okResponse = (body: unknown) => ({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(body),
+  });
+
+  it("shows an error and keeps the transcript when a combine fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue({
+          ok: false,
+          status: 422,
+          json: () => Promise.resolve({}),
+        })
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with next"]'
+      ) as HTMLElement
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /could not be combined/
+    );
+    expect(screen.getByText("morning.")).toBeDefined();
+  });
+
+  it("disables every combine arrow while one is in flight", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      )
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with next"]'
+      ) as HTMLElement
+    );
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("button", { name: /^Combine with/ })
+          .every((b) => (b as HTMLButtonElement).disabled)
+      ).toBe(true)
+    );
+    finish(okResponse({ job }));
+  });
+
+  it("sends a request made during a combine to the section's new index", async () => {
+    const merged = makeJob({
+      segments: [
+        { ...segment("seg-0", "Good morning.", 0), duration: 4 },
+        segment("seg-1", "Please sit.", 4),
+      ],
+    });
+    let finishCombine: (value: unknown) => void = () => undefined;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishCombine = resolve;
+          })
+      )
+      .mockResolvedValue(okResponse({ job: merged }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with next"]'
+      ) as HTMLElement
+    );
+    await userEvent.click(
+      document.querySelector(
+        '#seg-2 [aria-label="Edit segment text"]'
+      ) as HTMLElement
+    );
+    const editor = screen.getByRole("textbox");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "Please be seated.");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    finishCombine(okResponse({ job: merged }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1][0]).toBe(`/api/jobs/${job.id}/segments/1`);
+  });
+  it("holds a combine until an earlier edit has been saved", async () => {
+    let finishEdit: (value: unknown) => void = () => undefined;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishEdit = resolve;
+          })
+      )
+      .mockResolvedValue(okResponse({ job }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-2 [aria-label="Edit segment text"]'
+      ) as HTMLElement
+    );
+    const editor = screen.getByRole("textbox");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "Please be seated.");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with next"]'
+      ) as HTMLElement
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(`/api/jobs/${job.id}/segments/2`);
+    finishEdit(okResponse({ job }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      `/api/jobs/${job.id}/segments/0/merge-next`
+    );
+  });
+});

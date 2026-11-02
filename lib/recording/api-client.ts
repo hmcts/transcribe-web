@@ -628,6 +628,20 @@ export async function renameSpeaker(
   return toTranscriptionJob(body);
 }
 
+export async function mergeSegmentWithNext(
+  jobId: string,
+  index: number,
+  auth: BackendAuthContext | null
+): Promise<TranscriptionJob> {
+  const response = await backendFetch(
+    `/api/v1/jobs/${jobId}/segments/${index}/merge-next`,
+    { method: "POST" },
+    auth
+  );
+  const body: BackendJob = await response.json();
+  return toTranscriptionJob(body);
+}
+
 export async function rollbackToHistoryEntry(
   jobId: string,
   index: number,
