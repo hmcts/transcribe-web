@@ -72,8 +72,14 @@ vi.mock("@/lib/api-client", () => ({
 }));
 
 const telemetry = vi.hoisted(() => ({
+  recordingRequested: vi.fn(),
+  tokenFetched: vi.fn(),
+  firstText: vi.fn(),
+  segmentCaptured: vi.fn(),
+  paused: vi.fn(),
   sessionStarted: vi.fn(),
   sessionStopped: vi.fn(),
+  tornDown: vi.fn(),
   sessionCanceled: vi.fn(),
   sessionUnhealthy: vi.fn(),
   noSpeechCaptured: vi.fn(),
@@ -90,6 +96,11 @@ vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/providers/user-settings", () => ({
   useUserSettings: () => ({ user: null, loading: false }),
 }));
+
+// DIAAT-331: the IAC's guidance, passed in by LiveDictation.
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
+);
 
 vi.mock("@/hooks/use-media-query", () => ({
   useMediaQuery: () => false,
@@ -137,6 +148,9 @@ describe("Live dictation with a failing speech WebSocket path", () => {
     ).toBeTruthy();
     expect(
       screen.getByText(/Nothing from this session has been captured/i)
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/record this decision in another way/)
     ).toBeTruthy();
   });
 

@@ -30,6 +30,8 @@ interface TranscriptEditorProps {
   interimText: string;
   isListening: boolean;
   onTranscriptUpdate: (updatedTranscript: SectionedTranscript) => void;
+  /** DIAAT-333: off for the general section (one section, no name to show). */
+  showSectionNames?: boolean;
 }
 
 // Section divider component
@@ -84,6 +86,7 @@ export default function TranscriptEditor({
   interimText,
   isListening,
   onTranscriptUpdate,
+  showSectionNames = true,
 }: TranscriptEditorProps) {
   // Determine which section the interim text will actually be saved to
   // Falls back to activeSection when no speech is in progress (interimTargetSection is null)
@@ -386,17 +389,19 @@ export default function TranscriptEditor({
         ) : (
           <div className="mx-auto max-w-4xl space-y-4">
             {/* Show active section divider first if no messages yet but listening */}
-            {sectionGroups.length === 0 && isListening && (
+            {showSectionNames && sectionGroups.length === 0 && isListening && (
               <SectionDivider section={activeSection} isActive={true} />
             )}
 
             {sectionGroups.map(({ section, groups }, _sectionIdx) => (
               <div key={`section-${section}`}>
                 {/* Section divider */}
-                <SectionDivider
-                  section={section}
-                  isActive={activeSection === section}
-                />
+                {showSectionNames && (
+                  <SectionDivider
+                    section={section}
+                    isActive={activeSection === section}
+                  />
+                )}
 
                 {/* Message groups in this section */}
                 {groups.map((group, groupIndex) => (
@@ -629,7 +634,8 @@ export default function TranscriptEditor({
             ))}
 
             {/* Show section divider for target section if it has no messages yet but we're recording to it */}
-            {sectionGroups.length > 0 &&
+            {showSectionNames &&
+              sectionGroups.length > 0 &&
               !sectionGroups.some(
                 (sg) => sg.section === effectiveInterimSection
               ) &&
@@ -651,7 +657,9 @@ export default function TranscriptEditor({
                     )}
                   />
                   <span className="text-xs text-neutral-400 dark:text-neutral-500">
-                    Recording to {SECTION_CONFIG[effectiveInterimSection].label}
+                    {showSectionNames
+                      ? `Recording to ${SECTION_CONFIG[effectiveInterimSection].label}`
+                      : "Recording"}
                   </span>
                 </div>
                 <div className="mb-2">

@@ -20,6 +20,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { redactSectionedTranscript } from "@/lib/transcript-redaction";
 import { cn } from "@/lib/utils";
 import type { MeetingRow } from "./types";
+import { useWording } from "@/providers/jurisdiction";
 
 interface TranscriptSheetProps {
   meeting: MeetingRow | null;
@@ -43,6 +44,7 @@ export function TranscriptSheet({
   open,
   onOpenChange,
 }: TranscriptSheetProps) {
+  const wording = useWording();
   const [activeSection, setActiveSection] =
     React.useState<TranscriptSection>("background");
   const [redactPii, setRedactPii] = React.useState(false);
@@ -171,7 +173,7 @@ export function TranscriptSheet({
 
           {!isLoading && !hasTranscriptContent(displayedTranscript) && (
             <div className="py-8 text-sm text-muted-foreground">
-              No saved transcript was found for this hearing.
+              {wording("records.no_transcript")}
             </div>
           )}
 
@@ -275,16 +277,16 @@ function SectionDivider({ section }: { section: TranscriptSection }) {
 
 function TranscriptCard({ entry }: { entry: TranscriptEntry }) {
   return (
-    <div className="ph-mask py-3">
+    <div className="py-3">
       <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="ph-mask text-sm font-medium text-foreground">
+        <div className="text-sm font-medium text-foreground">
           {entry.speaker || "Unknown speaker"}
         </div>
         {entry.timestamp && (
           <div className="text-xs text-muted-foreground">{entry.timestamp}</div>
         )}
       </div>
-      <div className="ph-mask prose prose-lg max-w-none whitespace-pre-wrap text-muted-foreground">
+      <div className="prose prose-lg max-w-none whitespace-pre-wrap text-muted-foreground">
         {entry.text}
       </div>
     </div>

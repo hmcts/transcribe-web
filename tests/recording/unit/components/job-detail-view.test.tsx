@@ -2,6 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { JobDetailView } from "@/components/recording/transcript/job-detail-view";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import type { TranscriptionJob } from "@/lib/recording/types";
 
 // DIAAT-236: the review panel sidebar must stay in view (position: sticky)
@@ -204,6 +205,30 @@ describe("JobDetailView baseline transcript upload", () => {
   // Front Door's WAF blocks multipart bodies from the browser, so the file
   // goes as the raw body, with its name and size in headers; the route
   // handler builds the multipart request to the API.
+  it("stops a jurisdiction switch while the upload is in progress (DIAAT-332)", async () => {
+    const job = makeJob();
+    let finish: (value: unknown) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      )
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.upload(
+      screen.getByLabelText(/baseline transcript file input/i),
+      new File(["Judge: Good morning."], "day 2.txt", { type: "text/plain" })
+    );
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "busy" });
+
+    finish({ ok: true, status: 200, json: () => Promise.resolve({ job }) });
+    await waitFor(() => expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined());
+  });
+
   it("sends the .txt file as the raw request body, its name and size in headers", async () => {
     const job = makeJob();
     const updated = makeJob({
@@ -244,5 +269,352 @@ describe("JobDetailView baseline transcript upload", () => {
     });
     // The job the route returns replaces the one on screen.
     expect(await screen.findByText(/baseline wer/i)).toBeDefined();
+  });
+});
+
+describe("JobDetailView speaker rename", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("sends the chosen scope for that section and shows the returned job", async () => {
+    const job = makeJob({
+      segments: [
+        {
+          id: "s1",
+          speaker: "Speaker 1",
+          speakerColor: "#000000",
+          text: "Good morning.",
+          startTime: 0,
+          duration: 5,
+        },
+        {
+          id: "s2",
+          speaker: "Speaker 2",
+          speakerColor: "#111111",
+          text: "Morning.",
+          startTime: 5,
+          duration: 5,
+        },
+      ],
+    });
+    const renamed = makeJob({
+      segments: job.segments?.map((s, i) =>
+        i === 1 ? { ...s, speaker: "Counsel" } : s
+      ),
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ job: renamed }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Rename speaker Speaker 2" })
+    );
+    const input = screen.getByLabelText("New name for Speaker 2");
+    await userEvent.clear(input);
+    await userEvent.type(input, "Counsel");
+    await userEvent.click(screen.getByRole("button", { name: "Replace all" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`/api/jobs/${job.id}/segments/s2/speaker`);
+    expect(init.method).toBe("PATCH");
+    expect(JSON.parse(init.body)).toEqual({
+      speaker: "Counsel",
+      applyToAll: true,
+    });
+    expect(await screen.findByText("Counsel")).toBeDefined();
+  });
+});
+
+describe("JobDetailView combining segments", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const segment = (id: string, text: string, startTime: number) => ({
+    id,
+    speaker: "Judge",
+    speakerColor: "#000000",
+    text,
+    startTime,
+    duration: 2,
+  });
+
+  const job = makeJob({
+    segments: [
+      segment("seg-0", "Good", 0),
+      segment("seg-1", "morning.", 2),
+      segment("seg-2", "Please sit.", 4),
+    ],
+  });
+
+  it("offers no up arrow on the first segment and no down arrow on the last", () => {
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    expect(
+      screen.getAllByRole("button", { name: "Combine with section above" })
+    ).toHaveLength(2);
+    expect(
+      screen.getAllByRole("button", { name: "Combine with section below" })
+    ).toHaveLength(2);
+    const first = document.getElementById("seg-0") as HTMLElement;
+    const last = document.getElementById("seg-2") as HTMLElement;
+    expect(
+      first.querySelector('[aria-label="Combine with section above"]')
+    ).toBeNull();
+    expect(last.querySelector('[aria-label="Combine with section below"]')).toBeNull();
+  });
+
+  it.each([
+    ["Combine with section below", "seg-1", "seg-1", "seg-2"],
+    ["Combine with section above", "seg-1", "seg-0", "seg-1"],
+  ])("%s on %s merges %s with %s and shows the returned job", async (name, id, target, next) => {
+    const merged = makeJob({
+      segments: [
+        segment("seg-0", "Good morning.", 0),
+        segment("seg-1", "Please sit.", 4),
+      ],
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.resolve({ job: merged }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    const row = document.getElementById(id) as HTMLElement;
+    await userEvent.click(
+      row.querySelector(`[aria-label="${name}"]`) as HTMLElement
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe(`/api/jobs/${job.id}/segments/${target}/merge-next`);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body)).toEqual({ nextSegmentId: next });
+    expect(await screen.findByText("Good morning.")).toBeDefined();
+  });
+
+  const okResponse = (body: unknown) => ({
+    ok: true,
+    status: 200,
+    json: () => Promise.resolve(body),
+  });
+
+  it("shows an error and keeps the transcript when a combine fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockResolvedValue({
+          ok: false,
+          status: 422,
+          json: () => Promise.resolve({}),
+        })
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with section below"]'
+      ) as HTMLElement
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /could not be saved/
+    );
+    expect(screen.getByText("morning.")).toBeDefined();
+  });
+
+  it("disables every combine arrow while one is in flight", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          })
+      )
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with section below"]'
+      ) as HTMLElement
+    );
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getAllByRole("button", { name: /^Combine with/ })
+          .every((b) => (b as HTMLButtonElement).disabled)
+      ).toBe(true)
+    );
+    finish(okResponse({ job }));
+  });
+
+  it("explains when a section no longer exists, e.g. after a combine in another tab", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: () => Promise.resolve({}),
+      })
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-1 [aria-label="Combine with section below"]'
+      ) as HTMLElement
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /may have been combined with another/
+    );
+    expect(screen.getByText("morning.")).toBeDefined();
+  });
+
+  it("holds a combine until an earlier edit has been saved", async () => {
+    let finishEdit: (value: unknown) => void = () => undefined;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishEdit = resolve;
+          })
+      )
+      .mockResolvedValue(okResponse({ job }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-2 [aria-label="Edit section"]'
+      ) as HTMLElement
+    );
+    const editor = screen.getByRole("textbox");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "Please be seated.");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with section below"]'
+      ) as HTMLElement
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(`/api/jobs/${job.id}/segments/seg-2`);
+    finishEdit(okResponse({ job }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1][0]).toBe(
+      `/api/jobs/${job.id}/segments/seg-0/merge-next`
+    );
+  });
+  it("closes an open editor on a section once it is combined", async () => {
+    const overlapping = makeJob({
+      segments: [
+        { ...segment("seg-0", "Good", 0), duration: 5 },
+        { ...segment("seg-1", "morning.", 2), duration: 1 },
+      ],
+    });
+    const merged = makeJob({
+      segments: [{ ...segment("seg-01", "Good morning.", 0), duration: 5 }],
+    });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse({ job: merged })));
+    render(<JobDetailView jobId={overlapping.id} initialJob={overlapping} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Edit section"]'
+      ) as HTMLElement
+    );
+    expect(screen.getByRole("textbox")).toBeDefined();
+    await userEvent.click(
+      document.querySelector(
+        '#seg-1 [aria-label="Combine with section above"]'
+      ) as HTMLElement
+    );
+
+    expect(await screen.findByText("Good morning.")).toBeDefined();
+    expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  it("holds a baseline upload until a pending combine has finished", async () => {
+    let finishCombine: (value: unknown) => void = () => undefined;
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishCombine = resolve;
+          })
+      )
+      .mockResolvedValue(okResponse({ job }));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with section below"]'
+      ) as HTMLElement
+    );
+    await userEvent.upload(
+      screen.getByLabelText(/baseline transcript file input/i),
+      new File(["Judge: Good morning."], "day 2.txt", { type: "text/plain" })
+    );
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    finishCombine(okResponse({ job }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[1][0]).toBe(`/api/jobs/${job.id}/baseline`);
+  });
+  it("shows an error when a combine request cannot be sent", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-0 [aria-label="Combine with section below"]'
+      ) as HTMLElement
+    );
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /could not be saved/
+    );
+  });
+
+  it("keeps an editor open with its draft when the save fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        json: () => Promise.resolve({}),
+      })
+    );
+    render(<JobDetailView jobId={job.id} initialJob={job} />);
+
+    await userEvent.click(
+      document.querySelector(
+        '#seg-2 [aria-label="Edit section"]'
+      ) as HTMLElement
+    );
+    const editor = screen.getByRole("textbox");
+    await userEvent.clear(editor);
+    await userEvent.type(editor, "Please be seated.");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(
+      /may have been combined with another/
+    );
+    expect((screen.getByRole("textbox") as HTMLTextAreaElement).value).toBe(
+      "Please be seated."
+    );
   });
 });

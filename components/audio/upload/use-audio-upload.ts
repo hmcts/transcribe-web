@@ -1,9 +1,9 @@
 "use client";
 
-import * as Sentry from "@sentry/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import type { AudioProcessingStatus } from "@/components/audio/processing/processing-loader";
 import { track } from "@/lib/analytics";
+import { browserFailures } from "@/lib/browser-failures";
 import { apiClient } from "@/lib/api-client";
 import { audioBackupDB } from "@/lib/indexeddb-backup";
 import type { UploadErrorDetails, UploadUrlData } from "./types";
@@ -11,14 +11,22 @@ import {
   detectSupportedMimeType,
   getExtensionFromMimeType,
 } from "./upload-utils";
+import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
+
+/** The API's own upload route (DIRECT_SDK_ACCESS off), not a storage SAS URL. */
+export function isApiProxyUpload(uploadUrl: string): boolean {
+  try {
+    return new URL(uploadUrl, window.location.href).pathname.endsWith("/api/upload-audio");
+  } catch {
+    return false;
+  }
+}
 
 interface UseAudioUploadOptions {
-  initialRecordingMode: "mic" | "screen" | "upload";
   setIsProcessingTranscription: (isProcessing: boolean) => void;
 }
 
 export default function useAudioUpload({
-  initialRecordingMode,
   setIsProcessingTranscription,
 }: UseAudioUploadOptions) {
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
@@ -34,7 +42,6 @@ export default function useAudioUpload({
   const [errorDetails, setErrorDetails] = useState<UploadErrorDetails>({
     requestId: null,
     statusCode: null,
-    sentryEventId: null,
     userUploadKey: null,
     duration: null,
   });
@@ -57,39 +64,21 @@ export default function useAudioUpload({
     [currentBackupId]
   );
 
-  // Helper: Report error to Sentry with full context
-  const reportError = useCallback(
-    (error: Error, blob: Blob) => {
-      const errorWithMetadata = error as Error & {
-        requestId?: string;
-        status?: number;
-      };
+  // Helper: keep the failure's details for the error report the user can copy.
+  // Its request ID (when the service returned one) finds the request in the
+  // service's logs.
+  const reportError = useCallback((error: Error) => {
+    const errorWithMetadata = error as Error & {
+      requestId?: string;
+      status?: number;
+    };
 
-      const eventId = Sentry.captureException(error, {
-        tags: {
-          area: "audio-upload",
-          recording_mode: initialRecordingMode,
-        },
-        extra: {
-          request_id: errorWithMetadata.requestId || null,
-          status_code: errorWithMetadata.status || null,
-          user_upload_key: errorDetails.userUploadKey,
-          backup_id: currentBackupId,
-          blob_type: blob.type,
-          blob_size: blob.size,
-        },
-      });
-
-      setErrorDetails({
-        requestId: errorWithMetadata.requestId || null,
-        statusCode: errorWithMetadata.status || null,
-        sentryEventId: eventId || null,
-        userUploadKey: errorDetails.userUploadKey,
-        duration: errorDetails.duration,
-      });
-    },
-    [initialRecordingMode, currentBackupId, errorDetails]
-  );
+    setErrorDetails((prev) => ({
+      ...prev,
+      requestId: errorWithMetadata.requestId || null,
+      statusCode: errorWithMetadata.status || null,
+    }));
+  }, []);
 
   // Helper: Fetch upload URL from backend and store it
   const fetchUploadUrl = useCallback(async (): Promise<boolean> => {
@@ -158,10 +147,8 @@ export default function useAudioUpload({
         setUploadError(
           "Failed to initialize upload. Please refresh the page or check your connection."
         );
-        Sentry.captureMessage("Failed to pre-fetch upload URL after retries", {
-          level: "error",
-          tags: { area: "audio-upload-init" },
-        });
+        // eslint-disable-next-line no-console
+        console.error("Failed to pre-fetch upload URL after retries");
       }
     };
 
@@ -187,26 +174,54 @@ export default function useAudioUpload({
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve();
           } else {
+            // Status and request ID for the error report: the ID finds the
+            // request in the service's logs (Application Insights or Storage).
             reject(
-              new Error(
-                `Upload failed with status ${xhr.status}: ${xhr.statusText}`
+              Object.assign(
+                new Error(
+                  `Upload failed with status ${xhr.status}: ${xhr.statusText}`
+                ),
+                {
+                  status: xhr.status,
+                  code: `http.${xhr.status}`,
+                  requestId:
+                    xhr.getResponseHeader("x-request-id") ??
+                    xhr.getResponseHeader("x-ms-request-id") ??
+                    undefined,
+                }
               )
             );
           }
         });
 
         xhr.addEventListener("error", () => {
-          reject(new Error("Network error during upload"));
+          reject(
+            Object.assign(new Error("Network error during upload"), {
+              code: "upload.network",
+            })
+          );
         });
 
         xhr.addEventListener("timeout", () => {
-          reject(new Error("Upload timed out"));
+          reject(
+            Object.assign(new Error("Upload timed out"), {
+              code: "upload.timeout",
+            })
+          );
         });
 
         xhr.open("PUT", uploadUrl);
         if (authToken)
           xhr.setRequestHeader("Authorization", `Bearer ${authToken}`);
         xhr.setRequestHeader("x-ms-blob-type", "BlockBlob");
+        // DIAAT-334: the API's proxy upload is checked against the tab's
+        // jurisdiction. Not a direct upload to storage, which would refuse a header
+        // its CORS rules do not list.
+        if (isApiProxyUpload(uploadUrl)) {
+          for (const [name, value] of Object.entries(jurisdictionHeaders())) {
+            xhr.setRequestHeader(name, value);
+          }
+        }
         xhr.timeout = 300000; // 5 minute timeout
         xhr.send(blob);
       });
@@ -227,11 +242,9 @@ export default function useAudioUpload({
         const errorMsg = "Upload URL not available. This should not happen.";
         // eslint-disable-next-line no-console
         console.error(errorMsg);
-        Sentry.captureMessage(errorMsg, {
-          level: "error",
-          tags: { area: "audio-upload" },
+        throw Object.assign(new Error(errorMsg), {
+          code: "upload.url_unavailable",
         });
-        throw new Error(errorMsg);
       }
 
       // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -310,13 +323,17 @@ export default function useAudioUpload({
       }
 
       // All retries failed - report error
+      const failure = lastError as
+        | (Error & { code?: string; status?: number })
+        | null;
+      browserFailures.transferFailed({
+        code: failure?.code ?? "upload.error",
+        status: failure?.status,
+        file: blob,
+        attempt: MAX_RETRIES,
+      });
       setUploadError(lastError?.message || "Error occurred while transcribing");
-      try {
-        reportError(lastError || new Error("Unknown error"), blob);
-      } catch (reportingError) {
-        // eslint-disable-next-line no-console
-        console.error("Error capturing sentry event:", reportingError);
-      }
+      reportError(lastError || new Error("Unknown error"));
       setIsProcessingTranscription(false);
       setProcessingStatus("idle");
     },

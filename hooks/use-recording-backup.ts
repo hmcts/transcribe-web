@@ -4,6 +4,8 @@ import {
   audioBackupDB,
   IndexedDBBackup,
 } from "@/lib/indexeddb-backup";
+import { getTabJurisdiction } from "@/lib/jurisdiction-session";
+import { useJurisdiction } from "@/providers/jurisdiction";
 
 export function useRecordingBackup(
   mediaRecorderRef: MutableRefObject<MediaRecorder | null>,
@@ -13,6 +15,10 @@ export function useRecordingBackup(
   const backupIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentBackupIdRef = useRef<string | null>(null);
   const recordingStartTimeRef = useRef<number | null>(null);
+  const jurisdictionRef = useRef<string | undefined>(undefined);
+  // The provider's, as the recovery list filters by it; the tab's if it has none yet.
+  jurisdictionRef.current =
+    useJurisdiction().current?.code ?? getTabJurisdiction() ?? undefined;
 
   const createPeriodicBackup = useCallback(async () => {
     if (!mediaRecorderRef.current || mediaChunksRef.current.length === 0) {
@@ -40,6 +46,9 @@ export function useRecordingBackup(
         timestamp: Date.now(),
         mimeType: selectedMimeType,
         recordingDuration: currentDuration,
+        // DIAAT-334: recovered only in the jurisdiction it was recorded in, as
+        // the recovery list names it (the provider's).
+        jurisdiction: jurisdictionRef.current,
       };
 
       await audioBackupDB.saveAudioBackup(backup);

@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import RecordAlertBanner from "@/components/audio/recording/record-alert-banner";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
+import { IAC } from "../jurisdiction-helpers";
 
 const failedAlert = describeSpeechAlert({
   health: "failed",
@@ -10,6 +11,7 @@ const failedAlert = describeSpeechAlert({
   hasCapturedSpeech: false,
   noSpeechWarning: true,
   noSpeechThresholdSeconds: 90,
+  speechLostGuidance: IAC.wording["alerts.speech_lost_guidance"],
 });
 
 const interruptedAlert = describeSpeechAlert({

@@ -74,7 +74,7 @@ export default function DialogueHeader({
             type="text"
             value={newTitle || ""}
             onChange={(e) => setNewTitle(e.target.value)}
-            className="ph-mask mb-0 rounded-md bg-muted/50 px-2 py-1 text-2xl font-bold"
+            className="mb-0 rounded-md bg-muted/50 px-2 py-1 text-2xl font-bold"
             onKeyDown={(e) => {
               if (e.key === "Enter") {
                 onTitleEdit();
@@ -91,7 +91,7 @@ export default function DialogueHeader({
           />
         ) : (
           <h1
-            className="ph-mask mb-0 rounded-md px-2 py-1 text-left text-2xl font-bold transition-colors hover:cursor-pointer hover:bg-muted"
+            className="mb-0 rounded-md px-2 py-1 text-left text-2xl font-bold transition-colors hover:cursor-pointer hover:bg-muted"
             onClick={() => setIsEditing(true)}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {

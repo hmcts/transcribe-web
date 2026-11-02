@@ -3,6 +3,11 @@ import { describe, expect, it, vi } from "vitest";
 import { MeetingsDataTable } from "@/components/meetings-table/data-table";
 import type { MeetingRow } from "@/components/meetings-table/types";
 
+// DIAAT-322: these screens as the IAC sees them.
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
+);
+
 const meetings: MeetingRow[] = [
   {
     id: "1",

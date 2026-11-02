@@ -44,6 +44,29 @@ describe("recording auth-utils", () => {
       ).resolves.toEqual({ bearerToken: "id-token-for-user" });
     });
 
+    it("carries the tab's jurisdiction from the header (DIAAT-334)", async () => {
+      const { getBackendAuthContext } = await import(
+        "@/lib/recording/auth-utils"
+      );
+      await expect(
+        getBackendAuthContext(requestWith({ "X-Jurisdiction": "IAC" }))
+      ).resolves.toEqual({ bearerToken: null, jurisdiction: "IAC" });
+      await expect(
+        getBackendAuthContext(requestWith({ "X-Jurisdiction": " " }))
+      ).resolves.toEqual({ bearerToken: null });
+    });
+
+    it("reads an audio source's jurisdiction from its query, for the audio route", async () => {
+      const { jurisdictionFromAudioUrl } = await import(
+        "@/lib/recording/auth-utils"
+      );
+      expect(
+        jurisdictionFromAudioUrl("https://b.example/api/audio/j1?jurisdiction=SSCS")
+      ).toBe("SSCS");
+      expect(jurisdictionFromAudioUrl("https://b.example/api/audio/j1")).toBeNull();
+      expect(jurisdictionFromAudioUrl("not a url")).toBeNull();
+    });
+
     it("returns no token without a session cookie", async () => {
       const { getBackendAuthContext } = await import(
         "@/lib/recording/auth-utils"

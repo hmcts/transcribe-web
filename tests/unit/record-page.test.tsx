@@ -5,18 +5,33 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
-import { Toaster } from "sonner";
+import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
+import {
+  prepareForJurisdictionSwitch,
+  reloadInJurisdiction,
+  stayInJurisdiction,
+} from "@/lib/jurisdiction-switch";
 import { LiveDraftError } from "@/lib/live-draft-errors";
+import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
 
 const mockSetIsRecording = vi.hoisted(() => vi.fn());
 const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
+const lastEditorProps = vi.hoisted(() => ({ current: null as any }));
+const lastFormProps = vi.hoisted(() => ({ current: null as any }));
 const mockGetLiveDraft = vi.hoisted(() => vi.fn());
 const mockPutLiveDraft = vi.hoisted(() => vi.fn());
 const mockDeleteLiveDraft = vi.hoisted(() => vi.fn());
 
+// DIAAT-322: the record page as the IAC sees it, unless a test says otherwise.
+let mockJurisdiction: "IAC" | "ET" = "IAC";
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule(
+    () => mockJurisdiction
+  )
+);
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: vi.fn() }),
   useSearchParams: () => new URLSearchParams("mode=mic"),
@@ -35,7 +50,10 @@ vi.mock("@/providers/user-settings", () => ({
 }));
 
 vi.mock("@/components/editor/tiptap-editor", () => ({
-  default: () => <div>Notes editor</div>,
+  default: (props: any) => {
+    lastEditorProps.current = props;
+    return <div>Notes editor</div>;
+  },
 }));
 
 vi.mock("@/components/audio/dictation", () => ({
@@ -46,7 +64,10 @@ vi.mock("@/components/audio/dictation", () => ({
 }));
 
 vi.mock("@/components/audio/dictation/dictation-form", () => ({
-  default: () => <div>Dictation form</div>,
+  default: (props: any) => {
+    lastFormProps.current = props;
+    return <div>Dictation form</div>;
+  },
 }));
 
 vi.mock("@/lib/document-content-api", () => ({
@@ -65,13 +86,13 @@ vi.mock("@/lib/analytics", () => ({
   track: vi.fn(),
 }));
 
-// Mocked for the same reason DIAAT-297 mocks its telemetry module: the real one
-// pulls in @sentry/nextjs, which cannot load in this environment.
+// Mocked: these tests check the page; the telemetry module has its own tests.
 vi.mock("@/lib/live-draft-telemetry", () => ({
   liveDraftTelemetry: {
     saveFailed: vi.fn(),
     autosaveStalled: vi.fn(),
     saveRecovered: vi.fn(),
+    restoreSucceeded: vi.fn(),
     restoreFailed: vi.fn(),
   },
 }));
@@ -199,6 +220,33 @@ describe("Live draft restore", () => {
     expect(lastSpeechDemoProps.current.initialSectionedTranscript).toEqual(
       TEST_TRANSCRIPT
     );
+  });
+
+  it("reports a restore only when the user restores the draft (OBS-4)", async () => {
+    vi.mocked(liveDraftTelemetry.restoreSucceeded).mockClear();
+    mockGetLiveDraft.mockResolvedValue({
+      transcript: TEST_TRANSCRIPT,
+      form_data: {},
+      saved_at: SAVED_AT_RECENT,
+    });
+
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /restore/i })).toBeTruthy();
+    });
+    // Found, but not restored yet.
+    expect(liveDraftTelemetry.restoreSucceeded).not.toHaveBeenCalled();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /restore/i }));
+    });
+    expect(liveDraftTelemetry.restoreSucceeded).toHaveBeenCalledTimes(1);
   });
 
   it("does not delete the server draft when Restore is clicked", async () => {
@@ -688,6 +736,143 @@ describe("Autosave failure states", () => {
     });
   }
 
+  it("saves the draft before the tab switches jurisdiction (DIAAT-332)", async () => {
+    await startDictating();
+    mockPutLiveDraft.mockClear();
+
+    await act(() => prepareForJurisdictionSwitch());
+
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+    expect(mockPutLiveDraft.mock.calls[0][0]).toEqual(
+      expect.objectContaining({ background: expect.any(Array) })
+    );
+  });
+
+  it("saves again what was dictated while the switch's save was in flight", async () => {
+    await startDictating();
+    mockPutLiveDraft.mockClear();
+    let finishFirst: () => void = () => undefined;
+    mockPutLiveDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+    const later = {
+      ...TEST_TRANSCRIPT,
+      facts: [{ speaker: "Judge", text: "said during the save", timestamp: "00:09" }],
+    };
+
+    let switching: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switching = prepareForJurisdictionSwitch();
+    });
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange(later);
+    });
+    await act(async () => {
+      finishFirst();
+      await switching;
+    });
+
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    expect(mockPutLiveDraft.mock.calls[1][0]).toEqual(later);
+  });
+
+  it("stops the switch for notes typed while its save was in flight", async () => {
+    await startDictating();
+    let finishFirst: () => void = () => undefined;
+    mockPutLiveDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+
+    let switching: Promise<void> = Promise.resolve();
+    await act(async () => {
+      switching = prepareForJurisdictionSwitch();
+    });
+    await act(async () => {
+      lastEditorProps.current.onContentChange("<p>Typed meanwhile</p>");
+    });
+    finishFirst();
+
+    await expect(switching).rejects.toMatchObject({ step: "unsaved" });
+  });
+
+  it("leaves without asking once the draft is saved for a switch (DIAAT-332)", async () => {
+    await startDictating();
+    const leave = () => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(leave()).toBe(true); // asked: the transcript is on screen
+
+    vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
+    try {
+      reloadInJurisdiction("ET");
+      expect(leave()).toBe(false);
+    } finally {
+      stayInJurisdiction();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("stops the switch rather than lose notes, which are never saved", async () => {
+    await startDictating();
+    await act(async () => {
+      lastEditorProps.current.onContentChange("<p>Credibility in doubt</p>");
+    });
+    mockPutLiveDraft.mockClear();
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved" });
+    expect(mockPutLiveDraft).not.toHaveBeenCalled();
+  });
+
+  it("stops the switch rather than lose a hearing form filled in before any dictation", async () => {
+    render(<RecordPage />);
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({
+        ...lastFormProps.current.initialValues,
+        appellantName: "A Person",
+      });
+    });
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved" });
+  });
+
+  it("switches when the form holds only the judge's name it filled in itself", async () => {
+    render(<RecordPage />);
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({
+        ...lastFormProps.current.initialValues,
+        judgeName: "Judge Smith",
+      });
+    });
+
+    await act(async () => {
+      await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    });
+  });
+
+  it("switches with nothing to lose on an untouched page", async () => {
+    render(<RecordPage />);
+    await act(async () => {
+      await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    });
+  });
+
+  it("stops the switch when the draft cannot be saved (DIAAT-332)", async () => {
+    await startDictating();
+    mockPutLiveDraft.mockRejectedValueOnce(
+      new LiveDraftError("network", "boom")
+    );
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toThrow("boom");
+  });
+
   it("stays quiet after a single failed save", async () => {
     mockPutLiveDraft.mockRejectedValueOnce(
       new LiveDraftError("network", "boom")
@@ -711,6 +896,38 @@ describe("Autosave failure states", () => {
     expect(
       screen.getByText(/Your transcript is not being saved/i)
     ).toBeTruthy();
+  });
+
+  it("names what is saved to in the jurisdiction's words (DIAAT-331)", async () => {
+    mockPutLiveDraft.mockRejectedValue(
+      new LiveDraftError("server", "unavailable", 503)
+    );
+    await startDictating();
+    await tickInterval();
+    await tickRetry(1_000);
+
+    expect(
+      screen.getByText(/Saving to the case record has stopped working/)
+    ).toBeTruthy();
+  });
+
+  it("uses neutral words in a jurisdiction that sets none (DIAAT-330)", async () => {
+    mockJurisdiction = "ET";
+    try {
+      mockPutLiveDraft.mockRejectedValue(
+        new LiveDraftError("server", "unavailable", 503)
+      );
+      await startDictating();
+      await tickInterval();
+      await tickRetry(1_000);
+
+      expect(
+        screen.getByText(/Saving to the record has stopped working/)
+      ).toBeTruthy();
+      expect(screen.queryByText(/case record/)).toBeNull();
+    } finally {
+      mockJurisdiction = "IAC";
+    }
   });
 
   it("cannot be dismissed while work is being lost", async () => {
@@ -745,6 +962,9 @@ describe("Autosave failure states", () => {
     const banner = screen.getByTestId("record-alert-banner");
     expect(banner.getAttribute("data-kind")).toBe("auth-expired");
     expect(screen.getByText(/sign in again/i)).toBeTruthy();
+    expect(
+      screen.getByText(/this device can no longer save to the case record/)
+    ).toBeTruthy();
   });
 
   it("lets the capture failure win when speech and saving are both broken", async () => {
@@ -962,5 +1182,234 @@ describe("Live draft restore failures", () => {
         expect(screen.queryByTestId("record-alert-banner")).toBeNull()
       );
     });
+  });
+});
+
+describe("Dictating in a jurisdiction without a template (DIAAT-333)", () => {
+  beforeEach(() => {
+    mockJurisdiction = "ET";
+    lastSpeechDemoProps.current = null;
+    mockGetLiveDraft.mockResolvedValue(null);
+    mockPutLiveDraft.mockResolvedValue(undefined);
+    mockDeleteLiveDraft.mockResolvedValue(undefined);
+  });
+
+  afterEach(() => {
+    mockJurisdiction = "IAC";
+    toast.dismiss(); // sonner keeps its toasts between tests
+    vi.clearAllMocks();
+  });
+
+  it("offers the general section only: no hearing form, sections or submission", async () => {
+    render(<RecordPage />);
+
+    expect(screen.getByText("Transcript area")).toBeTruthy();
+    expect(screen.queryByText("Dictation form")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Transcript section" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /submit hearing/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /copy text/i })).toBeTruthy();
+    expect(screen.queryByRole("tab", { name: "Form" })).toBeNull(); // the mobile layout
+    expect(lastSpeechDemoProps.current.activeSection).toBe("background");
+    expect(lastSpeechDemoProps.current.showSectionNames).toBe(false);
+    const { fetchUserDocumentContent } = await import("@/lib/document-content-api");
+    expect(fetchUserDocumentContent).not.toHaveBeenCalled();
+  });
+
+  it("the IAC keeps its hearing form, sections and submission (DIAAT-331)", () => {
+    mockJurisdiction = "IAC";
+    render(<RecordPage />);
+
+    expect(screen.getAllByText("Dictation form").length).toBeGreaterThan(0);
+    expect(screen.getByRole("button", { name: /submit hearing/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /copy text/i })).toBeNull();
+  });
+
+  function stubClipboard(writeText: ReturnType<typeof vi.fn>) {
+    const original = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    return () => {
+      if (original) Object.defineProperty(navigator, "clipboard", original);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    };
+  }
+
+  async function renderWithDictation() {
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange(TEST_TRANSCRIPT);
+    });
+  }
+
+  it("says there is nothing to copy before anything is dictated", async () => {
+    const writeText = vi.fn();
+    const restore = stubClipboard(writeText);
+    try {
+      render(
+        <>
+          <Toaster />
+          <RecordPage />
+        </>
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /copy text/i }));
+      });
+      expect(await screen.findByText("There is nothing to copy yet.")).toBeTruthy();
+      expect(writeText).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("says how to copy by hand when the clipboard refuses", async () => {
+    const restore = stubClipboard(vi.fn().mockRejectedValue(new Error("denied")));
+    try {
+      await renderWithDictation();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: /copy text/i }));
+      });
+      expect(
+        await screen.findByText("Could not copy. Select the text and copy it instead.")
+      ).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  async function copyThen() {
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /copy text/i }));
+    });
+    return screen.findByRole("button", { name: "Clear dictation" });
+  }
+
+  it("clears the dictation and its draft once copied, so it is not offered again", async () => {
+    const restore = stubClipboard(vi.fn().mockResolvedValue(undefined));
+    try {
+      await renderWithDictation();
+      const clear = await copyThen();
+      await act(async () => {
+        fireEvent.click(clear);
+      });
+
+      await waitFor(() => expect(mockDeleteLiveDraft).toHaveBeenCalledTimes(1));
+      expect(lastSpeechDemoProps.current.initialSectionedTranscript).toEqual({
+        background: [],
+        evidence: [],
+        facts: [],
+      });
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not clear what was added since the copy", async () => {
+    const restore = stubClipboard(vi.fn().mockResolvedValue(undefined));
+    try {
+      await renderWithDictation();
+      const clear = await copyThen();
+      await act(async () => {
+        lastSpeechDemoProps.current.onTranscriptChange({
+          ...TEST_TRANSCRIPT,
+          background: [
+            ...TEST_TRANSCRIPT.background,
+            { speaker: "Judge", text: "Said after the copy", timestamp: "00:09" },
+          ],
+        });
+      });
+      await act(async () => {
+        fireEvent.click(clear);
+      });
+
+      expect(await screen.findByText(/Copy it again before you clear it/)).toBeTruthy();
+      expect(mockDeleteLiveDraft).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("does not clear while recording", async () => {
+    const restore = stubClipboard(vi.fn().mockResolvedValue(undefined));
+    try {
+      await renderWithDictation();
+      const clear = await copyThen();
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: "Start recording" }));
+      });
+      await act(async () => {
+        fireEvent.click(clear);
+      });
+
+      expect(await screen.findByText("Pause recording before you clear the dictation.")).toBeTruthy();
+      expect(mockDeleteLiveDraft).not.toHaveBeenCalled();
+    } finally {
+      restore();
+    }
+  });
+
+  it("says so when the saved copy could not be deleted", async () => {
+    mockDeleteLiveDraft.mockRejectedValue(new Error("down"));
+    const restore = stubClipboard(vi.fn().mockResolvedValue(undefined));
+    try {
+      await renderWithDictation();
+      const clear = await copyThen();
+      await act(async () => {
+        fireEvent.click(clear);
+      });
+
+      expect(await screen.findByText(/its saved copy could not be deleted/)).toBeTruthy();
+    } finally {
+      restore();
+    }
+  });
+
+  it("copies what was dictated, to use in their own document", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const restoreClipboard = stubClipboard(writeText);
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange(TEST_TRANSCRIPT);
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /copy text/i }));
+    });
+
+    const expected = TEST_TRANSCRIPT.background.map((entry) => entry.text).join("\n");
+    expect(writeText).toHaveBeenCalledWith(expect.stringContaining(expected));
+    expect(await screen.findByText("Copied. Paste it into your document.")).toBeTruthy();
+    restoreClipboard();
+  });
+
+  it("brings back what was dictated after leaving part-way, as for the IAC", async () => {
+    mockGetLiveDraft.mockResolvedValue({
+      transcript: TEST_TRANSCRIPT,
+      form_data: {},
+      saved_at: new Date(Date.now() - 2 * 60 * 1000).toISOString(),
+    });
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+
+    await act(async () => {
+      fireEvent.click(await screen.findByRole("button", { name: /restore/i }));
+    });
+
+    expect(lastSpeechDemoProps.current.initialSectionedTranscript).toEqual(TEST_TRANSCRIPT);
   });
 });

@@ -1,15 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 
-const mockTrack = vi.hoisted(() => vi.fn());
-const mockCaptureMessage = vi.hoisted(() => vi.fn());
+const session = vi.hoisted(() => ({
+  autosaveFailed: vi.fn(),
+  autosaveStalled: vi.fn(),
+  autosaveRecovered: vi.fn(),
+  restoreFinished: vi.fn(),
+}));
 
-vi.mock("@/lib/analytics", () => ({ track: mockTrack }));
-vi.mock("@sentry/nextjs", () => ({ captureMessage: mockCaptureMessage }));
+// OBS-3: the event stream is the relay (through the dictation session), not PostHog.
+vi.mock("@/lib/dictation-session", () => ({
+  dictationSessionTelemetry: session,
+}));
 
 beforeEach(() => {
-  mockTrack.mockReset();
-  mockCaptureMessage.mockReset();
+  for (const fn of Object.values(session)) fn.mockReset();
 });
 
 describe("liveDraftTelemetry.saveFailed", () => {
@@ -22,11 +27,11 @@ describe("liveDraftTelemetry.saveFailed", () => {
       trigger: "interval",
     });
 
-    expect(mockTrack).toHaveBeenCalledWith("live_draft_save_failed", {
-      failure_kind: "network",
-      status: null,
-      consecutive_failures: 1,
-      seconds_since_last_save: 3,
+    expect(session.autosaveFailed).toHaveBeenCalledWith({
+      kind: "network",
+      status: undefined,
+      consecutiveFailures: 1,
+      secondsSinceLastSave: 3,
       trigger: "interval",
     });
   });
@@ -38,7 +43,10 @@ describe("liveDraftTelemetry.saveFailed", () => {
       msSinceLastSave: null,
       trigger: "interval",
     });
-    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    // The failure is reported; the stall (the alert's source) is the
+    // autosave hook's decision, after repeated failures.
+    expect(session.autosaveFailed).toHaveBeenCalledTimes(1);
+    expect(session.autosaveStalled).not.toHaveBeenCalled();
   });
 
   it("reports a null elapsed time when nothing has ever been saved", () => {
@@ -49,33 +57,25 @@ describe("liveDraftTelemetry.saveFailed", () => {
       msSinceLastSave: null,
       trigger: "pause",
     });
-    expect(mockTrack).toHaveBeenCalledWith(
-      "live_draft_save_failed",
-      expect.objectContaining({ seconds_since_last_save: null, status: 500 })
+    expect(session.autosaveFailed).toHaveBeenCalledWith(
+      expect.objectContaining({ secondsSinceLastSave: null, status: 500 })
     );
   });
 });
 
 describe("liveDraftTelemetry.autosaveStalled", () => {
-  it("escalates to Sentry, because this is data loss in progress", () => {
+  it("reports the stall, the source of the data-loss alert", () => {
     liveDraftTelemetry.autosaveStalled({
       kind: "network",
       consecutiveFailures: 4,
       msSinceLastSave: 42_000,
     });
 
-    expect(mockTrack).toHaveBeenCalledWith("live_draft_autosave_stalled", {
-      failure_kind: "network",
-      consecutive_failures: 4,
-      seconds_since_last_save: 42,
+    expect(session.autosaveStalled).toHaveBeenCalledWith({
+      kind: "network",
+      consecutiveFailures: 4,
+      secondsSinceLastSave: 42,
     });
-    expect(mockCaptureMessage).toHaveBeenCalledWith(
-      expect.stringContaining("4"),
-      expect.objectContaining({
-        level: "error",
-        tags: expect.objectContaining({ feature: "live-dictation" }),
-      })
-    );
   });
 });
 
@@ -86,11 +86,11 @@ describe("liveDraftTelemetry.saveRecovered", () => {
       outageMs: 12_000,
     });
 
-    expect(mockTrack).toHaveBeenCalledWith("live_draft_save_recovered", {
-      failures_before_recovery: 3,
-      outage_seconds: 12,
+    expect(session.autosaveRecovered).toHaveBeenCalledWith({
+      consecutiveFailures: 3,
+      outageSeconds: 12,
     });
-    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(session.autosaveStalled).not.toHaveBeenCalled();
   });
 });
 
@@ -98,8 +98,9 @@ describe("liveDraftTelemetry.restoreFailed", () => {
   it("reports a failed restore lookup, which used to be invisible", () => {
     liveDraftTelemetry.restoreFailed({ kind: "auth", status: 401 });
 
-    expect(mockTrack).toHaveBeenCalledWith("live_draft_restore_failed", {
-      failure_kind: "auth",
+    expect(session.restoreFinished).toHaveBeenCalledWith({
+      ok: false,
+      kind: "auth",
       status: 401,
     });
   });

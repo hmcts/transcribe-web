@@ -145,6 +145,23 @@ describe("apiClient.request — HTTP errors", () => {
     expect(result.error).toBe("Validation failed");
   });
 
+  it.each([
+    [{ code: "jurisdiction_admin_required", message: "Only an admin for ET can change its wording." }, "Only an admin for ET can change its wording."],
+    [[{ msg: "Field required" }, { msg: "Value is not a valid email" }], "Field required; Value is not a valid email"],
+  ])("reads a structured detail as text, never [object Object] (%#)", async (detail, expected) => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 403,
+      statusText: "Forbidden",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockResolvedValue({ detail }),
+    });
+
+    const result = await apiClient.request("/items");
+
+    expect(result.error).toBe(expected);
+  });
+
   it("uses the message field when there is no detail field", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,

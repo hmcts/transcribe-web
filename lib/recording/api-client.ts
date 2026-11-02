@@ -12,6 +12,7 @@ import type {
   Word,
   WordCorrection,
 } from "./types";
+import { JURISDICTION_HEADER } from "@/lib/jurisdiction-session";
 
 // Server-only client for the transcription_svc backend. Never import this
 // from a "use client" component — it reads the backend API key, which must
@@ -55,6 +56,7 @@ interface BackendPhraseAlternatives {
 }
 
 interface BackendDialogueEntry {
+  id: string;
   speaker: string;
   text: string;
   start_time: number;
@@ -173,6 +175,10 @@ async function rawBackendFetch(
   delete headers.authorization;
   if (auth?.bearerToken) {
     headers.Authorization = `Bearer ${auth.bearerToken}`;
+  }
+  // DIAAT-334: the tab's jurisdiction; the API refuses another's material.
+  if (auth?.jurisdiction) {
+    headers[JURISDICTION_HEADER] = auth.jurisdiction;
   }
   return fetch(`${backendUrl()}${path}`, {
     ...init,
@@ -297,8 +303,8 @@ function toSegments(
   entries: BackendDialogueEntry[] | null
 ): TranscriptSegment[] | undefined {
   if (!entries || entries.length === 0) return undefined;
-  return entries.map((entry, index) => ({
-    id: `seg-${index}`,
+  return entries.map((entry) => ({
+    id: entry.id,
     // The backend already labels speakers (e.g. "Speaker 1") via
     // add_speaker_labels — prefixing again here produced "Speaker Speaker 1".
     speaker: entry.speaker,
@@ -533,12 +539,12 @@ export async function submitJob(
 
 export async function correctSegment(
   jobId: string,
-  index: number,
+  segmentId: string,
   correctedText: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -552,14 +558,14 @@ export async function correctSegment(
 
 export async function correctWordRange(
   jobId: string,
-  index: number,
+  segmentId: string,
   startWordIndex: number,
   endWordIndex: number,
   correctedText: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/words`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/words`,
     {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -577,11 +583,11 @@ export async function correctWordRange(
 
 export async function rollbackSegment(
   jobId: string,
-  index: number,
+  segmentId: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/rollback`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/rollback`,
     { method: "POST" },
     auth
   );
@@ -591,12 +597,51 @@ export async function rollbackSegment(
 
 export async function acceptSegment(
   jobId: string,
-  index: number,
+  segmentId: string,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/accept`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/accept`,
     { method: "POST" },
+    auth
+  );
+  const body: BackendJob = await response.json();
+  return toTranscriptionJob(body);
+}
+
+export async function renameSpeaker(
+  jobId: string,
+  segmentId: string,
+  speaker: string,
+  applyToAll: boolean,
+  auth: BackendAuthContext | null
+): Promise<TranscriptionJob> {
+  const response = await backendFetch(
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/speaker`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ speaker, apply_to_all: applyToAll }),
+    },
+    auth
+  );
+  const body: BackendJob = await response.json();
+  return toTranscriptionJob(body);
+}
+
+export async function mergeSegmentWithNext(
+  jobId: string,
+  segmentId: string,
+  nextSegmentId: string,
+  auth: BackendAuthContext | null
+): Promise<TranscriptionJob> {
+  const response = await backendFetch(
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/merge-next`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ next_segment_id: nextSegmentId }),
+    },
     auth
   );
   const body: BackendJob = await response.json();
@@ -605,12 +650,12 @@ export async function acceptSegment(
 
 export async function rollbackToHistoryEntry(
   jobId: string,
-  index: number,
+  segmentId: string,
   historyIndex: number,
   auth: BackendAuthContext | null
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
-    `/api/v1/jobs/${jobId}/segments/${index}/history/${historyIndex}/rollback`,
+    `/api/v1/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}/history/${historyIndex}/rollback`,
     { method: "POST" },
     auth
   );

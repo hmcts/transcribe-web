@@ -44,6 +44,7 @@ import { DEFAULT_MEETING_TITLE } from "@/lib/utils";
 import { useTranscripts } from "@/providers/transcripts";
 import type { DialogueEntry } from "@/src/api/generated";
 import type { TranscriptionMetadata } from "@/src/api/generated/models/TranscriptionMetadata";
+import { useWording } from "@/providers/jurisdiction";
 
 interface MeetingsListProps {
   isLoading: boolean;
@@ -85,6 +86,7 @@ const buildFallbackTranscript = (
 });
 
 function MeetingsList({ isLoading, meetings }: MeetingsListProps) {
+  const wording = useWording();
   const { deleteTranscription, renameTranscription, refreshMetadata } =
     useTranscripts();
 
@@ -474,7 +476,7 @@ function MeetingsList({ isLoading, meetings }: MeetingsListProps) {
           <DialogHeader>
             <DialogTitle>Rename recording</DialogTitle>
             <DialogDescription>
-              Update the title shown in the hearings list.
+              {wording("records.rename_hint")}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">

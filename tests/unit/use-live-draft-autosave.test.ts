@@ -154,7 +154,7 @@ describe("useLiveDraftAutosave", () => {
     );
   });
 
-  it("escalates to Sentry once, not on every retry", async () => {
+  it("escalates once per outage, not on every retry", async () => {
     mockPutLiveDraft.mockRejectedValue(new LiveDraftError("network", "boom"));
     const { result } = renderHook(() =>
       useLiveDraftAutosave({ getPayload: payloadGetter() })
@@ -466,5 +466,156 @@ describe("useLiveDraftAutosave", () => {
       await flush();
       expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe("flushing before leaving on purpose (DIAAT-332)", () => {
+  it("writes the current payload and resolves once it is stored", async () => {
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+
+    await act(() => result.current.flush());
+
+    expect(mockPutLiveDraft).toHaveBeenCalledWith(TRANSCRIPT, {});
+    expect(result.current.state.lastSavedAt).not.toBeNull();
+  });
+
+  it("rejects when the payload could not be stored", async () => {
+    mockPutLiveDraft.mockRejectedValueOnce(new LiveDraftError("network", "boom"));
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+
+    await expect(result.current.flush()).rejects.toThrow("boom");
+  });
+
+  it("writes nothing once saving has stopped (the draft was submitted)", async () => {
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+    await act(() => result.current.stop());
+
+    await act(() => result.current.flush());
+
+    expect(mockPutLiveDraft).not.toHaveBeenCalled();
+  });
+
+  it("waits for a write in flight, so nothing writes alongside it", async () => {
+    let finishFirst: () => void = () => undefined;
+    mockPutLiveDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishFirst = resolve;
+        })
+    );
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+    act(() => result.current.saveNow("interval"));
+
+    let flushed = false;
+    const flushing = result.current.flush().then(() => {
+      flushed = true;
+    });
+    await flush();
+    expect(flushed).toBe(false);
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+
+    finishFirst();
+    await act(() => flushing);
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("a flush queued behind a delete (DIAAT-332)", () => {
+  it("writes only once the delete has finished, so the delete cannot erase it", async () => {
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+    let finishDelete: () => void = () => undefined;
+    const deleteDraft = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          finishDelete = resolve;
+        })
+    );
+    let deleting: Promise<void> = Promise.resolve();
+    act(() => {
+      deleting = result.current.runExclusive(deleteDraft);
+    });
+    await flush();
+    expect(deleteDraft).toHaveBeenCalledTimes(1);
+
+    let flushed = false;
+    const flushing = result.current.flush().then(() => {
+      flushed = true;
+    });
+    await flush();
+    // Not while the delete is pending: it would land after this write.
+    expect(mockPutLiveDraft).not.toHaveBeenCalled();
+    expect(flushed).toBe(false);
+
+    finishDelete();
+    await act(() => Promise.all([deleting, flushing]));
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+    expect(flushed).toBe(true);
+  });
+
+  it("still runs after a delete that failed", async () => {
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+    const deleting = result.current.runExclusive(() =>
+      Promise.reject(new Error("delete failed"))
+    );
+    await act(async () => {
+      await expect(deleting).rejects.toThrow("delete failed");
+      await result.current.flush();
+    });
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a flush's write (DIAAT-332)", () => {
+  it("is waited for by stop(), so a submission's delete cannot land before it", async () => {
+    let finish: () => void = () => undefined;
+    mockPutLiveDraft.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        })
+    );
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+    const flushing = result.current.flush();
+    await flush();
+
+    let stopped = false;
+    const stopping = result.current.stop().then(() => {
+      stopped = true;
+    });
+    await flush();
+    expect(stopped).toBe(false);
+
+    finish();
+    await act(() => Promise.all([flushing, stopping]));
+    expect(stopped).toBe(true);
+  });
+
+  it("hands a failure back to autosave, which records it and retries", async () => {
+    mockPutLiveDraft.mockRejectedValue(new LiveDraftError("network", "boom"));
+    const { result } = renderHook(() =>
+      useLiveDraftAutosave({ getPayload: payloadGetter() })
+    );
+
+    await act(async () => {
+      await expect(result.current.flush()).rejects.toThrow("boom");
+    });
+    await flush();
+
+    expect(result.current.state.consecutiveFailures).toBeGreaterThan(0);
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(2); // the flush, then autosave's own
   });
 });

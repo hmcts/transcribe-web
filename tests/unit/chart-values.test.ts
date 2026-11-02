@@ -37,3 +37,18 @@ describe("chart values: App Insights for Flux-deployed pods", () => {
     expect(values).toMatch(/^\s+OTEL_SERVICE_NAME: transcribe-web$/m);
   });
 });
+
+describe("chart values: Dictation feature flag (DIAAT-366)", () => {
+  // The nodejs chart renders each value with `tpl ($val | quote)`, which
+  // escapes double quotes, so the string literal has to be a backtick one.
+  it("turns Dictation off in prod only, from global.environment", () => {
+    expect(values).toContain(
+      "NEXT_PUBLIC_DICTATION_ENABLED: '{{ ne .Values.global.environment `prod` }}'"
+    );
+  });
+
+  it("is read through getEnv, so start.js's runtime value reaches the browser", () => {
+    const environment = readFileSync(join(root, "lib/environment.ts"), "utf8");
+    expect(environment).toContain('getEnv("NEXT_PUBLIC_DICTATION_ENABLED")');
+  });
+});

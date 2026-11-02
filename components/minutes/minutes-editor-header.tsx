@@ -206,7 +206,7 @@ export default function MinutesEditorHeader({
 
                   <DownloadStyleCopyButton
                     textToCopy={currentVersion.html_content}
-                    posthogEventName="minutes_copied"
+                    trackingEvent="minutes_copied"
                     onCopy={onCopy}
                   />
                 </>

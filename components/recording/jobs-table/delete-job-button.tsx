@@ -16,6 +16,7 @@ import {
 } from "@/components/recording/ui/alert-dialog";
 import { Button } from "@/components/recording/ui/button";
 import { apiPath } from "@/lib/recording/base-path";
+import { recordingFetch } from "@/lib/recording/browser-fetch";
 
 interface DeleteJobButtonProps {
   jobId: string;
@@ -34,7 +35,7 @@ export function DeleteJobButton({
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const response = await fetch(apiPath(`/api/jobs/${jobId}`), {
+      const response = await recordingFetch(apiPath(`/api/jobs/${jobId}`), {
         method: "DELETE",
       });
       if (!response.ok) {

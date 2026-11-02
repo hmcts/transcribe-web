@@ -45,6 +45,9 @@ export interface SpeechDemoProps {
   onActiveSectionChange?: (section: TranscriptSection) => void;
   showRecordingControls?: boolean;
   showSectionTabs?: boolean;
+  /** Name the section dictated into (DIAAT-333: off for the general section,
+   * where there is only one and its IAC name would mean nothing). */
+  showSectionNames?: boolean;
   embedded?: boolean;
   onTranscriptChange?: (transcript: SectionedTranscript) => void;
   /**

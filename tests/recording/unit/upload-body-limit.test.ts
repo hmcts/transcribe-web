@@ -18,9 +18,8 @@ let getCloneableBody: (readable: Readable, sizeLimit?: number) => CloneableBody;
 let doesProxyMatch: typeof import("next/experimental/testing/server").unstable_doesMiddlewareMatch;
 
 beforeAll(async () => {
-  // Next's server modules (loaded by next.config.js's Sentry wrapper and
-  // the testing helpers) expect the AsyncLocalStorage global its Node.js
-  // runtime installs; jsdom has none.
+  // Next's server modules (loaded by the testing helpers) expect the
+  // AsyncLocalStorage global its Node.js runtime installs; jsdom has none.
   (globalThis as { AsyncLocalStorage?: unknown }).AsyncLocalStorage ??=
     AsyncLocalStorage;
   const requireFromRoot = createRequire(

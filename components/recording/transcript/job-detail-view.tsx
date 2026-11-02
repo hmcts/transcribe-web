@@ -2,7 +2,7 @@
 
 import { ChevronDown, ChevronLeft, History } from "lucide-react";
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { JobProgress } from "@/components/recording/job-status/job-progress";
 import { JobStatusBadge } from "@/components/recording/job-status/job-status-badge";
 import { AudioPlayerBar } from "@/components/recording/transcript/audio-player-bar";
@@ -10,13 +10,19 @@ import { ModificationHistoryTable } from "@/components/recording/transcript/modi
 import { NeedsReviewPanel } from "@/components/recording/transcript/needs-review-panel";
 import { TranscriptAccuracy } from "@/components/recording/transcript/transcript-accuracy";
 import { TranscriptSegment } from "@/components/recording/transcript/transcript-segment";
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { apiPath } from "@/lib/recording/base-path";
 import { RECORDING_HOME } from "@/lib/recording/routes";
 import type { TranscriptionJob } from "@/lib/recording/types";
 import { rawUploadHeaders } from "@/lib/recording/upload-contract";
 import { cn } from "@/lib/recording/utils";
+import { recordingFetch, withTabJurisdiction } from "@/lib/recording/browser-fetch";
 
 const POLL_INTERVAL_MS = 5000;
+
+const SECTION_GONE =
+  "This section has changed since the transcript was loaded: it may have been combined with another, for example in another tab. Reload the page to see the latest transcript.";
+const ACTION_FAILED = "That change could not be saved. Try again.";
 
 // Persists the reader's audio/transcript sync-highlight preference (DIAAT-246)
 // across visits and page reloads.
@@ -29,8 +35,17 @@ interface JobDetailViewProps {
 
 export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
   const [job, setJob] = useState(initialJob);
+  // An <audio> source cannot send the tab's jurisdiction as a header (DIAAT-334).
+  const audioSrc = useMemo(
+    () => withTabJurisdiction(apiPath(`/api/audio/${jobId}`)),
+    [jobId]
+  );
   const jobRef = useRef(job);
   jobRef.current = job;
+  const applyJob = (next: TranscriptionJob) => {
+    jobRef.current = next;
+    setJob(next);
+  };
 
   const audioElRef = useRef<HTMLAudioElement | null>(null);
   const audioCleanupRef = useRef<(() => void) | null>(null);
@@ -147,90 +162,76 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     }
   };
 
-  const correctSegment = async (index: number, correctedText: string) => {
-    const response = await fetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}`),
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ correctedText }),
+  const [combining, setCombining] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const requestQueue = useRef<Promise<unknown>>(Promise.resolve());
+
+  // One request at a time, so a slower response can't put back an older copy
+  // of the transcript.
+  const enqueue = <T,>(request: () => Promise<T>): Promise<T> => {
+    const run = requestQueue.current.then(request);
+    requestQueue.current = run.catch(() => undefined);
+    return run;
+  };
+
+  const segmentAction = (segmentId: string, path: string, init: RequestInit) =>
+    enqueue(async () => {
+      setActionError(null);
+      try {
+        const response = await recordingFetch(
+          apiPath(
+            `/api/jobs/${jobId}/segments/${encodeURIComponent(segmentId)}${path}`
+          ),
+          init
+        );
+        if (response.status === 409) setActionError(SECTION_GONE);
+        if (!response.ok) {
+          throw new Error(`Segment request failed: ${response.status}`);
+        }
+        const body = await response.json();
+        applyJob(body.job as TranscriptionJob);
+      } catch (err) {
+        setActionError((current) => current ?? ACTION_FAILED);
+        throw err;
       }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to save correction: ${response.status}`);
-    }
-    const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    });
+
+  const patchJson = (body: unknown): RequestInit => ({
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const combine = (segmentId: string, nextSegmentId: string) => {
+    setCombining(true);
+    return segmentAction(segmentId, "/merge-next", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ nextSegmentId }),
+    })
+      .catch(() => undefined)
+      .finally(() => setCombining(false));
   };
 
-  const correctWordRange = async (
-    index: number,
-    startWordIndex: number,
-    endWordIndex: number,
-    correctedText: string
-  ) => {
-    const response = await fetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}/words`),
-      {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ startWordIndex, endWordIndex, correctedText }),
-      }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to save correction: ${response.status}`);
-    }
-    const body = await response.json();
-    setJob(body.job as TranscriptionJob);
-  };
-
-  const rollbackSegment = async (index: number) => {
-    const response = await fetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}/rollback`),
-      { method: "POST" }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to roll back segment: ${response.status}`);
-    }
-    const body = await response.json();
-    setJob(body.job as TranscriptionJob);
-  };
-
-  const acceptSegment = async (index: number) => {
-    const response = await fetch(
-      apiPath(`/api/jobs/${jobId}/segments/${index}/accept`),
-      { method: "POST" }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to accept segment: ${response.status}`);
-    }
-    const body = await response.json();
-    setJob(body.job as TranscriptionJob);
-  };
-
-  const rollbackToHistoryEntry = async (
-    index: number,
-    historyIndex: number
-  ) => {
-    const response = await fetch(
-      apiPath(
-        `/api/jobs/${jobId}/segments/${index}/history/${historyIndex}/rollback`
-      ),
-      { method: "POST" }
-    );
-    if (!response.ok) {
-      throw new Error(`Failed to roll back: ${response.status}`);
-    }
-    const body = await response.json();
-    setJob(body.job as TranscriptionJob);
-  };
+  // DIAAT-332: a switch reloads the tab, which would cancel the upload.
+  const [uploadingBaseline, setUploadingBaseline] = useState(false);
+  useJurisdictionSwitchGuard({ busy: uploadingBaseline, unsaved: false });
 
   const uploadBaseline = async (file: File) => {
+    setUploadingBaseline(true);
+    try {
+      await enqueue(() => sendBaseline(file));
+    } finally {
+      setUploadingBaseline(false);
+    }
+  };
+
+  const sendBaseline = async (file: File) => {
     // The raw file, as exactly application/octet-stream, not
     // multipart/form-data: the only shape Front Door's WAF lets through to
     // this path (lib/recording/upload-contract.ts). The route handler builds
     // the multipart request to the API (app/api/jobs/[jobId]/baseline).
-    const response = await fetch(apiPath(`/api/jobs/${jobId}/baseline`), {
+    const response = await recordingFetch(apiPath(`/api/jobs/${jobId}/baseline`), {
       method: "POST",
       headers: rawUploadHeaders(file),
       body: file,
@@ -243,7 +244,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       );
     }
     const body = await response.json();
-    setJob(body.job as TranscriptionJob);
+    applyJob(body.job as TranscriptionJob);
   };
 
   useEffect(() => {
@@ -255,7 +256,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
         return;
       }
       try {
-        const response = await fetch(apiPath(`/api/jobs/${jobId}`), {
+        const response = await recordingFetch(apiPath(`/api/jobs/${jobId}`), {
           cache: "no-store",
         });
         if (!response.ok) return;
@@ -315,7 +316,7 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
       <main className="min-h-screen bg-background">
         <audio
           ref={attachAudioRef}
-          src={apiPath(`/api/audio/${job.id}`)}
+          src={audioSrc}
           preload="metadata"
           className="hidden"
         >
@@ -367,8 +368,13 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
                   and confirm or edit.
                 </p>
               )}
+              {actionError && (
+                <p role="alert" className="text-sm text-destructive mb-3">
+                  {actionError}
+                </p>
+              )}
               <div className="border border-border rounded-lg divide-y divide-border">
-                {job.segments.map((segment, index) => {
+                {job.segments.map((segment, index, segments) => {
                   const isActive =
                     playing &&
                     position >= segment.startTime &&
@@ -378,15 +384,60 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
                       key={segment.id}
                       segment={segment}
                       onSeek={audioAvailable ? seekTo : undefined}
-                      onCorrect={(text) => correctSegment(index, text)}
+                      onCorrect={(text) =>
+                        segmentAction(
+                          segment.id,
+                          "",
+                          patchJson({ correctedText: text })
+                        )
+                      }
                       onCorrectRange={(start, end, text) =>
-                        correctWordRange(index, start, end, text)
+                        segmentAction(
+                          segment.id,
+                          "/words",
+                          patchJson({
+                            startWordIndex: start,
+                            endWordIndex: end,
+                            correctedText: text,
+                          })
+                        )
                       }
-                      onRollback={() => rollbackSegment(index)}
+                      onRollback={() =>
+                        segmentAction(segment.id, "/rollback", { method: "POST" })
+                      }
                       onRollbackToHistory={(historyIndex) =>
-                        rollbackToHistoryEntry(index, historyIndex)
+                        segmentAction(
+                          segment.id,
+                          `/history/${historyIndex}/rollback`,
+                          { method: "POST" }
+                        )
                       }
-                      onAccept={() => acceptSegment(index)}
+                      onAccept={() =>
+                        segmentAction(segment.id, "/accept", { method: "POST" })
+                      }
+                      onCombinePrevious={
+                        index > 0
+                          ? () => combine(segments[index - 1].id, segment.id)
+                          : undefined
+                      }
+                      onCombineNext={
+                        index < segments.length - 1
+                          ? () => combine(segment.id, segments[index + 1].id)
+                          : undefined
+                      }
+                      combinePending={combining}
+                      needsReview={job.lowConfidenceSegments?.some(
+                        (item) =>
+                          item.startTime === segment.startTime &&
+                          item.speaker === segment.speaker
+                      )}
+                      onRenameSpeaker={(speaker, applyToAll) =>
+                        segmentAction(
+                          segment.id,
+                          "/speaker",
+                          patchJson({ speaker, applyToAll })
+                        )
+                      }
                       isActive={isActive}
                       getCurrentTime={getCurrentTime}
                       syncHighlight={syncHighlight}

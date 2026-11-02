@@ -5,6 +5,15 @@ const mockPush = vi.fn();
 let mockPathname = "/";
 let mockSelectedRecordingMode: string | null = null;
 let mockIsRecording = false;
+let mockRole: "judge" | "admin" = "judge";
+
+// DIAAT-322: these screens as the IAC sees them.
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule(
+    "IAC",
+    () => mockRole
+  )
+);
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
@@ -69,6 +78,49 @@ describe("Header", () => {
     mockPathname = "/";
     mockSelectedRecordingMode = null;
     mockIsRecording = false;
+    vi.unstubAllEnvs();
+  });
+
+  describe("with Dictation switched off (DIAAT-366)", () => {
+    it("leaves Dictation out of the desktop nav and keeps the rest", () => {
+      vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
+      const nav = within(render(<Header />).getByRole("navigation"));
+      expect(nav.queryByRole("link", { name: "Go to dictation" })).toBeNull();
+      expect(
+        nav.getByRole("link", { name: "Go to hearing recordings" })
+      ).toBeTruthy();
+      expect(nav.getByRole("link", { name: "Go to help" })).toBeTruthy();
+    });
+
+    it("leaves Dictation out of the mobile menu and keeps the rest", () => {
+      vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
+      render(<Header />);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open navigation menu" })
+      );
+      const menu = within(screen.getByRole("dialog"));
+      expect(menu.queryByRole("link", { name: "Dictation" })).toBeNull();
+      expect(
+        menu.getByRole("link", { name: "Hearing recordings" })
+      ).toBeTruthy();
+      expect(menu.getByRole("link", { name: "Help" })).toBeTruthy();
+    });
+  });
+
+  it("links an admin for the jurisdiction to its wording, and nobody else (DIAAT-356)", () => {
+    const { queryByRole, unmount } = render(<Header />);
+    expect(queryByRole("link", { name: /Wording/ })).toBeNull();
+    unmount();
+
+    mockRole = "admin";
+    try {
+      const { getByRole } = render(<Header />);
+      expect(getByRole("link", { name: /Wording/ }).getAttribute("href")).toBe(
+        "/jurisdiction-wording"
+      );
+    } finally {
+      mockRole = "judge";
+    }
   });
 
   it("renders the Bench Notes text", () => {

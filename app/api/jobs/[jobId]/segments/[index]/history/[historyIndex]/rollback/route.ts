@@ -4,6 +4,7 @@ import {
   rollbackToHistoryEntry,
 } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+import { isSegmentId } from "@/lib/recording/segment-id";
 
 interface RouteContext {
   params: Promise<{ jobId: string; index: string; historyIndex: string }>;
@@ -11,16 +12,14 @@ interface RouteContext {
 
 export async function POST(request: NextRequest, { params }: RouteContext) {
   const { jobId, index, historyIndex } = await params;
-  const segmentIndex = Number(index);
   const targetHistoryIndex = Number(historyIndex);
   if (
-    !Number.isInteger(segmentIndex) ||
-    segmentIndex < 0 ||
+    !isSegmentId(index) ||
     !Number.isInteger(targetHistoryIndex) ||
     targetHistoryIndex < 0
   ) {
     return NextResponse.json(
-      { error: "Invalid segment or history index" },
+      { error: "Invalid segment id or history index" },
       { status: 422 }
     );
   }
@@ -29,7 +28,7 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
   try {
     const job = await rollbackToHistoryEntry(
       jobId,
-      segmentIndex,
+      index,
       targetHistoryIndex,
       auth
     );

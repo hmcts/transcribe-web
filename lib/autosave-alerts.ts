@@ -28,6 +28,7 @@ import {
   isDraftNearingExpiry,
   millisecondsUntilDraftExpiry,
 } from "@/lib/autosave-state";
+import { WORDING_DEFAULTS } from "@/lib/jurisdiction-wording";
 import type { LiveDraftFailureKind } from "@/lib/live-draft-errors";
 import type { RecordAlert } from "@/lib/record-alerts";
 
@@ -47,10 +48,13 @@ export function formatClockTime(epochMs: number): string {
 
 export interface DescribeAutosaveAlertInput {
   state: AutosaveState;
+  /** DIAAT-330: what the jurisdiction calls what dictation is saved to. */
+  recordName?: string;
 }
 
 export function describeAutosaveAlert({
   state,
+  recordName = WORDING_DEFAULTS["autosave.record_name"],
 }: DescribeAutosaveAlertInput): RecordAlert | null {
   if (!isAutosaveFailing(state)) return null;
 
@@ -66,7 +70,7 @@ export function describeAutosaveAlert({
       kind: "auth-expired",
       severity: "error",
       heading: "You have been signed out — your transcript is not being saved",
-      body: `Your sign-in has expired, so this device can no longer save to the case record. ${unsavedSince} What is on screen is still here, and is not lost unless you close this tab.`,
+      body: `Your sign-in has expired, so this device can no longer save to the ${recordName}. ${unsavedSince} What is on screen is still here, and is not lost unless you close this tab.`,
       guidance:
         "Open this service in a new tab and sign in again, then come back to this tab. Do not close this tab until your transcript has been saved.",
       dismissible: false,
@@ -78,7 +82,7 @@ export function describeAutosaveAlert({
       kind: "autosave-failing",
       severity: "error",
       heading: "Your transcript is not being saved",
-      body: `Saving to the case record has stopped working. ${unsavedSince} What is on screen will remain unless you close the tab.`,
+      body: `Saving to the ${recordName} has stopped working. ${unsavedSince} What is on screen will remain unless you close the tab.`,
       guidance:
         "Keep this tab open — saving will resume if the issue clears. If this message does not clear, copy your transcript somewhere safe before closing the tab.",
       dismissible: false,

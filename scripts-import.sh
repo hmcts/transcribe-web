@@ -16,7 +16,6 @@ for d in app components hooks lib providers public scripts src tests; do
 done
 for f in next.config.js tsconfig.json tailwind.config.ts postcss.config.mjs biome.json \
          vitest.config.ts components.json instrumentation.ts proxy.ts start.js \
-         sentry.client.config.ts sentry.edge.config.ts sentry.server.config.ts \
          Caddyfile supervisord.conf Dockerfile Dockerfile.dev ACCESSIBILITY.md; do
   [ -f "$C/$f" ] && cp "$C/$f" "$T/$f"
 done

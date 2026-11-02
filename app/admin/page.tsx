@@ -2,6 +2,7 @@
 
 import {
   BookOpen,
+  Building2,
   Gavel,
   Loader2,
   Plus,
@@ -14,6 +15,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
 import { AppSidebar, type Selection } from "@/components/app-sidebar";
 import { AdminEditor } from "@/components/editor/admin-editor";
 import {
@@ -170,6 +172,15 @@ export default function AdminPage() {
                 Users
               </TabsTrigger>
             )}
+            {adminRole === "SystemAdministrator" && (
+              <TabsTrigger
+                value="jurisdictions"
+                className="rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium"
+              >
+                <Building2 className="mr-1.5 h-4 w-4" />
+                Jurisdictions
+              </TabsTrigger>
+            )}
           </TabsList>
         </div>
 
@@ -220,6 +231,11 @@ export default function AdminPage() {
 
         <TabsContent value="users" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
           <UsersPanel />
+        </TabsContent>
+
+        {/* DIAAT-356: jurisdictions and their members, without a server command. */}
+        <TabsContent value="jurisdictions" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
+          {adminRole === "SystemAdministrator" && <JurisdictionsPanel />}
         </TabsContent>
       </Tabs>
 

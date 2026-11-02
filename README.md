@@ -40,6 +40,15 @@ tests/recording/                 recording's suite (+ e2e/ for Playwright)
 
 27 in total. Both areas are reachable from one nav in one session.
 
+## Branches and environments
+
+- Feature branches start from `develop`, and their PRs go into `develop`. Each PR gets its own preview.
+- `develop` deploys to demo (`benchnotes.demo.platform.hmcts.net`). The permanent draft PR #25 (`develop` → `master`) rebuilds on every push to `develop`, and Flux deploys its `pr-25-*` image. Never merge, close or mark #25 ready.
+- To release, open a PR into `master` from a branch cut from `develop`. `master` deploys to AAT, then prod.
+- Merge `master` into `develop` at least every 2 weeks, by a PR from a branch cut from `master` (not from `master` itself: Jenkins stops building a branch that is the head of an open PR), with a merge commit. Old `pr-*` images expire after about 3 weeks, and demo pods then fail to pull. If there is nothing to merge, re-run the latest Jenkins build of `PR-25` instead, which pushes a fresh tag.
+- Migrations go only through `master` of transcribe-api, so a feature that needs schema waits until its additive migration is on transcribe-api `master` and merged into its `develop`.
+- `demo` is the CNP branch for the demo Terraform only, and every `master` build overwrites it. Demo uses `master`'s Helm chart, so demo-only settings go in cnp-flux-config `apps/transcribe/transcribe-web/demo.yaml`.
+
 ## Local development
 
 ```bash

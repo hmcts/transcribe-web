@@ -4,6 +4,19 @@ import { describe, expect, it, vi } from "vitest";
 
 // ─── mocks ────────────────────────────────────────────────────────────────────
 
+// DIAAT-322: material is loaded in a jurisdiction; these tests work in the IAC.
+let mockInJurisdiction = true;
+vi.mock("@/providers/jurisdiction", async () => {
+  const { mockJurisdictionModule } = await import("../jurisdiction-helpers");
+  const iac = mockJurisdictionModule("IAC");
+  const inIac = iac.useJurisdiction();
+  return {
+    ...iac,
+    useJurisdiction: () =>
+      mockInJurisdiction ? inIac : { ...inIac, current: null },
+  };
+});
+
 vi.mock("@/lib/database", () => ({
   getAllTranscriptionMetadata: vi.fn(),
   getTranscriptionById: vi.fn(),
@@ -289,5 +302,21 @@ describe("state setters", () => {
     act(() => result.current.setSelectedRecordingMode("mic"));
 
     expect(result.current.selectedRecordingMode).toBe("mic");
+  });
+});
+
+describe("TranscriptsProvider outside a jurisdiction (DIAAT-322)", () => {
+  it("fetches no material", async () => {
+    mockInJurisdiction = false;
+    vi.mocked(getAllTranscriptionMetadata).mockClear();
+    try {
+      const { result } = renderHook(() => useTranscripts(), { wrapper });
+      await waitFor(() => expect(result.current.isLoading).toBe(false));
+      await act(() => result.current.refreshMetadata());
+      expect(getAllTranscriptionMetadata).not.toHaveBeenCalled();
+      expect(result.current.transcriptsMetadata).toEqual([]);
+    } finally {
+      mockInJurisdiction = true;
+    }
   });
 });

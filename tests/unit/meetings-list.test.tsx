@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("@/providers/transcripts", () => ({
   useTranscripts: vi.fn(),
 }));
-vi.mock("posthog-js", () => ({ default: { capture: vi.fn() } }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
 vi.mock("@/lib/download", () => ({ downloadTranscriptDocument: vi.fn() }));
 vi.mock("@/lib/database", () => ({

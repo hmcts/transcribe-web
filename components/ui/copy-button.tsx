@@ -5,13 +5,14 @@ import { track } from "@/lib/analytics";
 
 export interface DownloadStyleCopyButtonProps {
   textToCopy: string;
-  posthogEventName: string;
+  /** Analytics event recorded on copy. */
+  trackingEvent: "minutes_copied";
   onCopy: () => void;
 }
 
 export default function DownloadStyleCopyButton({
   textToCopy,
-  posthogEventName,
+  trackingEvent,
   onCopy,
 }: DownloadStyleCopyButtonProps) {
   const [showCopied, setShowCopied] = useState(false);
@@ -36,7 +37,7 @@ export default function DownloadStyleCopyButton({
       );
     }
 
-    track(posthogEventName, {
+    track(trackingEvent, {
       contentLength: textToCopy.length,
     });
 

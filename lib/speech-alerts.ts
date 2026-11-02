@@ -19,6 +19,7 @@
 
 import type { RecordAlert } from "@/lib/record-alerts";
 import type { SpeechSessionHealth } from "@/lib/speech-session-health";
+import { WORDING_DEFAULTS } from "@/lib/jurisdiction-wording";
 
 export interface DescribeSpeechAlertInput {
   health: SpeechSessionHealth;
@@ -29,6 +30,8 @@ export interface DescribeSpeechAlertInput {
   /** The no-speech watchdog has tripped. */
   noSpeechWarning: boolean;
   noSpeechThresholdSeconds: number;
+  /** DIAAT-330: the jurisdiction's guidance when the connection is lost. */
+  speechLostGuidance?: string;
 }
 
 /**
@@ -53,6 +56,7 @@ export function describeSpeechAlert({
   hasCapturedSpeech,
   noSpeechWarning,
   noSpeechThresholdSeconds,
+  speechLostGuidance = WORDING_DEFAULTS["alerts.speech_lost_guidance"],
 }: DescribeSpeechAlertInput): RecordAlert | null {
   if (health === "failed") {
     return {
@@ -62,8 +66,7 @@ export function describeSpeechAlert({
       body: hasCapturedSpeech
         ? "Connection to the transcription service has been lost. Anything said since the last line in your transcript is not being captured."
         : "Connection to the transcription service has been lost. Nothing from this session has been captured.",
-      guidance:
-        "Pause then restart recording to restart dictation. If this warning comes back, record this decision in another way and raise with your Support team for investigation.",
+      guidance: speechLostGuidance,
       dismissible: false,
     };
   }

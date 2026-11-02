@@ -34,11 +34,12 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNoSpeechWatchdog } from "@/hooks/use-no-speech-watchdog";
 import { useRealtimeTranscription } from "@/hooks/use-realtime-transcription";
-import { getAuthToken } from "@/lib/auth-utils";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
+import { submitDictation } from "@/lib/dictation-submission";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
 import { isCapturingSpeech } from "@/lib/speech-session-health";
 import cn, { getJudgeNameFromEmail } from "@/lib/utils";
+import { useWording } from "@/providers/jurisdiction";
 import { useUserSettings } from "@/providers/user-settings";
 import TranscriptEditor from "./transcript-editor";
 import type {
@@ -119,11 +120,13 @@ export default function LiveDictation({
   onActiveSectionChange,
   showRecordingControls = true,
   showSectionTabs = true,
+  showSectionNames = true,
   embedded = false,
   onTranscriptChange,
   initialSectionedTranscript,
   onSpeechSessionChange,
 }: SpeechDemoProps) {
+  const wording = useWording();
   const router = useRouter();
   const { user } = useUserSettings();
   const { segments, error, session, connect, disconnect } =
@@ -289,6 +292,7 @@ export default function LiveDictation({
       hasCapturedSpeech,
       noSpeechWarning,
       noSpeechThresholdSeconds: Math.round(noSpeechThresholdMs / 1000),
+      speechLostGuidance: wording("alerts.speech_lost_guidance"),
     });
     if (alert?.kind === "speech-interrupted" && resumedNoticeDismissed) {
       return null;
@@ -301,6 +305,7 @@ export default function LiveDictation({
     noSpeechWarning,
     noSpeechThresholdMs,
     resumedNoticeDismissed,
+    wording,
   ]);
 
   // Detection lives here, in the one component that owns both the SDK session
@@ -474,31 +479,18 @@ export default function LiveDictation({
       try {
         setIsSubmitting(true);
 
-        // Get auth token to forward to backend
-        const authToken = await getAuthToken();
-
-        const response = await fetch("/api/live-transcription/submission", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(authToken && { Authorization: `Bearer ${authToken}` }),
-          },
-          body: JSON.stringify({
+        // Reports the outcome and ends the dictation session as submitted, with
+        // the session's ID on the request (OBS-4), as the record page does.
+        const data = await submitDictation<
+          Awaited<Parameters<typeof submitHearingToast>[0]>
+        >(
+          {
             form_data: validation.data,
             // Send sectioned messages to backend
             messages: sectionedTranscript,
-          }),
-        });
-
-        if (!response.ok) {
-          const errorBody = await response.json().catch(() => null);
-          const message =
-            (errorBody && (errorBody.detail || errorBody.error)) ||
-            "Failed to save submission.";
-          throw new Error(message);
-        }
-
-        const data = await response.json();
+          },
+          { mode: "mic" }
+        );
 
         router.push("/");
 
@@ -566,6 +558,7 @@ export default function LiveDictation({
               interimText={interimText}
               isListening={isListening}
               onTranscriptUpdate={handleTranscriptUpdate}
+              showSectionNames={showSectionNames}
             />
           </div>
         </div>
@@ -624,6 +617,7 @@ export default function LiveDictation({
                   interimText={interimText}
                   isListening={isListening}
                   onTranscriptUpdate={handleTranscriptUpdate}
+                  showSectionNames={showSectionNames}
                 />
               </div>
             </div>

@@ -27,7 +27,12 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { type AudioBackup, audioBackupDB } from "@/lib/indexeddb-backup";
+import {
+  type AudioBackup,
+  audioBackupDB,
+  isBackupFor,
+} from "@/lib/indexeddb-backup";
+import { useJurisdiction } from "@/providers/jurisdiction";
 
 const DANGER_GHOST_BUTTON_CLASS =
   "text-destructive hover:bg-destructive/10 hover:text-destructive";
@@ -37,6 +42,7 @@ interface BackupRecoveryProps {
 }
 
 function BackupRecovery({ onRetryUpload }: BackupRecoveryProps) {
+  const { current } = useJurisdiction();
   const [backups, setBackups] = useState<AudioBackup[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -46,7 +52,15 @@ function BackupRecovery({ onRetryUpload }: BackupRecoveryProps) {
     try {
       setIsLoading(true);
       setError(null);
-      const allBackups = await audioBackupDB.getAllAudioBackups();
+      // DIAAT-334: only this jurisdiction's: a backup re-uploaded here would be
+      // filed here, whichever jurisdiction it was recorded in.
+      if (!current) {
+        setBackups([]);
+        return;
+      }
+      const allBackups = (await audioBackupDB.getAllAudioBackups()).filter(
+        (backup) => isBackupFor(backup, current.code)
+      );
       // Sort by timestamp (newest first)
       allBackups.sort((a, b) => b.timestamp - a.timestamp);
       setBackups(allBackups);
@@ -60,7 +74,7 @@ function BackupRecovery({ onRetryUpload }: BackupRecoveryProps) {
     } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [current]);
 
   useEffect(() => {
     loadBackups();

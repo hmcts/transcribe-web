@@ -1,0 +1,192 @@
+[
+  {
+    "name": "page.viewed",
+    "attributes": {
+      "page.route": "/transcriptions/:id"
+    }
+  },
+  {
+    "name": "upload.transcription_started",
+    "attributes": {
+      "upload.source": "backup_retry",
+      "file.type": "video/webm",
+      "upload.retry_attempt": 2
+    }
+  },
+  {
+    "name": "recording.completed",
+    "attributes": {
+      "recording.mode": "mic",
+      "recording.duration_seconds": 62,
+      "file.size_bytes": 1234567
+    }
+  },
+  {
+    "name": "recording.started",
+    "attributes": {
+      "recording.mode": "screen",
+      "file.type": "video/webm"
+    }
+  },
+  {
+    "name": "recording.completed",
+    "attributes": {
+      "recording.mode": "screen",
+      "recording.duration_seconds": 120,
+      "file.size_bytes": 9999999,
+      "file.type": "audio/x-m4a"
+    }
+  },
+  {
+    "name": "recording.failed",
+    "attributes": {
+      "recording.mode": "screen",
+      "recording.duration_seconds": 3
+    }
+  },
+  {
+    "name": "transcript.opened"
+  },
+  {
+    "name": "transcript.deleted"
+  },
+  {
+    "name": "transcript.renamed"
+  },
+  {
+    "name": "transcript.marked_done"
+  },
+  {
+    "name": "transcript.unmarked_done"
+  },
+  {
+    "name": "minutes.citation_clicked",
+    "attributes": {
+      "minutes.citation_index": 3
+    }
+  },
+  {
+    "name": "transcript.speaker_renamed",
+    "attributes": {
+      "transcript.update_type": "single_occurrence"
+    }
+  },
+  {
+    "name": "minutes.manual_edit_saved"
+  },
+  {
+    "name": "minutes.generation_started",
+    "attributes": {
+      "minutes.template": "General"
+    }
+  },
+  {
+    "name": "minutes.generation_completed",
+    "attributes": {
+      "minutes.template": "Crissa"
+    },
+    "durationMs": 12345
+  },
+  {
+    "name": "minutes.generation_failed",
+    "attributes": {
+      "minutes.template": "General",
+      "hmcts.outcome": "error",
+      "hmcts.error.code": "unknown_error"
+    },
+    "durationMs": 99
+  },
+  {
+    "name": "minutes.ai_edit_started",
+    "attributes": {
+      "minutes.template": "Crissa"
+    }
+  },
+  {
+    "name": "minutes.ai_edit_completed",
+    "attributes": {
+      "minutes.template": "General"
+    },
+    "durationMs": 4000
+  },
+  {
+    "name": "minutes.ai_edit_failed",
+    "attributes": {
+      "minutes.template": "Crissa",
+      "hmcts.outcome": "error",
+      "hmcts.error.code": "AbortError"
+    },
+    "durationMs": 50
+  },
+  {
+    "name": "minutes.rated",
+    "attributes": {
+      "minutes.rating": 5
+    }
+  },
+  {
+    "name": "minutes.copied",
+    "attributes": {
+      "minutes.content_length": 2048
+    }
+  },
+  {
+    "name": "onboarding.step_viewed",
+    "attributes": {
+      "onboarding.step": 2,
+      "onboarding.step_name": "transcribe"
+    }
+  },
+  {
+    "name": "onboarding.completed"
+  },
+  {
+    "name": "onboarding.licence_check_failed",
+    "attributes": {
+      "onboarding.step": 1,
+      "hmcts.error.code": "onboarding.auth_request_failed"
+    }
+  },
+  {
+    "name": "upload.file_selected",
+    "attributes": {
+      "file.type": "unknown",
+      "file.size_bytes": 3000000000
+    }
+  },
+  {
+    "name": "upload.file_rejected",
+    "attributes": {
+      "hmcts.error.code": "upload.file_too_large",
+      "file.type": "audio/mpeg",
+      "file.size_bytes": 3000000000
+    }
+  },
+  {
+    "name": "support.error_report_copied",
+    "attributes": {
+      "hmcts.request.id": "0123456789abcdef0123456789abcdef"
+    }
+  },
+  {
+    "name": "support.error_report_downloaded",
+    "attributes": {
+      "hmcts.request.id": null
+    }
+  },
+  {
+    "name": "recording.new_clicked",
+    "attributes": {
+      "dictation.mode": "upload"
+    }
+  },
+  {
+    "name": "speakers.sample_renamed"
+  },
+  {
+    "name": "speakers.sample_played",
+    "attributes": {
+      "speakers.segment_seconds": 3.25
+    }
+  }
+]

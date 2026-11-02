@@ -1,6 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
+// DIAAT-322: these screens as the IAC sees them.
+vi.mock("@/providers/jurisdiction", async () =>
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
+);
+
 vi.mock("next/link", () => ({
   default: ({
     children,

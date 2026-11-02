@@ -2,16 +2,32 @@
 
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   Check,
   History,
   Pencil,
   RotateCcw,
+  UserPen,
   X,
 } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import {
+  type ComponentPropsWithRef,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { LowConfidencePopup } from "@/components/recording/transcript/low-confidence-popup";
 import { LowConfidenceResolveMenu } from "@/components/recording/transcript/low-confidence-resolve-menu";
 import { Button } from "@/components/recording/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { diagnoseLowConfidenceWord } from "@/lib/recording/alternatives";
 import { confidencePercent, formatTime } from "@/lib/recording/mock-data";
 import { historyKindLabel } from "@/lib/recording/modification-history";
@@ -801,6 +817,84 @@ function HistoryPanel({
   );
 }
 
+interface SpeakerRenameFormProps {
+  inputId: string;
+  speaker: string;
+  value: string;
+  onChange: (value: string) => void;
+  onReplace: (applyToAll: boolean) => void;
+  onCancel: () => void;
+  error: string | null;
+  saving: boolean;
+}
+
+function SpeakerRenameForm({
+  inputId,
+  speaker,
+  value,
+  onChange,
+  onReplace,
+  onCancel,
+  error,
+  saving,
+}: SpeakerRenameFormProps) {
+  const errorId = `${inputId}-error`;
+  return (
+    <fieldset
+      aria-label={`Rename ${speaker}`}
+      onKeyDown={(e) => {
+        if (saving) return;
+        if (e.key === "Escape") {
+          e.preventDefault();
+          onCancel();
+        }
+      }}
+      className="mb-2 flex flex-wrap items-center gap-2"
+    >
+      <label htmlFor={inputId} className="sr-only">
+        New name for {speaker}
+      </label>
+      <input
+        id={inputId}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        readOnly={saving}
+        maxLength={200}
+        aria-invalid={error ? true : undefined}
+        aria-describedby={error ? errorId : undefined}
+        className="w-48 rounded border border-primary px-1 py-0.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
+        // biome-ignore lint/a11y/noAutofocus: opening the editor is an explicit user action
+        autoFocus
+      />
+      <Button size="sm" onClick={() => onReplace(false)} disabled={saving}>
+        Replace one
+      </Button>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={() => onReplace(true)}
+        disabled={saving}
+        title={`Rename every section spoken by ${speaker}`}
+      >
+        Replace all
+      </Button>
+      <Button size="sm" variant="ghost" onClick={onCancel} disabled={saving}>
+        <X className="size-3.5" />
+        Cancel
+      </Button>
+      {error && (
+        <p
+          id={errorId}
+          role="alert"
+          className="w-full text-xs text-destructive"
+        >
+          {error}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
 interface TranscriptSegmentProps {
   segment: TranscriptSegmentType;
   onSeek?: (time: number) => void;
@@ -815,6 +909,16 @@ interface TranscriptSegmentProps {
   // Marks the segment reviewed/accepted as-is (clears its low-confidence
   // highlighting) without editing the text. Distinct from onCorrect.
   onAccept?: () => Promise<void> | void;
+  // Omitted on the first/last segment, which hides that button.
+  onCombinePrevious?: () => Promise<void> | void;
+  onCombineNext?: () => Promise<void> | void;
+  combinePending?: boolean;
+  // The backend still lists this segment under "needs review".
+  needsReview?: boolean;
+  onRenameSpeaker?: (
+    speaker: string,
+    applyToAll: boolean
+  ) => Promise<void> | void;
   isActive?: boolean;
   // Reads live audio position on demand — only polled (via rAF) while
   // isActive, to highlight the word currently being spoken in sync with
@@ -829,6 +933,23 @@ interface TranscriptSegmentProps {
   lowConfidenceThreshold?: number;
 }
 
+type IconButtonProps = Omit<ComponentPropsWithRef<"button">, "type"> & {
+  label: string;
+};
+
+function IconButton({ label, children, ...props }: IconButtonProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button type="button" aria-label={label} {...props}>
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 export function TranscriptSegment({
   segment,
   onSeek,
@@ -837,6 +958,11 @@ export function TranscriptSegment({
   onRollback,
   onRollbackToHistory,
   onAccept,
+  onCombinePrevious,
+  onCombineNext,
+  combinePending = false,
+  needsReview = false,
+  onRenameSpeaker,
   isActive,
   getCurrentTime,
   syncHighlight = true,
@@ -847,6 +973,29 @@ export function TranscriptSegment({
   const [saving, setSaving] = useState(false);
   const [accepting, setAccepting] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
+  const [renamingSpeaker, setRenamingSpeaker] = useState(false);
+  const [speakerDraft, setSpeakerDraft] = useState(segment.speaker);
+  const [speakerError, setSpeakerError] = useState<string | null>(null);
+  const [savingSpeaker, setSavingSpeaker] = useState(false);
+  const speakerInputId = useId();
+  const renameSpeakerButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreSpeakerFocus = useRef(false);
+  const savingSpeakerRef = useRef(false);
+  useEffect(() => {
+    if (!renamingSpeaker && restoreSpeakerFocus.current) {
+      restoreSpeakerFocus.current = false;
+      renameSpeakerButtonRef.current?.focus();
+    }
+  }, [renamingSpeaker]);
+  // A "Replace all" saved from another section can rename this one, which
+  // would leave an open editor here holding the old name as its draft.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: runs only when the speaker changes
+  useEffect(() => {
+    if (!savingSpeakerRef.current) {
+      setRenamingSpeaker(false);
+      setSpeakerError(null);
+    }
+  }, [segment.speaker]);
   const [highlightRange, setHighlightRange] = useState<{
     start: number;
     end: number;
@@ -906,18 +1055,59 @@ export function TranscriptSegment({
   // the per-word highlighting, so segments that showed highlighted words but
   // had a high segment average (or no segment-level confidence at all) never
   // offered the checkmark (DIAAT-229).
+  // A section combined from an edited part and an unreviewed one shows as
+  // edited with no highlights, but stays in "needs review" until accepted.
   const canAccept =
-    !!onAccept && hasRemainingLowConfidenceHighlights && !accepted;
+    !!onAccept &&
+    !accepted &&
+    (hasRemainingLowConfidenceHighlights || (needsReview && hasCorrections));
 
   const startEditing = () => {
     setDraft(displayText);
     setEditing(true);
   };
 
+  const startRenamingSpeaker = () => {
+    setSpeakerDraft(segment.speaker);
+    setSpeakerError(null);
+    setRenamingSpeaker(true);
+  };
+
+  const cancelRenamingSpeaker = () => {
+    restoreSpeakerFocus.current = true;
+    setRenamingSpeaker(false);
+    setSpeakerError(null);
+  };
+
+  const renameSpeaker = async (applyToAll: boolean) => {
+    const trimmed = speakerDraft.trim();
+    if (!trimmed) {
+      setSpeakerError("Enter a speaker name");
+      return;
+    }
+    if (trimmed === segment.speaker) {
+      cancelRenamingSpeaker();
+      return;
+    }
+    setSavingSpeaker(true);
+    savingSpeakerRef.current = true;
+    try {
+      await onRenameSpeaker?.(trimmed, applyToAll);
+      cancelRenamingSpeaker();
+    } catch {
+      setSpeakerError("The speaker name could not be saved. Try again.");
+    } finally {
+      savingSpeakerRef.current = false;
+      setSavingSpeaker(false);
+    }
+  };
+
   const accept = async () => {
     setAccepting(true);
     try {
       await onAccept?.();
+    } catch {
+      // The page reports the failure.
     } finally {
       setAccepting(false);
     }
@@ -933,6 +1123,8 @@ export function TranscriptSegment({
     try {
       await onCorrect?.(trimmed);
       setEditing(false);
+    } catch {
+      // The page reports the failure; the editor stays open with the draft.
     } finally {
       setSaving(false);
     }
@@ -978,70 +1170,118 @@ export function TranscriptSegment({
       {/* Content */}
       <div className="flex-1 min-w-0">
         {/* Speaker + confidence */}
-        <div className="flex items-center gap-2 mb-1">
-          <span
-            className="inline-block w-3 h-3 rounded-sm shrink-0"
-            style={{ backgroundColor: segment.speakerColor }}
-          />
-          <span className="font-semibold text-sm">{segment.speaker}</span>
-          {pct !== undefined && (
+        <TooltipProvider delayDuration={200}>
+          <div className="flex items-center gap-2 mb-1">
             <span
-              className={cn(
-                "text-xs font-semibold px-1.5 py-0.5 rounded",
-                isLowConf
-                  ? "bg-orange-100 text-orange-800"
-                  : "bg-muted text-muted-foreground"
+              className="inline-block w-3 h-3 rounded-sm shrink-0"
+              style={{ backgroundColor: segment.speakerColor }}
+            />
+            <span className="font-semibold text-sm">{segment.speaker}</span>
+            {onRenameSpeaker && !renamingSpeaker && (
+              <IconButton
+                ref={renameSpeakerButtonRef}
+                onClick={startRenamingSpeaker}
+                label="Rename speaker"
+                aria-label={`Rename speaker ${segment.speaker}`}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <UserPen className="size-3.5" />
+              </IconButton>
+            )}
+            {pct !== undefined && (
+              <span
+                className={cn(
+                  "text-xs font-semibold px-1.5 py-0.5 rounded",
+                  isLowConf
+                    ? "bg-orange-100 text-orange-800"
+                    : "bg-muted text-muted-foreground"
+                )}
+              >
+                {pct}% CONF
+              </span>
+            )}
+            {hasCorrections && (
+              <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                Edited
+              </span>
+            )}
+            {accepted && !hasCorrections && (
+              <span className="inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                <Check className="size-3" />
+                Accepted
+              </span>
+            )}
+            <div className="ml-auto flex items-center gap-2">
+              {hasHistory && (
+                <IconButton
+                  onClick={() => setShowHistory((v) => !v)}
+                  label={
+                    showHistory ? "Hide edit history" : "View edit history"
+                  }
+                  aria-expanded={showHistory}
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <History className="size-3.5" />
+                </IconButton>
               )}
-            >
-              {pct}% CONF
-            </span>
-          )}
-          {hasCorrections && (
-            <span className="text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-              Edited
-            </span>
-          )}
-          {accepted && !hasCorrections && (
-            <span className="inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded bg-emerald-100 text-emerald-800">
-              <Check className="size-3" />
-              Accepted
-            </span>
-          )}
-          <div className="ml-auto flex items-center gap-2">
-            {hasHistory && (
-              <button
-                type="button"
-                onClick={() => setShowHistory((v) => !v)}
-                aria-label="Show change history"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <History className="size-3.5" />
-              </button>
-            )}
-            {canAccept && !editing && (
-              <button
-                type="button"
-                onClick={accept}
-                disabled={accepting}
-                aria-label="Accept segment as-is"
-                title="Accept as-is — mark reviewed without editing"
-                className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
-              >
-                <Check className="size-4" />
-              </button>
-            )}
-            {onCorrect && !editing && (
-              <button
-                type="button"
-                onClick={startEditing}
-                aria-label="Edit segment text"
-                className="text-muted-foreground hover:text-foreground"
-              >
-                <Pencil className="size-3.5" />
-              </button>
-            )}
+              {canAccept && !editing && (
+                <IconButton
+                  onClick={accept}
+                  disabled={accepting}
+                  label="Accept as correct"
+                  className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50"
+                >
+                  <Check className="size-4" />
+                </IconButton>
+              )}
+              {onCombinePrevious && !editing && (
+                <IconButton
+                  onClick={onCombinePrevious}
+                  disabled={combinePending}
+                  label="Combine with section above"
+                  className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  <ArrowUp className="size-3.5" />
+                </IconButton>
+              )}
+              {onCombineNext && !editing && (
+                <IconButton
+                  onClick={onCombineNext}
+                  disabled={combinePending}
+                  label="Combine with section below"
+                  className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                >
+                  <ArrowDown className="size-3.5" />
+                </IconButton>
+              )}
+              {onCorrect && !editing && (
+                <IconButton
+                  onClick={startEditing}
+                  label="Edit section"
+                  className="text-muted-foreground hover:text-foreground"
+                >
+                  <Pencil className="size-3.5" />
+                </IconButton>
+              )}
+            </div>
           </div>
-        </div>
+        </TooltipProvider>
+
+        {renamingSpeaker && (
+          <SpeakerRenameForm
+            inputId={speakerInputId}
+            speaker={segment.speaker}
+            value={speakerDraft}
+            onChange={(value) => {
+              setSpeakerDraft(value);
+              setSpeakerError(null);
+            }}
+            onReplace={renameSpeaker}
+            onCancel={cancelRenamingSpeaker}
+            error={speakerError}
+            saving={savingSpeaker}
+          />
+        )}
 
         {/* Text / edit form */}
         {editing ? (

@@ -1,6 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getJobAudio } from "@/lib/recording/api-client";
-import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+import {
+  getBackendAuthContext,
+  jurisdictionFromAudioUrl,
+} from "@/lib/recording/auth-utils";
 
 interface RouteContext {
   params: Promise<{ jobId: string }>;
@@ -8,7 +11,10 @@ interface RouteContext {
 
 export async function GET(request: NextRequest, { params }: RouteContext) {
   const { jobId } = await params;
-  const auth = await getBackendAuthContext(request);
+  const context = await getBackendAuthContext(request);
+  // DIAAT-334: an <audio> source names the tab's jurisdiction in its query.
+  const jurisdiction = context.jurisdiction ?? jurisdictionFromAudioUrl(request.url);
+  const auth = jurisdiction ? { ...context, jurisdiction } : context;
   try {
     // Forward the browser's Range header so <audio> seeking works — without
     // this, the browser can request a byte range it never receives and

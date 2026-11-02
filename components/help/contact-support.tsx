@@ -2,11 +2,13 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import cn from "@/lib/utils";
 
+export const SUPPORT_EMAIL = "JudicialTranscribe@justice.gov.uk";
+
 function ContactSupportButton() {
   return (
     <Button asChild variant="default">
       <Link
-        href="mailto:JudicialTranscribe@justice.gov.uk"
+        href={`mailto:${SUPPORT_EMAIL}`}
         aria-label="Contact us via email"
       >
         Contact us

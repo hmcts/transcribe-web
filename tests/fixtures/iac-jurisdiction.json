@@ -1,0 +1,27 @@
+{
+  "code": "IAC",
+  "name": "Immigration and Asylum Chamber",
+  "role": "judge",
+  "template": "iac_decision",
+  "features": {
+    "hearing_recordings": true
+  },
+  "wording": {
+    "home.intro": "Supporting judicial work through live transcription and enablement of judges to focus on proceedings and engage with the parties.",
+    "help.subtitle": "Getting started with Bench Notes for the First-tier Tribunal Immigration and Asylum Chamber",
+    "nav.recordings": "Hearing recordings",
+    "records.column_title": "Hearing",
+    "records.column_type": "Hearing type",
+    "records.search_placeholder": "Search hearings or dates",
+    "records.search_hint": "Search recent recordings by hearing title or date.",
+    "records.filter_label": "Filter recent recordings by hearing type",
+    "records.filter_placeholder": "Filter by hearing type",
+    "records.filter_all": "All hearing types",
+    "records.no_match": "No hearings matched your current search or filters.",
+    "records.open": "Open hearing",
+    "records.rename_hint": "Update the title shown in the hearings list.",
+    "records.no_transcript": "No saved transcript was found for this hearing.",
+    "autosave.record_name": "case record",
+    "alerts.speech_lost_guidance": "Pause then restart recording to restart dictation. If this warning comes back, record this decision in another way and raise with your Support team for investigation."
+  }
+}
