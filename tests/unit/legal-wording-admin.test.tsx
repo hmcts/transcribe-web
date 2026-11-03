@@ -397,6 +397,39 @@ describe("Admin area and switching jurisdiction", () => {
     );
   });
 
+  it("keeps stopping a switch while a save is under way after another entry is selected", async () => {
+    respondWith(wording());
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    const title = await screen.findByDisplayValue("Hearing");
+    await user.type(title, "!");
+
+    let finishSave: (value: unknown) => void = () => undefined;
+    let stored = wording();
+    request.mockImplementation(
+      async (_endpoint: string, options?: RequestInit) => {
+        if (options?.method !== "PUT") return { data: stored, status: 200 };
+        const sent = JSON.parse(String(options.body));
+        await new Promise((resolve) => {
+          finishSave = resolve;
+        });
+        stored = { ...stored, hearing_types: [sent] };
+        return { data: sent, status: 200 };
+      }
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await user.click(screen.getByRole("button", { name: "Credibility" }));
+    await screen.findByLabelText("New issue");
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+    finishSave(undefined);
+    await waitFor(() =>
+      expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined()
+    );
+  });
+
   it("stops a switch for an unsaved anonymity edit", async () => {
     respondWith(
       wording({

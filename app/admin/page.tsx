@@ -53,6 +53,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
+import { holdJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import { useLegalWording } from "@/hooks/use-legal-wording";
 import type {
   AnonymityStatus,
@@ -745,11 +746,13 @@ function HearingTypeEditor({
     const submitted = form;
     try {
       if (isNew) {
-        await createHearingType(form);
+        await holdJurisdictionSwitch(createHearingType(form));
         toast.success(`Created "${form.title}"`);
       } else {
         // The API's (trimmed) version is what is saved, so nothing shows as unsaved.
-        const saved = await updateHearingType(form.id, form);
+        const saved = await holdJurisdictionSwitch(
+          updateHearingType(form.id, form)
+        );
         keepLaterEdits(setForm, submitted, saved);
         toast.success(`Saved "${form.title}"`);
       }
@@ -866,10 +869,12 @@ function LegalFrameworkEditor({
     const submitted = form;
     try {
       if (isNew) {
-        await createLegalFramework(form);
+        await holdJurisdictionSwitch(createLegalFramework(form));
         toast.success(`Created "${form.title}"`);
       } else {
-        const saved = await updateLegalFramework(form.id, form);
+        const saved = await holdJurisdictionSwitch(
+          updateLegalFramework(form.id, form)
+        );
         keepLaterEdits(setForm, submitted, saved);
         toast.success(`Saved "${form.title}"`);
       }
@@ -1001,7 +1006,9 @@ function AnonymityEditor({
     setSaving(true);
     const submitted = form;
     try {
-      const saved = await updateAnonymityStatus(form.id, form);
+      const saved = await holdJurisdictionSwitch(
+        updateAnonymityStatus(form.id, form)
+      );
       keepLaterEdits(setForm, submitted, saved);
       toast.success(`Saved "${form.title}"`);
       await onSaved();
