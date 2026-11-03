@@ -31,6 +31,7 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNoSpeechWatchdog } from "@/hooks/use-no-speech-watchdog";
 import { useRealtimeTranscription } from "@/hooks/use-realtime-transcription";
@@ -253,6 +254,22 @@ export default function LiveDictation({
     sectionedTranscript.background.length +
     sectionedTranscript.evidence.length +
     sectionedTranscript.facts.length;
+
+  // An embedder that takes the transcript (the record page) saves its work
+  // before a switch itself. Standalone, nothing here is saved, so a switch
+  // would lose it. The judge's name is filled in from their sign-in.
+  const ownsUnsavedWork = onTranscriptChange === undefined;
+  const { judgeName: _filledIn, ...enteredForm } = formData;
+  const { judgeName: _blank, ...blankForm } = defaultFormValues;
+  useJurisdictionSwitchGuard({
+    busy: ownsUnsavedWork && isSubmitting,
+    unsaved:
+      ownsUnsavedWork &&
+      (isSessionRequested ||
+        totalTranscriptEntries > 0 ||
+        JSON.stringify(enteredForm) !== JSON.stringify(blankForm)),
+  });
+
   const entriesAtSessionStartRef = useRef<number | null>(null);
   const [hasCapturedSpeech, setHasCapturedSpeech] = useState(false);
 

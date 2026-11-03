@@ -21,7 +21,7 @@ vi.mock("@/lib/recording/api-client", () => ({
 function makeRequest(body: unknown) {
   return new NextRequest(`http://localhost/api/jobs/job-1/segments/${SEGMENT_ID}/speaker`, {
     method: "PATCH",
-    body: JSON.stringify(body),
+    body: typeof body === "string" ? body : JSON.stringify(body),
   });
 }
 
@@ -83,6 +83,28 @@ describe("PATCH /api/jobs/[jobId]/segments/[index]/speaker", () => {
     expect(response.status).toBe(422);
     expect(mockRenameSpeaker).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ["malformed JSON", "{not json"],
+    ["an empty body", ""],
+    ["a JSON null body", "null"],
+    ["a number body", "42"],
+    ["a string body", '"Judge Smith"'],
+    ["an array body", "[]"],
+  ])(
+    "rejects %s with 422, not 502, without calling the backend",
+    async (_name, raw) => {
+      const { PATCH } = await import(
+        "@/app/api/jobs/[jobId]/segments/[index]/speaker/route"
+      );
+
+      const response = await PATCH(makeRequest(raw), context());
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({ error: "speaker is required" });
+      expect(mockRenameSpeaker).not.toHaveBeenCalled();
+    }
+  );
 
   it.each(["2", "-1", "seg_xyz"])("rejects segment %s, which is not an id, with 422", async (segment) => {
     const { PATCH } = await import(
