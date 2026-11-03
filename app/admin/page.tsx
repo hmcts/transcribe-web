@@ -304,9 +304,11 @@ function LegalWordingTab({
         onConfirm={async () => {
           if (!deleteTarget) return;
           if (deleteTarget.category === "hearing-types") {
-            await deleteHearingType(deleteTarget.id);
+            await holdJurisdictionSwitch(deleteHearingType(deleteTarget.id));
           } else if (deleteTarget.category === "legal-frameworks") {
-            await deleteLegalFramework(deleteTarget.id);
+            await holdJurisdictionSwitch(
+              deleteLegalFramework(deleteTarget.id)
+            );
           }
           toast.success(`Deleted "${deleteName}"`);
           if (
