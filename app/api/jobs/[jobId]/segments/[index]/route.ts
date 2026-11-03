@@ -13,18 +13,20 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "Invalid segment id" }, { status: 422 });
   }
 
+  const body: unknown = await request.json().catch(() => null);
+  const correctedText =
+    body && typeof body === "object" && "correctedText" in body
+      ? body.correctedText
+      : undefined;
+  if (typeof correctedText !== "string" || correctedText.trim().length === 0) {
+    return NextResponse.json(
+      { error: "correctedText is required" },
+      { status: 422 }
+    );
+  }
+
   const auth = await getBackendAuthContext(request);
   try {
-    const { correctedText } = await request.json();
-    if (
-      typeof correctedText !== "string" ||
-      correctedText.trim().length === 0
-    ) {
-      return NextResponse.json(
-        { error: "correctedText is required" },
-        { status: 422 }
-      );
-    }
     const job = await correctSegment(jobId, index, correctedText, auth);
     return NextResponse.json({ job });
   } catch (err) {

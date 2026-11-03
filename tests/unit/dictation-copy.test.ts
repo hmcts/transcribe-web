@@ -61,6 +61,33 @@ describe("the formatted copy, for a word processor", () => {
     );
   });
 
+  it.each([
+    ["a single line break", "One\nTwo", "<p>One<br>Two</p>"],
+    ["several line breaks", "One\nTwo\n\nThree", "<p>One<br>Two<br><br>Three</p>"],
+    ["a CRLF as one break", "One\r\nTwo", "<p>One<br>Two</p>"],
+    ["a lone CR", "One\rTwo", "<p>One<br>Two</p>"],
+    ["mixed endings", "A\r\nB\nC\rD", "<p>A<br>B<br>C<br>D</p>"],
+    [
+      "a break beside characters that need escaping",
+      "a < b &\n<script>x</script> & c",
+      "<p>a &lt; b &amp;<br>&lt;script&gt;x&lt;/script&gt; &amp; c</p>",
+    ],
+    ["no break at the edges, which are trimmed", "\n One\nTwo \r\n", "<p>One<br>Two</p>"],
+  ])("keeps %s inside an utterance as <br>", (_name, text, expected) => {
+    expect(
+      dictationHtml({ background: [entry(text)], evidence: [], facts: [] }, "<p></p>")
+    ).toBe(expected);
+  });
+
+  it("leaves the plain-text copy's line breaks as they are", () => {
+    expect(
+      dictationText(
+        { background: [entry("One\nTwo"), entry("Three\r\nFour")], evidence: [], facts: [] },
+        "<p></p>"
+      )
+    ).toBe("One\nTwo\nThree\r\nFour");
+  });
+
   it("goes on the clipboard as HTML and text where the browser allows it", async () => {
     const write = vi.fn().mockResolvedValue(undefined);
     const writeText = vi.fn();
