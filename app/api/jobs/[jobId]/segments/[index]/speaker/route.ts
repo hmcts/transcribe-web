@@ -13,15 +13,16 @@ export async function PATCH(request: NextRequest, { params }: RouteContext) {
     return NextResponse.json({ error: "Invalid segment id" }, { status: 422 });
   }
 
+  const body: unknown = await request.json().catch(() => null);
+  const fields = body && typeof body === "object" ? body : {};
+  const speaker = "speaker" in fields ? fields.speaker : undefined;
+  const applyToAll = "applyToAll" in fields ? fields.applyToAll : undefined;
+  if (typeof speaker !== "string" || speaker.trim().length === 0) {
+    return NextResponse.json({ error: "speaker is required" }, { status: 422 });
+  }
+
   const auth = await getBackendAuthContext(request);
   try {
-    const { speaker, applyToAll } = await request.json();
-    if (typeof speaker !== "string" || speaker.trim().length === 0) {
-      return NextResponse.json(
-        { error: "speaker is required" },
-        { status: 422 }
-      );
-    }
     const job = await renameSpeaker(
       jobId,
       index,
