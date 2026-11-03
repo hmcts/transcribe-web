@@ -20,6 +20,70 @@ export type { AnonymityStatus, DocumentContent, HearingType, LegalFramework };
 // Admin API functions
 // ---------------------------------------------------------------------------
 
+/** A refusal from the API: its message, HTTP status and ``detail.code``. */
+export class AdminApiError extends Error {
+  constructor(
+    message: string,
+    readonly status?: number,
+    readonly code?: string
+  ) {
+    super(message);
+    this.name = "AdminApiError";
+  }
+}
+
+function failure(response: {
+  error: string;
+  status?: number;
+  code?: string;
+}): AdminApiError {
+  return new AdminApiError(response.error, response.status, response.code);
+}
+
+// What the API says when the jurisdiction has no decision template, so no legal
+// wording (a 404 with no code).
+const NO_TEMPLATE_DETAIL = "Not available in this jurisdiction";
+
+/**
+ * A refusal of the legal wording routes (DIAAT-342) in words the admin can act
+ * on, never the raw status. `jurisdiction` names the one being edited, when known.
+ */
+export function describeLegalWordingError(
+  error: unknown,
+  jurisdiction = "this jurisdiction",
+  fallback = "Something went wrong"
+): string {
+  if (!(error instanceof AdminApiError)) {
+    return error instanceof Error ? error.message : fallback;
+  }
+  if (error.code === "jurisdiction_not_available") {
+    return `You do not belong to ${jurisdiction}, or it is not available to you. Switch to a jurisdiction you work in.`;
+  }
+  if (error.code === "jurisdiction_admin_required") {
+    return `Only an admin for ${jurisdiction} can change its legal wording.`;
+  }
+  if (error.code === "no_jurisdiction") {
+    return "You have not been added to a jurisdiction, so there is no legal wording for you to edit.";
+  }
+  if (error.code === "jurisdiction_choice_required") {
+    return "Choose the jurisdiction you are working in, from the home page, before editing its legal wording.";
+  }
+  if (error.status === 404 && error.message === NO_TEMPLATE_DETAIL) {
+    return `${jurisdiction} does not use the decision document, so it has no legal wording to edit.`;
+  }
+  return error.message || fallback;
+}
+
+/** Whether trying again could help: not for a refusal about who or where you are. */
+export function isLegalWordingRefusal(error: unknown): boolean {
+  return (
+    error instanceof AdminApiError &&
+    (error.status === 403 ||
+      error.status === 409 ||
+      (error.status === 404 && error.message === NO_TEMPLATE_DETAIL))
+  );
+}
+
 async function requestAndParse<T>(
   endpoint: string,
   parser: (value: unknown) => T,
@@ -27,7 +91,7 @@ async function requestAndParse<T>(
 ): Promise<T> {
   const response = await apiClient.request<unknown>(endpoint, options);
   if (response.error) {
-    throw new Error(response.error);
+    throw failure({ ...response, error: response.error });
   }
   return parser(response.data);
 }
@@ -102,7 +166,7 @@ export async function deleteHearingType(id: string): Promise<void> {
     `/admin/document-content/hearing-types/${encodeURIComponent(id)}`,
     { method: "DELETE" }
   );
-  if (res.error) throw new Error(res.error);
+  if (res.error) throw failure({ ...res, error: res.error });
 }
 
 export async function updateLegalFramework(
@@ -151,7 +215,7 @@ export async function deleteLegalFramework(id: string): Promise<void> {
     `/admin/document-content/legal-frameworks/${encodeURIComponent(id)}`,
     { method: "DELETE" }
   );
-  if (res.error) throw new Error(res.error);
+  if (res.error) throw failure({ ...res, error: res.error });
 }
 
 export async function updateAnonymityStatus(
