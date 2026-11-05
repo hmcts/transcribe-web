@@ -15,6 +15,7 @@ import { apiClient } from "@/lib/api-client";
 import { getTabJurisdiction } from "@/lib/jurisdiction-session";
 import {
   isLeavingForJurisdictionSwitch,
+  holdJurisdictionSwitch,
   JurisdictionSwitchError,
   onBeforeJurisdictionSwitch,
   prepareForJurisdictionSwitch,
@@ -242,6 +243,34 @@ describe("work to finish before a switch", () => {
 
     expect(first).toHaveBeenCalledTimes(1);
     expect(second).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops a switch while held work runs, whether it succeeds or fails", async () => {
+    let succeed: (value: string) => void = () => undefined;
+    const held = holdJurisdictionSwitch(
+      new Promise<string>((resolve) => {
+        succeed = resolve;
+      })
+    );
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+    succeed("saved");
+    await expect(held).resolves.toBe("saved");
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+
+    let fail: (reason: Error) => void = () => undefined;
+    const failing = holdJurisdictionSwitch(
+      new Promise<never>((_, reject) => {
+        fail = reject;
+      })
+    );
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+    fail(new Error("refused"));
+    await expect(failing).rejects.toThrow("refused");
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
   });
 });
 

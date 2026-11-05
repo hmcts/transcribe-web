@@ -10,6 +10,8 @@ export interface ApiResponse<T> {
   error?: string;
   status?: number;
   requestId?: string;
+  /** The refusal's machine-readable ``detail.code`` (DIAAT-322), when it has one. */
+  code?: string;
 }
 
 /**
@@ -31,6 +33,15 @@ export function detailMessage(detail: unknown): string | undefined {
   if (detail && typeof detail === "object") {
     const message = (detail as { message?: unknown }).message;
     return typeof message === "string" && message ? message : undefined;
+  }
+  return undefined;
+}
+
+/** A FastAPI ``detail`` of the form ``{code, message}``: its code. */
+function detailCode(detail: unknown): string | undefined {
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const code = (detail as { code?: unknown }).code;
+    return typeof code === "string" && code ? code : undefined;
   }
   return undefined;
 }
@@ -137,10 +148,12 @@ class ApiClient {
         // Try to extract error message from response body
         let errorMessage = `HTTP error! status: ${response.status}`;
         let bodyRequestId: string | undefined;
+        let errorCode: string | undefined;
         try {
           const errorData = await response.json();
           errorMessage =
             detailMessage(errorData.detail) || errorData.message || errorMessage;
+          errorCode = detailCode(errorData.detail);
           if (errorData.request_id) {
             bodyRequestId = errorData.request_id as string;
           }
@@ -151,9 +164,11 @@ class ApiClient {
         const e = new Error(errorMessage) as Error & {
           requestId?: string;
           status?: number;
+          code?: string;
         };
         e.requestId = bodyRequestId || requestId;
         e.status = response.status;
+        e.code = errorCode;
         throw e;
       }
 
@@ -180,11 +195,13 @@ class ApiClient {
         const apiError = error as Error & {
           requestId?: string;
           status?: number;
+          code?: string;
         };
         return {
           error: error.message,
           status: apiError.status,
           requestId: apiError.requestId,
+          ...(apiError.code && { code: apiError.code }),
         };
       }
 

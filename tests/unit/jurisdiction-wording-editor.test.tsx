@@ -11,8 +11,10 @@ import { ET } from "../jurisdiction-helpers";
 // who is not its admin is told they cannot.
 
 let role: "judge" | "admin" = "admin";
+let template: "iac_decision" | null = null;
 vi.mock("@/providers/jurisdiction", () => ({
-  useJurisdiction: () => jurisdictionContextValue({ ...ET, role }, [{ ...ET, role }]),
+  useJurisdiction: () =>
+    jurisdictionContextValue({ ...ET, role, template }, [{ ...ET, role }]),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
@@ -28,6 +30,7 @@ const KEYS = {
 describe("JurisdictionWordingEditor", () => {
   beforeEach(() => {
     role = "admin";
+    template = null;
     request.mockReset();
     vi.mocked(toast.success).mockClear();
     vi.mocked(toast.error).mockClear();
@@ -133,5 +136,20 @@ describe("JurisdictionWordingEditor", () => {
 
     expect(screen.getByText("Only an admin for ET can change its wording.")).toBeTruthy();
     expect(request).not.toHaveBeenCalled();
+  });
+
+  it("links to the legal wording only where the jurisdiction has some (DIAAT-342)", async () => {
+    request.mockResolvedValue({
+      data: { code: "ET", name: ET.name, keys: KEYS, wording: {}, version: "v1" },
+    });
+    const { unmount } = render(<JurisdictionWordingEditor />);
+    await screen.findByRole("button", { name: "Save wording" });
+    expect(screen.queryByRole("link", { name: "legal wording" })).toBeNull();
+    unmount();
+
+    template = "iac_decision";
+    render(<JurisdictionWordingEditor />);
+    const link = await screen.findByRole("link", { name: "legal wording" });
+    expect(link.getAttribute("href")).toBe("/admin");
   });
 });

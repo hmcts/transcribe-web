@@ -80,7 +80,10 @@ describe("Dictation form accessibility", () => {
 
   it("ties the legal issues checkbox group to the visible heading", () => {
     const { container } = render(
-      <DictationForm initialValues={getDefaultFormValues("")} />
+      <DictationForm
+        initialValues={getDefaultFormValues("")}
+        legalIssuesFallback
+      />
     );
 
     const legalIssuesLabel = screen.getByText("Legal issues");
@@ -96,6 +99,98 @@ describe("Dictation form accessibility", () => {
     expect(firstCheckbox.getAttribute("aria-describedby")).toContain(
       "legalIssues-hint"
     );
+  });
+});
+
+// DIAAT-342: legal wording is the jurisdiction's own; without it the form has no
+// legal issues field and asks for nothing about them.
+describe("Dictation form legal issues (DIAAT-342)", () => {
+  const LEGAL_ISSUES_ERROR = "Select at least one legal issue relevant to the case";
+  const content = (overrides: Record<string, unknown> = {}) => ({
+    jurisdiction: { code: "DT", name: "Decision Tribunal" },
+    has_legal_wording: true,
+    hearing_types: [
+      {
+        id: "face_to_face",
+        title: "Face to face",
+        hearing_title: "Hearing",
+        hearing_description: "Held in person",
+      },
+    ],
+    legal_frameworks: [
+      { id: "z_last", title: "Last", rank: 2, content: "c", issues: [] },
+      { id: "a_first", title: "First", rank: 1, content: "c", issues: [] },
+    ],
+    anonymity: { statuses: [] },
+    ...overrides,
+  });
+
+  function submitEmptyForm(container: HTMLElement) {
+    fireEvent.submit(container.querySelector("form") as HTMLFormElement);
+  }
+
+  it("asks for legal issues from the jurisdiction's own frameworks, in rank order", () => {
+    const { container } = render(
+      <DictationForm
+        initialValues={getDefaultFormValues("")}
+        documentContent={content()}
+      />
+    );
+
+    const labels = screen
+      .getAllByRole("checkbox")
+      .map((box) => box.closest("div")?.textContent);
+    expect(screen.getByText("Legal issues")).toBeTruthy();
+    expect(labels).toEqual(["First", "Last"]);
+    // Not the IAC's shipped list.
+    expect(screen.queryByLabelText("Credibility")).toBeNull();
+
+    submitEmptyForm(container);
+    expect(screen.getByText(LEGAL_ISSUES_ERROR)).toBeTruthy();
+  });
+
+  it("has no legal issues field, and requires none, without legal wording", () => {
+    const { container } = render(
+      <DictationForm
+        initialValues={getDefaultFormValues("")}
+        documentContent={content({ has_legal_wording: false, legal_frameworks: [] })}
+        legalIssuesFallback
+      />
+    );
+
+    expect(screen.queryByText("Legal issues")).toBeNull();
+    expect(container.querySelector("fieldset")).toBeNull();
+
+    submitEmptyForm(container);
+    // Other fields are still required; legal issues are not.
+    expect(screen.getByText("Case number is required")).toBeTruthy();
+    expect(screen.queryByText(LEGAL_ISSUES_ERROR)).toBeNull();
+  });
+
+  it("uses the IAC's shipped legal issues only for the IAC while its wording loads", () => {
+    const { unmount } = render(
+      <DictationForm
+        initialValues={getDefaultFormValues("")}
+        legalIssuesFallback
+      />
+    );
+    expect(screen.getByLabelText("Credibility")).toBeTruthy();
+    unmount();
+
+    // Another jurisdiction: never the IAC's list, and nothing asked.
+    render(<DictationForm initialValues={getDefaultFormValues("")} />);
+    expect(screen.queryByText("Legal issues")).toBeNull();
+    expect(screen.queryByLabelText("Credibility")).toBeNull();
+  });
+
+  it("treats content that does not say whether it has legal wording as having it", () => {
+    render(
+      <DictationForm
+        initialValues={getDefaultFormValues("")}
+        documentContent={content({ has_legal_wording: undefined })}
+      />
+    );
+    expect(screen.getByText("Legal issues")).toBeTruthy();
   });
 });
 

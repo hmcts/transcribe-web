@@ -39,6 +39,10 @@ export default function DictationFormContainer({
           onFormStateChange={onFormStateChange}
           externalErrors={formErrors}
           initialValues={formData}
+          // The standalone dictation demo is the IAC's form and is validated by
+          // the IAC schema (legal issues required), so it asks for them, from the
+          // IAC's shipped list: it has no jurisdiction's wording to follow.
+          legalIssuesFallback
         />
       </div>
 
