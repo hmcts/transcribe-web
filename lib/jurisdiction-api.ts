@@ -1,19 +1,9 @@
 import { apiClient } from "@/lib/api-client";
 import type { Wording } from "@/lib/jurisdiction-wording";
 
-/** GET /api/jurisdictions/me (transcribe-api routes_jurisdictions.py). */
-
 /** DIAAT-345: draft (only its admins see it), test (its test group too) or live
  * (every member). Absent from an API before stages: live. */
 export type JurisdictionStage = "draft" | "test" | "live";
-
-export interface JurisdictionSummary {
-  code: string;
-  /** What users see: its display name, else its name. */
-  name: string;
-  role: "judge" | "admin";
-  stage?: JurisdictionStage;
-}
 
 /** Said beside a jurisdiction not yet live for everyone, so its admins and testers
  * know; null for a live one. */
@@ -23,41 +13,21 @@ export function stageNote(stage: JurisdictionStage | undefined): string | null {
   return null;
 }
 
-export interface CurrentJurisdiction extends JurisdictionSummary {
+/**
+ * The material of the jurisdiction the user is working in (see
+ * lib/access/api.ts, fetchCurrentJurisdiction). Who the user is, and in which
+ * jurisdiction, comes from `GET /api/me/permissions` (DIAAT-373).
+ */
+export interface CurrentJurisdiction {
+  code: string;
+  name: string;
   /** "iac_decision": the IAC hearing form and decision; null: general section only. */
   template: "iac_decision" | null;
   features: { hearing_recordings: boolean };
   wording: Wording;
 }
 
-export interface MyJurisdictions {
-  status: "ready" | "no_jurisdiction" | "choose";
-  current: CurrentJurisdiction | null;
-  jurisdictions: JurisdictionSummary[];
-}
-
-/** Work in `code` from now on: remembered for requests without a tab's jurisdiction. */
-export async function chooseJurisdiction(code: string): Promise<MyJurisdictions> {
-  const response = await apiClient.request<MyJurisdictions>("/jurisdictions/active", {
-    method: "PUT",
-    body: JSON.stringify({ code }),
-  });
-  if (!response.data) {
-    throw new Error("No jurisdictions response");
-  }
-  return response.data;
-}
-
-export async function fetchMyJurisdictions(): Promise<MyJurisdictions> {
-  const response =
-    await apiClient.request<MyJurisdictions>("/jurisdictions/me");
-  if (!response.data) {
-    throw new Error("No jurisdictions response");
-  }
-  return response.data;
-}
-
-/** /api/jurisdictions/wording (DIAAT-356): the tab's jurisdiction, for its admins only. */
+/** /api/jurisdictions/wording (DIAAT-356): the tab's jurisdiction, for whoever holds `jurisdiction.wording.edit`. */
 export interface JurisdictionWording {
   code: string;
   name: string;

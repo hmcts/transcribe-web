@@ -8,6 +8,8 @@
  * No server-only imports here: browser and server code both use these.
  */
 
+import type { JurisdictionStage } from "@/lib/jurisdiction-api";
+
 /** Every permission string the API can return (authz contract, section 1). */
 export const PERMISSIONS = [
   "app.access",
@@ -46,6 +48,8 @@ export type Permission = (typeof PERMISSIONS)[number];
 export interface JurisdictionRef {
   code: string;
   name: string;
+  /** DIAAT-345: where it is not yet live for everyone. Absent: live. */
+  stage?: JurisdictionStage;
 }
 
 /** A (jurisdiction, role) pair. `jurisdiction` is null for a global role. */

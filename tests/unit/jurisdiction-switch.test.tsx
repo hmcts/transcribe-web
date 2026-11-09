@@ -1,106 +1,135 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ET, IAC } from "../jurisdiction-helpers";
+import type { MeResponse } from "@/lib/access/types";
+import { ME } from "../access-helpers";
 
-// DIAAT-332: a judge in several jurisdictions switches from the header. The tab's
-// work is saved first; if it cannot be, the tab stays where it is.
+// DIAAT-332, DIAAT-390: a user with several roles switches from the header, and
+// can leave a jurisdiction. The tab's work is saved first; if it cannot be, the
+// tab stays where it is.
 
-vi.mock("next/navigation", () => ({ usePathname: () => "/" }));
-vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
+let pathname = "/";
+vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
+vi.mock("next/link", () => ({
+  default: ({ href, children }: { href: string; children: React.ReactNode }) => (
+    <a href={href}>{children}</a>
+  ),
+}));
 const toastError = vi.hoisted(() => vi.fn());
 vi.mock("sonner", () => ({ toast: { error: toastError } }));
+const api = vi.hoisted(() => ({
+  fetchMe: vi.fn(),
+  postContext: vi.fn(),
+  postLeaveJurisdiction: vi.fn(),
+  postRefreshSession: vi.fn(),
+}));
+vi.mock("@/lib/access/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/access/api")>()),
+  ...api,
+}));
 
-import { JurisdictionSwitcher } from "@/components/jurisdiction/jurisdiction-switcher";
-import { apiClient } from "@/lib/api-client";
-import { getTabJurisdiction } from "@/lib/jurisdiction-session";
+import { ContextSwitcher } from "@/components/access/context-switcher";
+import { AccessApiError } from "@/lib/access/api";
+import { getTabContext } from "@/lib/jurisdiction-session";
 import {
-  isLeavingForJurisdictionSwitch,
   holdJurisdictionSwitch,
+  isLeavingForJurisdictionSwitch,
   JurisdictionSwitchError,
   onBeforeJurisdictionSwitch,
   prepareForJurisdictionSwitch,
   stayInJurisdiction,
 } from "@/lib/jurisdiction-switch";
-import { JurisdictionProvider } from "@/providers/jurisdiction";
+import { AccessProvider } from "@/providers/access";
 
 const assign = vi.fn();
 
-function serve(jurisdictions = [IAC, ET]) {
-  vi.mocked(apiClient.request).mockImplementation(async (endpoint) => {
-    if (endpoint === "/jurisdictions/active") {
-      return { data: { status: "ready", current: ET, jurisdictions } };
-    }
-    return { data: { status: "ready", current: IAC, jurisdictions } };
-  });
+class ResizeObserverStub {
+  observe() {
+    /* not needed in jsdom */
+  }
+  unobserve() {
+    /* not needed in jsdom */
+  }
+  disconnect() {
+    /* not needed in jsdom */
+  }
 }
 
-async function openSwitcher() {
+async function openSwitcher(me: MeResponse = ME.multiAsAdministrator) {
+  api.fetchMe.mockResolvedValue(me);
   render(
-    <JurisdictionProvider>
-      <JurisdictionSwitcher />
-    </JurisdictionProvider>
+    <AccessProvider>
+      <ContextSwitcher />
+    </AccessProvider>
   );
   const trigger = await screen.findByRole("button", {
-    name: "Jurisdiction: Immigration and Asylum Chamber. Switch jurisdiction",
+    name: /Working in .* as .*\. Switch or leave/,
   });
   // Radix opens its menu on pointer down.
   fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
   return trigger;
 }
 
-describe("switching jurisdiction", () => {
+const chooseJudge = async () =>
+  act(async () => {
+    fireEvent.click(await screen.findByRole("menuitem", { name: /Employment Tribunal: Judge/ }));
+  });
+
+describe("switching context", () => {
   beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    Element.prototype.hasPointerCapture ??= () => false;
+    Element.prototype.scrollIntoView ??= () => undefined;
+    pathname = "/";
     window.sessionStorage.clear();
-    vi.mocked(apiClient.request).mockReset();
+    for (const fn of Object.values(api)) fn.mockReset();
     toastError.mockReset();
     assign.mockReset();
-    vi.stubGlobal("location", { ...window.location, assign });
+    vi.stubGlobal("location", { ...window.location, assign, pathname });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
     stayInJurisdiction();
   });
 
-  it("is not offered to a judge in one jurisdiction", async () => {
-    serve([IAC]);
+  it("is not offered to a user with no role", async () => {
+    api.fetchMe.mockResolvedValue(ME.sysadminOnly);
     render(
-      <JurisdictionProvider>
-        <JurisdictionSwitcher />
+      <AccessProvider>
+        <ContextSwitcher />
         <p>loaded</p>
-      </JurisdictionProvider>
+      </AccessProvider>
     );
     await screen.findByText("loaded");
-    expect(screen.queryByRole("button", { name: /switch jurisdiction/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Switch or leave/ })).toBeNull();
   });
 
-  it("saves the tab's work, records the choice, then reloads the tab in the other jurisdiction", async () => {
-    serve();
+  it("offers a user with one pair no other pair, only leaving and signing out", async () => {
+    await openSwitcher(ME.judge);
+
+    expect(screen.queryByRole("menuitem", { name: /: Jurisdiction/ })).toBeNull();
+    expect(await screen.findByRole("menuitem", { name: "Leave Employment Tribunal" })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
+  });
+
+  it("saves the tab's work, switches with the server, then reloads the tab in the new context", async () => {
+    api.postContext.mockResolvedValue(ME.multiAsJudge);
     const order: string[] = [];
     const unregister = onBeforeJurisdictionSwitch(async () => {
       order.push("saved");
     });
     try {
       await openSwitcher();
-      await act(async () => {
-        fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
-      });
+      await chooseJudge();
 
-      await waitFor(() =>
-        expect(assign).toHaveBeenCalledWith("/?switched-jurisdiction=ET")
-      );
+      await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
       // Saved before the switch, and again just before leaving.
       expect(order).toEqual(["saved", "saved"]);
       // Stays disabled while the tab reloads.
       expect(
-        (screen.getByRole("button", { name: /switch jurisdiction/i }) as HTMLButtonElement).disabled
+        (screen.getByRole("button", { name: /Switch or leave/ }) as HTMLButtonElement).disabled
       ).toBe(true);
-      expect(apiClient.request).toHaveBeenCalledWith("/jurisdictions/active", {
-        method: "PUT",
-        body: JSON.stringify({ code: "ET" }),
-      });
-      // Until it has reloaded, the tab's requests still name the IAC: a late
-      // save cannot land in the ET.
-      expect(getTabJurisdiction()).toBe("IAC");
+      expect(api.postContext).toHaveBeenCalledWith({ jurisdiction: "ET", role: "Judge" });
+      expect(getTabContext()).toEqual({ jurisdiction: "ET", role: "Judge" });
       expect(isLeavingForJurisdictionSwitch()).toBe(true);
     } finally {
       unregister();
@@ -108,82 +137,89 @@ describe("switching jurisdiction", () => {
   });
 
   it("says the work is saved when only the switch failed", async () => {
-    vi.mocked(apiClient.request).mockImplementation(async (endpoint) => {
-      // apiClient.request returns a refusal; it never throws.
-      if (endpoint === "/jurisdictions/active") return { error: "Not one of your jurisdictions", status: 403 };
-      return { data: { status: "ready", current: IAC, jurisdictions: [IAC, ET] } };
-    });
+    api.postContext.mockRejectedValue(new AccessApiError("Not yours", 403, "context_not_available"));
     await openSwitcher();
-    await act(async () => {
-      fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
-    });
+    await chooseJudge();
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
-    expect(String(toastError.mock.calls[0][0])).toContain("Your work is saved, but the switch did not work");
+    expect(String(toastError.mock.calls[0][0])).toContain(
+      "Your work is saved, but the change did not work"
+    );
     expect(assign).not.toHaveBeenCalled();
-    expect(getTabJurisdiction()).toBe("IAC");
+    // Nothing changed: the tab still names the context it works in.
+    expect(getTabContext()).toEqual({
+      jurisdiction: "IAC",
+      role: "JurisdictionAdministrator",
+    });
   });
 
   it("waits for a submission in progress", async () => {
-    serve();
     const unregister = onBeforeJurisdictionSwitch(async () => {
       throw new JurisdictionSwitchError("busy");
     });
     try {
       await openSwitcher();
-      await act(async () => {
-        fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
-      });
+      await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
       expect(String(toastError.mock.calls[0][0])).toBe(
-        "Wait for what you are submitting, uploading or saving to finish, then switch jurisdiction."
+        "Wait for what you are submitting, uploading or saving to finish, then switch."
       );
-      expect(apiClient.request).not.toHaveBeenCalledWith("/jurisdictions/active", expect.anything());
+      expect(api.postContext).not.toHaveBeenCalled();
     } finally {
       unregister();
     }
   });
 
   it("stays put, and says why, when the work cannot be saved", async () => {
-    serve();
     const unregister = onBeforeJurisdictionSwitch(async () => {
       throw new Error("save failed");
     });
     try {
       await openSwitcher();
-      await act(async () => {
-        fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
-      });
+      await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
       expect(String(toastError.mock.calls[0][0])).toContain(
-        "Your work could not be saved, so you are still working in Immigration and Asylum Chamber"
+        "Your work could not be saved, so you are still working in Immigration and Asylum Chamber: Jurisdiction administrator"
       );
       expect(assign).not.toHaveBeenCalled();
-      expect(apiClient.request).not.toHaveBeenCalledWith("/jurisdictions/active", expect.anything());
-      expect(getTabJurisdiction()).toBe("IAC");
+      expect(api.postContext).not.toHaveBeenCalled();
     } finally {
       unregister();
     }
+  });
+
+  it("stays on the Admin page when the new context may use it, and leaves it when not", async () => {
+    pathname = "/admin";
+    vi.stubGlobal("location", { ...window.location, assign, pathname });
+    api.postContext.mockResolvedValue(ME.multiAsJudge);
+    await openSwitcher();
+    await chooseJudge();
+
+    // A judge has no admin permission: home.
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
   });
 });
 
 describe("a switch whose final save fails", () => {
   beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    Element.prototype.hasPointerCapture ??= () => false;
+    Element.prototype.scrollIntoView ??= () => undefined;
     window.sessionStorage.clear();
-    vi.mocked(apiClient.request).mockReset();
+    for (const fn of Object.values(api)) fn.mockReset();
     toastError.mockReset();
     assign.mockReset();
-    vi.stubGlobal("location", { ...window.location, assign });
+    vi.stubGlobal("location", { ...window.location, assign, pathname: "/" });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
     stayInJurisdiction();
   });
 
-  it("puts the remembered choice back, as the user is told they have not moved", async () => {
-    serve();
+  it("puts the session's context back, as the user is told they have not moved", async () => {
+    api.postContext.mockResolvedValue(ME.multiAsJudge);
     let saves = 0;
     const unregister = onBeforeJurisdictionSwitch(async () => {
       saves += 1;
@@ -191,34 +227,27 @@ describe("a switch whose final save fails", () => {
     });
     try {
       await openSwitcher();
-      await act(async () => {
-        fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
-      });
+      await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
       expect(String(toastError.mock.calls[0][0])).toContain("you are still working in Immigration and Asylum Chamber");
-      const chosen = vi
-        .mocked(apiClient.request)
-        .mock.calls.filter(([endpoint]) => endpoint === "/jurisdictions/active")
-        .map(([, options]) => JSON.parse(String(options?.body)).code);
-      expect(chosen).toEqual(["ET", "IAC"]);
+      expect(api.postContext.mock.calls.map(([pair]) => pair)).toEqual([
+        { jurisdiction: "ET", role: "Judge" },
+        { jurisdiction: "IAC", role: "JurisdictionAdministrator" },
+      ]);
       expect(assign).not.toHaveBeenCalled();
-      expect(getTabJurisdiction()).toBe("IAC");
     } finally {
       unregister();
     }
   });
 
   it("says what to do with work that is never saved", async () => {
-    serve();
     const unregister = onBeforeJurisdictionSwitch(async () => {
       throw new JurisdictionSwitchError("unsaved");
     });
     try {
       await openSwitcher();
-      await act(async () => {
-        fireEvent.click(await screen.findByRole("menuitem", { name: "Employment Tribunal" }));
-      });
+      await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
       expect(String(toastError.mock.calls[0][0])).toContain("Copy them out or remove them");
@@ -226,6 +255,46 @@ describe("a switch whose final save fails", () => {
     } finally {
       unregister();
     }
+  });
+});
+
+describe("leaving a jurisdiction (DIAAT-390)", () => {
+  beforeEach(() => {
+    vi.stubGlobal("ResizeObserver", ResizeObserverStub);
+    Element.prototype.hasPointerCapture ??= () => false;
+    Element.prototype.scrollIntoView ??= () => undefined;
+    window.sessionStorage.clear();
+    for (const fn of Object.values(api)) fn.mockReset();
+    toastError.mockReset();
+    assign.mockReset();
+    vi.stubGlobal("location", { ...window.location, assign, pathname: "/" });
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    stayInJurisdiction();
+  });
+
+  it("asks first, then leaves with the server and reloads on the home page", async () => {
+    api.postLeaveJurisdiction.mockResolvedValue(ME.judge);
+    await openSwitcher();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Leave Immigration and Asylum Chamber" }));
+
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog.textContent).toContain("lose every role you hold in Immigration and Asylum Chamber");
+    expect(api.postLeaveJurisdiction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
+    expect(api.postLeaveJurisdiction).toHaveBeenCalledWith("IAC");
+  });
+
+  it("does nothing when the user cancels", async () => {
+    await openSwitcher();
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Leave Immigration and Asylum Chamber" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(api.postLeaveJurisdiction).not.toHaveBeenCalled();
+    expect(assign).not.toHaveBeenCalled();
   });
 });
 
@@ -271,47 +340,5 @@ describe("work to finish before a switch", () => {
     fail(new Error("refused"));
     await expect(failing).rejects.toThrow("refused");
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
-  });
-});
-
-describe("a tab reloaded by a switch", () => {
-  beforeEach(() => vi.mocked(apiClient.request).mockReset());
-
-  it("ignores the parameter on a link, which no switch in this tab left", async () => {
-    window.sessionStorage.setItem("benchnotes-jurisdiction", "IAC");
-    window.history.replaceState(null, "", "/?switched-jurisdiction=ET");
-    serve();
-    render(
-      <JurisdictionProvider>
-        <p>loaded</p>
-      </JurisdictionProvider>
-    );
-
-    await screen.findByText("loaded");
-    expect(getTabJurisdiction()).toBe("IAC");
-    expect(window.location.search).toBe("");
-  });
-
-  it("works in the jurisdiction it was reloaded with, and drops it from the address", async () => {
-    window.sessionStorage.setItem("benchnotes-jurisdiction", "IAC");
-    window.sessionStorage.setItem("benchnotes-switching-to", "ET");
-    window.history.replaceState(null, "", "/?switched-jurisdiction=ET&id=abc");
-    vi.mocked(apiClient.request).mockImplementation(async () => ({
-      data: {
-        status: "ready",
-        current: getTabJurisdiction() === "ET" ? ET : IAC,
-        jurisdictions: [IAC, ET],
-      },
-    }));
-    render(
-      <JurisdictionProvider>
-        <p>loaded</p>
-      </JurisdictionProvider>
-    );
-
-    await screen.findByText("loaded");
-    expect(getTabJurisdiction()).toBe("ET");
-    expect(window.location.search).toBe("?id=abc");
-    window.history.replaceState(null, "", "/");
   });
 });

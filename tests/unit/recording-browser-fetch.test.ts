@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { setTabJurisdiction } from "@/lib/jurisdiction-session";
+import { setTabContext } from "@/lib/jurisdiction-session";
 import {
   recordingFetch,
   withTabJurisdiction,
@@ -16,12 +16,16 @@ describe("recording calls from the browser", () => {
   it("send the tab's jurisdiction with their own headers", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response("{}"));
     vi.stubGlobal("fetch", fetchMock);
-    setTabJurisdiction("IAC");
+    setTabContext({ jurisdiction: "IAC", role: "Judge" });
 
     await recordingFetch("/api/jobs/j1", { method: "DELETE", headers: { "X-Test": "1" } });
     await recordingFetch("/api/jobs", { headers: new Headers({ "X-Test": "2" }) });
 
-    expect(fetchMock.mock.calls[0][1].headers).toEqual({ "X-Test": "1", "X-Jurisdiction": "IAC" });
+    expect(fetchMock.mock.calls[0][1].headers).toEqual({
+      "X-Test": "1",
+      "X-Jurisdiction": "IAC",
+      "X-Role": "Judge",
+    });
     expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
     const second = fetchMock.mock.calls[1][1].headers as Headers;
     expect([second.get("X-Test"), second.get("X-Jurisdiction")]).toEqual(["2", "IAC"]);
@@ -29,9 +33,18 @@ describe("recording calls from the browser", () => {
 
   it("put it in an audio source's URL, which cannot carry a header", () => {
     expect(withTabJurisdiction("/api/audio/j1")).toBe("/api/audio/j1");
-    setTabJurisdiction("IAC");
-    expect(withTabJurisdiction("/api/audio/j1")).toBe("/api/audio/j1?jurisdiction=IAC");
-    expect(withTabJurisdiction("/api/audio/j1?x=1")).toBe("/api/audio/j1?x=1&jurisdiction=IAC");
+    setTabContext({ jurisdiction: "IAC", role: "Judge" });
+    expect(withTabJurisdiction("/api/audio/j1")).toBe(
+      "/api/audio/j1?jurisdiction=IAC&role=Judge"
+    );
+    expect(withTabJurisdiction("/api/audio/j1?x=1")).toBe(
+      "/api/audio/j1?x=1&jurisdiction=IAC&role=Judge"
+    );
+    // A global role has no jurisdiction: `-`, as in the X-Jurisdiction header.
+    setTabContext({ jurisdiction: null, role: "Global" });
+    expect(withTabJurisdiction("/api/audio/j1")).toBe(
+      "/api/audio/j1?jurisdiction=-&role=Global"
+    );
   });
 });
 

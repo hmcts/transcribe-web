@@ -10,34 +10,27 @@ import {
   useMemo,
   useState,
 } from "react";
-import ChooseJurisdiction from "@/components/jurisdiction/choose-jurisdiction";
-import NoJurisdiction from "@/components/jurisdiction/no-jurisdiction";
-import {
-  chooseJurisdiction,
-  fetchMyJurisdictions,
-  type MyJurisdictions,
-} from "@/lib/jurisdiction-api";
+import { AccessApiError, fetchCurrentJurisdiction } from "@/lib/access/api";
+import { jurisdictionsOf } from "@/lib/access/types";
+import type { CurrentJurisdiction } from "@/lib/jurisdiction-api";
 import {
   type JurisdictionContextValue,
   jurisdictionContextValue,
   NEUTRAL,
 } from "@/lib/jurisdiction-context";
-import { getTabJurisdiction, setTabJurisdiction } from "@/lib/jurisdiction-session";
-import {
-  JurisdictionSwitchError,
-  prepareForJurisdictionSwitch,
-  reloadInJurisdiction,
-  takeSwitchedJurisdiction,
-} from "@/lib/jurisdiction-switch";
 import type { WordingKey } from "@/lib/jurisdiction-wording";
+import { useAccess } from "@/providers/access";
 
 /**
- * The jurisdiction this tab works in (DIAAT-330), loaded before any material.
+ * The material of the jurisdiction this tab works in (DIAAT-330): its template,
+ * features and wording, loaded before any page that is about material.
  *
- * Children render only once the user is working in a jurisdiction, so
- * everything below loads that jurisdiction's material. A user with none sees
- * how to ask for access, and nothing else. Pages that are not about anyone's
- * material (privacy, cookies, support, the access pages) render without one.
+ * Who the user is, which jurisdiction they work in and what they may do come
+ * from the access provider (providers/access.tsx), which renders this only
+ * once they are in a working context. A global role or a system-only user has
+ * no jurisdiction: there is then no material to load. Pages that are not about
+ * anyone's material (privacy, cookies, support, the access pages) render
+ * without it.
  */
 
 const JurisdictionContext = createContext<JurisdictionContextValue>(NEUTRAL);
@@ -48,8 +41,8 @@ const PAGES_WITHOUT_MATERIAL = [
   "/privacy",
   "/cookies",
   "/support",
-  // The admin area manages users and jurisdictions by role, so it opens even for
-  // someone with no jurisdiction. Its legal wording tab is the exception
+  // The admin area manages users and jurisdictions by permission, so it opens
+  // with or without a jurisdiction. Its legal wording tab is the exception
   // (DIAAT-342): it edits the tab's jurisdiction, so it waits for it itself.
   "/admin",
 ];
@@ -63,7 +56,7 @@ function needsJurisdiction(pathname: string | null): boolean {
 type LoadState =
   | { kind: "loading" }
   | { kind: "failed" }
-  | { kind: "loaded"; data: MyJurisdictions };
+  | { kind: "loaded"; current: CurrentJurisdiction | null };
 
 export function JurisdictionProvider({
   children,
@@ -71,85 +64,47 @@ export function JurisdictionProvider({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { active, assignments } = useAccess();
+  const code = active?.jurisdiction?.code ?? null;
   const [state, setState] = useState<LoadState>({ kind: "loading" });
 
   const load = useCallback(async () => {
-    setState({ kind: "loading" });
-    // Reloaded by a switch (DIAAT-332): the tab now works in that jurisdiction.
-    const switched = takeSwitchedJurisdiction();
-    if (switched) setTabJurisdiction(switched);
-    try {
-      const data = await fetchMyJurisdictions();
-      // The API answers for this tab's jurisdiction, or moves the tab on.
-      setTabJurisdiction(
-        data.status === "ready" ? (data.current?.code ?? null) : null
-      );
-      setState({ kind: "loaded", data });
-    } catch {
-      setState({ kind: "failed" });
+    if (!code) {
+      setState({ kind: "loaded", current: null });
+      return;
     }
-  }, []);
+    setState({ kind: "loading" });
+    try {
+      const current = await fetchCurrentJurisdiction();
+      setState({ kind: "loaded", current });
+    } catch (error) {
+      // An API without this endpoint (404) or refusing it (403: nothing of a
+      // jurisdiction for this role) leaves the neutral defaults, not a dead app.
+      if (
+        error instanceof AccessApiError &&
+        (error.status === 404 || error.status === 403)
+      ) {
+        setState({ kind: "loaded", current: null });
+      } else {
+        setState({ kind: "failed" });
+      }
+    }
+  }, [code]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  /** After sign-in: work in `code`, remembered, then load it in place. */
-  const chooseFirst = useCallback(
-    async (code: string) => {
-      const chosen = await chooseJurisdiction(code);
-      // The jurisdiction the API confirmed, not the one asked for.
-      setTabJurisdiction(chosen.current?.code ?? null);
-      await load();
-    },
-    [load]
-  );
-
-  /** Later: save this tab's work, then reload it in `code`. Rejects with the step
-   * that stopped it (JurisdictionSwitchError), leaving the tab as it was. */
-  const switchTo = useCallback(async (code: string) => {
-    try {
-      await prepareForJurisdictionSwitch();
-    } catch (error) {
-      throw error instanceof JurisdictionSwitchError
-        ? error
-        : new JurisdictionSwitchError("save", { cause: error });
-    }
-    let chosen: MyJurisdictions;
-    try {
-      chosen = await chooseJurisdiction(code);
-    } catch (error) {
-      throw new JurisdictionSwitchError("switch", { cause: error });
-    }
-    if (chosen.status !== "ready" || !chosen.current) {
-      throw new JurisdictionSwitchError("switch");
-    }
-    // Again, just before leaving: anything said or typed meanwhile.
-    try {
-      await prepareForJurisdictionSwitch();
-    } catch (error) {
-      // The tab stays, so the remembered choice goes back too: new tabs, and
-      // requests without the header, must not work in the other jurisdiction.
-      const here = getTabJurisdiction();
-      if (here) await chooseJurisdiction(here).catch(() => undefined);
-      throw error instanceof JurisdictionSwitchError
-        ? error
-        : new JurisdictionSwitchError("save", { cause: error });
-    }
-    reloadInJurisdiction(chosen.current.code);
-  }, []);
-
   const value = useMemo(() => {
+    const jurisdictions = jurisdictionsOf(assignments);
     if (state.kind === "loaded") {
-      return jurisdictionContextValue(
-        state.data.current,
-        state.data.jurisdictions,
-        switchTo
-      );
+      return jurisdictionContextValue(state.current, jurisdictions);
     }
-    // Failed: settled, with no jurisdiction. Loading: not yet.
-    return state.kind === "failed" ? jurisdictionContextValue(null) : NEUTRAL;
-  }, [state, switchTo]);
+    // Failed: settled, with no material. Loading: not yet.
+    return state.kind === "failed"
+      ? jurisdictionContextValue(null, jurisdictions)
+      : { ...NEUTRAL, jurisdictions };
+  }, [state, assignments]);
 
   let content: React.ReactNode;
   if (!needsJurisdiction(pathname)) {
@@ -158,17 +113,8 @@ export function JurisdictionProvider({
     content = <JurisdictionLoading />;
   } else if (state.kind === "failed") {
     content = <JurisdictionLoadFailed onRetry={load} />;
-  } else if (state.data.status === "no_jurisdiction") {
-    content = <NoJurisdiction />;
-  } else if (state.data.status === "choose") {
-    content = (
-      <ChooseJurisdiction
-        jurisdictions={state.data.jurisdictions}
-        onChoose={chooseFirst}
-      />
-    );
   } else {
-    // Not keyed by jurisdiction: a tab's jurisdiction changes only by reloading
+    // Not keyed by jurisdiction: a tab's context changes only by reloading
     // the page (DIAAT-332), so the app is never remounted in place.
     content = children;
   }

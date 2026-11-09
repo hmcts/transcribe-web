@@ -10,7 +10,8 @@ import { CookieManagerInit } from "@/components/cookie-banner/cookie-manager-ini
 import Header from "@/components/layout/header";
 import { Toaster } from "@/components/ui/sonner";
 import cn from "@/lib/utils";
-import AccessGate from "@/providers/access-gate";
+import { AccessProvider } from "@/providers/access";
+import { AppAccessGate } from "@/providers/app-access-gate";
 import { JurisdictionProvider } from "@/providers/jurisdiction";
 import PageViewTracker from "@/providers/page-view-tracker";
 import TelemetryBootstrap from "@/providers/telemetry-bootstrap";
@@ -54,24 +55,29 @@ export default async function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <UserSettingsProvider>
-            <TelemetryBootstrap />
-            <PageViewTracker />
-            {/* DIAAT-322: access first, then the tab's jurisdiction, then its material. */}
-            <AccessGate>
-              <JurisdictionProvider>
-                <TranscriptsProvider>
-                  <div className="flex min-h-screen min-w-0 flex-col">
-                    <Header />
-                    <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
-                      <main className="mt-14 w-full min-w-0">{children}</main>
+          {/* DIAAT-373: who the user is and what they may do first (choose a
+              context, or ask for access, before anything else), then the
+              user's settings, access to the app, the tab's jurisdiction and
+              its material. */}
+          <AccessProvider>
+            <UserSettingsProvider>
+              <TelemetryBootstrap />
+              <PageViewTracker />
+              <AppAccessGate>
+                <JurisdictionProvider>
+                  <TranscriptsProvider>
+                    <div className="flex min-h-screen min-w-0 flex-col">
+                      <Header />
+                      <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
+                        <main className="mt-14 w-full min-w-0">{children}</main>
+                      </div>
                     </div>
-                  </div>
-                  <Toaster />
-                </TranscriptsProvider>
-              </JurisdictionProvider>
-            </AccessGate>
-          </UserSettingsProvider>
+                    <Toaster />
+                  </TranscriptsProvider>
+                </JurisdictionProvider>
+              </AppAccessGate>
+            </UserSettingsProvider>
+          </AccessProvider>
         </ThemeProvider>
         <CookieBanner />
       </body>
