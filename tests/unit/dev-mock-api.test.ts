@@ -324,3 +324,101 @@ describe("the mock API: refusals as the real API gives them", () => {
     expect((await call(judge.token, "GET", "/api/transcriptions-metadata")).status).toBe(200);
   });
 });
+
+describe("the mock API: the review-fix refusals (own_request, self-assignment, rename rule, 401 shape)", () => {
+  const code = (r: { body?: { detail?: { code?: string } } }) => r.body?.detail?.code;
+
+  it("refuses giving yourself a role, except for a system administrator", async () => {
+    const admin = await session("jadmin-iac");
+    const own = await call(admin.token, "POST", "/api/admin/assignments", {
+      user_id: admin.me.user.id,
+      jurisdiction: "IAC",
+      role: "Judge",
+    });
+    expect([own.status, code(own)]).toEqual([403, "assignment_not_allowed"]);
+    const sys = await session("sysadmin");
+    const mine = await call(sys.token, "POST", "/api/admin/assignments", {
+      user_id: sys.me.user.id,
+      jurisdiction: null,
+      role: "JurisdictionSuperAdministrator",
+    });
+    expect(mine.status).toBe(201);
+    await call(sys.token, "DELETE", `/api/admin/assignments/${mine.body.id}`);
+  });
+
+  it("refuses deciding your own access request (403 own_request), and lets another administrator", async () => {
+    const admin = await session("jadmin-iac");
+    // The administrator asks to be a judge in ET (any requestable role, anywhere) ...
+    const made = await call(admin.token, "POST", "/api/access-requests", { jurisdiction: "IAC", roles: ["LegalTextManager"] });
+    expect(made.status).toBe(201);
+    // ... and cannot decide it.
+    const own = await call(admin.token, "POST", `/api/admin/access-requests/${made.body.id}/approve`, { reason: null });
+    expect([own.status, code(own)]).toEqual([403, "own_request"]);
+    const other = await session("multi", "IAC:JurisdictionAdministrator");
+    expect((await call(other.token, "POST", `/api/admin/access-requests/${made.body.id}/reject`, { reason: null })).status).toBe(200);
+  });
+
+  it("refuses a sixth pending request (409 too_many_pending_requests)", async () => {
+    const { token } = await session("jadmin-et");
+    const asks: [string, string[]][] = [
+      ["ET", ["Judge"]],
+      ["ET", ["LegalTextManager"]],
+      ["ET", ["Judge", "LegalTextManager"]],
+      ["IAC", ["Judge"]],
+      ["IAC", ["LegalTextManager"]],
+    ];
+    for (const [jurisdiction, roles] of asks) {
+      expect((await call(token, "POST", "/api/access-requests", { jurisdiction, roles })).status).toBe(201);
+    }
+    const sixth = await call(token, "POST", "/api/access-requests", { jurisdiction: "IAC", roles: ["Judge", "LegalTextManager"] });
+    expect([sixth.status, code(sixth)]).toEqual([409, "too_many_pending_requests"]);
+  });
+
+  it("lets a jurisdiction administrator change settings but not the name or enabled (403 permission_denied)", async () => {
+    const { token } = await session("jadmin-iac");
+    const current = (await call(token, "GET", "/api/admin/jurisdictions")).body[0];
+    const same = await call(token, "PUT", `/api/admin/jurisdictions/${current.code}`, {
+      name: current.name,
+      enabled: current.enabled,
+      settings: current.settings,
+      version: current.version,
+    });
+    expect(same.status).toBe(200);
+    const renamed = await call(token, "PUT", `/api/admin/jurisdictions/${current.code}`, {
+      name: "Another name",
+      enabled: current.enabled,
+      settings: current.settings,
+      version: same.body.version,
+    });
+    expect([renamed.status, code(renamed)]).toEqual([403, "permission_denied"]);
+    const off = await call(token, "PUT", `/api/admin/jurisdictions/${current.code}`, {
+      name: current.name,
+      enabled: false,
+      settings: current.settings,
+      version: same.body.version,
+    });
+    expect([off.status, code(off)]).toEqual([403, "permission_denied"]);
+  });
+
+  it("names no person for a change a system administrator made with their own permissions (actor.id null)", async () => {
+    const sys = await session("sysadmin");
+    const added = await call(sys.token, "POST", "/api/admin/assignments", {
+      email: "by-system@example.test",
+      jurisdiction: "IAC",
+      role: "JurisdictionAdministrator",
+    });
+    expect(added.status).toBe(201);
+    const super_ = await session("jsuper");
+    const history = (await call(super_.token, "GET", "/api/admin/role-history")).body.items;
+    expect(history[0].actor).toEqual({ id: null, email: "system administrator" });
+    await call(sys.token, "DELETE", `/api/admin/assignments/${added.body.id}`);
+  });
+
+  it("answers a 401 as {code, message}", async () => {
+    const none = await fetch(`${base}/api/me/permissions`);
+    expect(none.status).toBe(401);
+    expect((await none.json()).detail).toEqual({ code: "not_authenticated", message: expect.any(String) });
+    const bad = await fetch(`${base}/api/me/permissions`, { headers: { Authorization: "Bearer nonsense" } });
+    expect((await bad.json()).detail.code).toBe("invalid_token");
+  });
+});

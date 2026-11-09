@@ -156,6 +156,64 @@ describe("the approvals queue", () => {
   });
 });
 
+describe("the API's newer refusals (own_request, jurisdiction_disabled)", () => {
+  // The signed-in fixture user is u-1 (tests/access-helpers.ts).
+  const OWN: PendingAccessRequest = {
+    ...wanted("r-own", "someone@localhost.test"),
+    requester: { id: "u-1", email: "someone@localhost.test", name: null },
+  };
+
+  it("offers no Approve or Reject on the caller's own request, and says why; others keep theirs", async () => {
+    serve([OWN, R1]);
+    render(<ApprovalsPanel />);
+
+    const own = (await screen.findByText("someone@localhost.test")).closest("li") as HTMLElement;
+    expect(within(own).getByText("This is your own request. Another administrator has to decide it.")).toBeTruthy();
+    expect(within(own).queryByRole("button")).toBeNull();
+    expect(within(own).queryByLabelText("Reason (optional)")).toBeNull();
+    expect(screen.getByRole("button", { name: "Approve the request from one@example.test" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /someone@localhost.test/ })).toBeNull();
+  });
+
+  it("shows plain words when the API still answers 403 own_request (the user list was not current)", async () => {
+    serve();
+    const base = request.getMockImplementation() as typeof apiClient.request;
+    request.mockImplementation(async (endpoint, options) =>
+      options?.method === "POST"
+        ? { error: "You cannot decide your own access request.", status: 403, code: "own_request" }
+        : base(endpoint, options)
+    );
+    const user = userEvent.setup();
+    render(<ApprovalsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "Approve the request from one@example.test" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("This is your own request. Another administrator has to decide it.")
+    );
+    expect(screen.getByText("one@example.test")).toBeTruthy();
+  });
+
+  it("says the jurisdiction is switched off when approving into a disabled one, and keeps the request to reject", async () => {
+    serve();
+    const base = request.getMockImplementation() as typeof apiClient.request;
+    request.mockImplementation(async (endpoint, options) =>
+      options?.method === "POST" && endpoint.endsWith("/approve")
+        ? { error: "That jurisdiction is disabled: nobody can be given a role there.", status: 409, code: "jurisdiction_disabled" }
+        : base(endpoint, options)
+    );
+    const user = userEvent.setup();
+    render(<ApprovalsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "Approve the request from one@example.test" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("switched off"))
+    );
+    expect(screen.getByRole("button", { name: "Reject the request from one@example.test" })).toBeTruthy();
+  });
+});
+
 describe("the deep link /admin?tab=approvals&request=<id> (DIAAT-398)", () => {
   it("highlights that request in the queue, and only that one", async () => {
     serve();

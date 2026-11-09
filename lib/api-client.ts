@@ -156,9 +156,17 @@ class ApiClient {
           const e = new Error(errorMessage) as Error & {
             requestId?: string;
             status?: number;
+            code?: string;
           };
           e.requestId = requestId;
           e.status = response.status;
+          // The API's 401 is `{detail: {code, message}}` (`not_authenticated`,
+          // `invalid_token`, `unknown_user`); the code is kept, the text is ours.
+          try {
+            e.code = detailCode((await response.json())?.detail);
+          } catch {
+            // No JSON body (a proxy's page, say): no code.
+          }
           throw e;
         }
         if (response.status === 405) {

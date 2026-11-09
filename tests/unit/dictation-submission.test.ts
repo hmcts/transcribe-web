@@ -57,6 +57,17 @@ describe("submitDictation (the speech demo's submission)", () => {
   });
 
   it.each([
+    ["a 401 in the API's {code, message} shape", 401, { detail: { code: "invalid_token", message: "The token is not valid." } }, "The token is not valid."],
+    ["a 409 in the API's {code, message} shape", 409, { detail: { code: "context_changed", message: "Changed in another tab." } }, "Changed in another tab."],
+    ["a plain string detail", 503, { detail: "down" }, "down"],
+  ])("throws the API's own words for %s, never [object Object]", async (_label, status, body, expected) => {
+    const t = telemetry();
+    const fetchImpl = vi.fn(() => Promise.resolve(jsonResponse(status, body))) as unknown as typeof fetch;
+
+    await expect(submitDictation({}, options(t, fetchImpl))).rejects.toThrow(expected);
+  });
+
+  it.each([
     [
       "an HTTP error",
       () => Promise.resolve(jsonResponse(503, { detail: "down" })),

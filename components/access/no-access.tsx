@@ -19,6 +19,7 @@ import {
   fetchPublicJurisdictions,
   withdrawAccessRequest,
 } from "@/lib/access/api";
+import { describeRefusal } from "@/lib/access/refusal-messages";
 import { REQUESTABLE_ROLES } from "@/lib/access/requestable-roles";
 import {
   type AccessRequest,
@@ -42,7 +43,7 @@ const STATUS_TEXT: Record<AccessRequest["status"], string> = {
 };
 
 const message = (error: unknown, fallback: string) =>
-  error instanceof Error && error.message ? error.message : fallback;
+  describeRefusal(error, {}, fallback);
 
 /**
  * Shown, and nothing else, to a signed-in user with no role (DIAAT-384,

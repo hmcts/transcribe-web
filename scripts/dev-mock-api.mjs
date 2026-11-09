@@ -135,7 +135,9 @@ function recordChange(claims, change, target, jurisdictionCode, role) {
   roleHistory.push({
     id: randomUUID(),
     timestamp: new Date().toISOString(),
-    actor: actor ? { id: actor.id, email: actor.email } : { id: randomUUID(), email: "system@localhost.test" },
+    // A change made through the system administrator's own permissions names no
+    // person, as the real API does: `actor.id` is null.
+    actor: actor && !(claims.sysadmin && !claims.ctx) ? { id: actor.id, email: actor.email } : { id: null, email: "system administrator" },
     actor_context: claims?.ctx ? { jurisdiction: claims.ctx.jurisdiction?.code ?? null, role: claims.ctx.role } : null,
     target: { id: target.id ?? null, email: target.email },
     change,
@@ -383,7 +385,7 @@ const server = createServer(async (req, res) => {
     const persona =
       req.headers["x-dev-persona"] ?? /^Bearer mock-entra:([\w-]+)$/.exec(req.headers.authorization ?? "")?.[1];
     if (typeof persona !== "string" || !PERSONAS[persona]) {
-      return refuse(res, 401, "unauthenticated", "Unknown persona, or not an identity this mock accepts");
+      return refuse(res, 401, "invalid_token", "Unknown persona, or not an identity this mock accepts");
     }
     if (!userFor(persona).is_active) return refuse(res, 403, "user_deactivated", "This user has been deactivated");
     const minted = mint(persona, req.headers["x-requested-context"]);
@@ -391,7 +393,7 @@ const server = createServer(async (req, res) => {
   }
 
   const claims = verify(req.headers.authorization);
-  if (!claims) return refuse(res, 401, "unauthenticated", "Missing, expired or malformed token");
+  if (!claims) return refuse(res, 401, req.headers.authorization ? "invalid_token" : "not_authenticated", "Missing, expired or malformed token");
 
   // A user deactivated after the token was minted is refused at once.
   const user = userFor(claims.persona);
@@ -457,6 +459,9 @@ const server = createServer(async (req, res) => {
       (r) => r.status === "pending" && r.jurisdiction.code === jurisdiction.code && [...r.roles].sort().join() === [...roles].sort().join()
     );
     if (duplicate) return refuse(res, 409, "duplicate_request", "You have already asked for that, and it is waiting to be decided.");
+    if (user.requests.filter((r) => r.status === "pending").length >= 5) {
+      return refuse(res, 409, "too_many_pending_requests", "You already have 5 requests waiting to be decided: withdraw one first.");
+    }
     const request = {
       id: randomUUID(),
       jurisdiction: refOf(jurisdiction.code),
@@ -616,9 +621,13 @@ const server = createServer(async (req, res) => {
     const toSelf = target?.id === user.id;
     const own = toSelf && claims.sysadmin; // a system administrator may give themselves any role
     if (!own) {
+      if (toSelf) return notAllowed(res, "You cannot give yourself a role.");
       if (!assignable().includes(role)) return notAllowed(res, "You cannot give that role");
       if (code !== null && !reaches(code)) return notAllowed(res, "That is not your jurisdiction");
       if (toSelf && ADMIN_ROLES.includes(role)) return notAllowed(res, "You cannot change your own administrator role");
+    }
+    if (code !== null && jurisdictions.find((j) => j.code === code)?.enabled === false) {
+      return refuse(res, 409, "jurisdiction_disabled", "That jurisdiction is disabled: nobody can be given a role there.");
     }
     const holder = target ?? pendingByEmail.get(email) ?? { id: randomUUID(), email, assignments: [] };
     if (!target) pendingByEmail.set(email, holder);
@@ -701,6 +710,10 @@ const server = createServer(async (req, res) => {
     const owner = userById(found.requester.id);
     const request = owner.requests.find((r) => r.id === found.id);
     if (request.status !== "pending") return refuse(res, 409, "request_not_pending", "That request has already been decided");
+    if (owner.id === user.id) return refuse(res, 403, "own_request", "You cannot decide your own access request.");
+    if (decide[2] === "approve" && jurisdictions.find((j) => j.code === request.jurisdiction.code)?.enabled === false) {
+      return refuse(res, 409, "jurisdiction_disabled", "That jurisdiction is disabled: nobody can be given a role there.");
+    }
     request.status = decide[2] === "approve" ? "approved" : "rejected";
     request.decided_at = new Date().toISOString();
     request.reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : null;
@@ -736,7 +749,7 @@ const server = createServer(async (req, res) => {
     const existing = jurisdictions.find((j) => j.code === code);
     if (!existing) {
       if (!need("jurisdiction.create")) return;
-      if (body.version) return refuse(res, 409, "version_conflict", "That jurisdiction changed meanwhile");
+      if (body.version) return refuse(res, 409, "edit_conflict", "That jurisdiction changed meanwhile");
       const created = { code, name: String(body.name ?? code), enabled: body.enabled ?? true, template: body.settings?.template ?? null, hearing_recordings: !!body.settings?.features?.hearing_recordings, wording: body.settings?.wording ?? {}, version: "v1" };
       jurisdictions.push(created);
       return send(res, 200, adminShape(created));
@@ -744,7 +757,12 @@ const server = createServer(async (req, res) => {
     if (!need("jurisdictions.manage")) return;
     if (!reaches(code)) return refuse(res, 403, "permission_denied", "That is not your jurisdiction");
     if (!body.version) return refuse(res, 409, "already_exists", `${code} already exists`);
-    if (body.version !== existing.version) return refuse(res, 409, "version_conflict", "That jurisdiction changed meanwhile");
+    if (body.version !== existing.version) return refuse(res, 409, "edit_conflict", "That jurisdiction changed meanwhile");
+    // Renaming or switching off needs jurisdiction.create; a jurisdiction administrator changes settings only.
+    const renames = (body.name !== undefined && String(body.name) !== existing.name) || (typeof body.enabled === "boolean" && body.enabled !== existing.enabled);
+    if (renames && !permissions.includes("jurisdiction.create")) {
+      return refuse(res, 403, "permission_denied", "Only a JurisdictionSuperAdministrator changes a jurisdiction's name or whether it is enabled.");
+    }
     existing.name = String(body.name ?? existing.name);
     if (typeof body.enabled === "boolean") existing.enabled = body.enabled;
     existing.template = body.settings?.template ?? null;

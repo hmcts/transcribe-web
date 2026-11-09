@@ -7,6 +7,7 @@
  * (the speech demo).
  */
 
+import { detailMessage } from "@/lib/api-client";
 import { getAuthToken } from "@/lib/auth-utils";
 import {
   type DictationSessionTelemetry,
@@ -65,8 +66,11 @@ export async function submitDictation<T = unknown>(
     if (!response.ok) {
       failedStatus = response.status;
       const errorBody = await response.json().catch(() => null);
+      // `detail` is a string or the API's `{code, message}`: never "[object Object]".
       const message =
-        (errorBody && (errorBody.detail || errorBody.error)) ||
+        (errorBody &&
+          (detailMessage(errorBody.detail) ||
+            (typeof errorBody.error === "string" ? errorBody.error : ""))) ||
         "Failed to save submission.";
       throw new Error(message);
     }

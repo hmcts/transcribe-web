@@ -1,3 +1,7 @@
+import {
+  describeRefusal,
+  type RefusalContext,
+} from "@/lib/access/refusal-messages";
 import { AdminApiError } from "@/lib/admin-api";
 import { apiClient } from "@/lib/api-client";
 
@@ -35,8 +39,11 @@ export function queryString(
   return text ? `?${text}` : "";
 }
 
-export function errorMessage(error: unknown): string {
-  return error instanceof Error && error.message
-    ? error.message
-    : "Something went wrong";
+/** What to show for a failed call: our words for the refusals that have them
+ * (lib/access/refusal-messages.ts), else the API's own message. */
+export function errorMessage(
+  error: unknown,
+  context: RefusalContext = {}
+): string {
+  return describeRefusal(error, context);
 }

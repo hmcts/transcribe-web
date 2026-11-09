@@ -1,10 +1,8 @@
 import type { NextRequest } from "next/server";
-import {
-  asContextResponse,
-  backendCallWithToken,
-} from "@/lib/auth/app-token";
+import { asContextResponse } from "@/lib/auth/app-token";
 import {
   backendRefusal,
+  callWithSessionToken,
   requireSession,
   storeTokenAndReply,
   unauthenticated,
@@ -27,9 +25,9 @@ export async function DELETE(
 
   try {
     const response = asContextResponse(
-      await backendCallWithToken(
+      await callWithSessionToken(
+        held,
         `/api/me/jurisdictions/${encodeURIComponent(code)}`,
-        held.session.appToken as string,
         { method: "DELETE" }
       )
     );

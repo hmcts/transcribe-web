@@ -3,6 +3,7 @@ import {
   jsonRequest,
   queryString,
 } from "@/lib/admin-request";
+import { describeRefusal } from "@/lib/access/refusal-messages";
 import type { JurisdictionRef } from "@/lib/access/types";
 
 /**
@@ -162,11 +163,13 @@ export async function deleteAssignment(id: string): Promise<void> {
   });
 }
 
-/** Give a person several roles in one go; says which roles the API refused. */
+/** Give a person several roles in one go; says which roles the API refused.
+ * `self`: the person is the caller (a refusal then says why). */
 export async function assignRoles(
   target: AssignmentTarget,
   jurisdiction: string | null,
-  roles: string[]
+  roles: string[],
+  self = false
 ): Promise<{ added: string[]; failed: { role: string; message: string }[] }> {
   const added: string[] = [];
   const failed: { role: string; message: string }[] = [];
@@ -177,7 +180,7 @@ export async function assignRoles(
     } catch (error) {
       failed.push({
         role,
-        message: error instanceof Error ? error.message : "Not added",
+        message: describeRefusal(error, { self }, "Not added"),
       });
     }
   }
@@ -212,7 +215,9 @@ export type RoleChange =
 export interface RoleHistoryEntry {
   id: string;
   timestamp: string;
-  actor: { id: string; email: string };
+  /** `id` is null when a system administrator made the change: the API then
+   * sends `email: "system administrator"` (not an address). */
+  actor: { id: string | null; email: string };
   actor_context: { jurisdiction: string | null; role: string } | null;
   target: { id: string | null; email: string };
   /** One of RoleChange; a value this release does not know is shown as it came. */
@@ -242,6 +247,21 @@ export async function fetchRoleHistory(
     throw new Error("The history from the API was not in the expected shape");
   }
   return { items: body.items, total: body.total ?? body.items.length };
+}
+
+export const SYSTEM_ADMINISTRATOR_LABEL = "System administrator";
+
+/**
+ * Who a history row says did it. `actor.id` is null for a change made through the
+ * system administrator's own permissions (the API names no person then), and the
+ * row can in principle lack an actor: neither may break the list.
+ */
+export function actorLabel(entry: Pick<RoleHistoryEntry, "actor">): string {
+  const actor = entry.actor as RoleHistoryEntry["actor"] | null | undefined;
+  const email = typeof actor?.email === "string" ? actor.email.trim() : "";
+  if (actor?.id) return email || "Unknown user";
+  // No person: a real address is still shown, anything else is the system.
+  return email.includes("@") ? email : SYSTEM_ADMINISTRATOR_LABEL;
 }
 
 /** What a history `change` reads as. Unknown values are shown as the API sent them. */

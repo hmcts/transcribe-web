@@ -19,6 +19,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { SELF_ASSIGNMENT_NOTE } from "@/lib/access/refusal-messages";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { errorMessage } from "@/lib/admin-request";
 import {
@@ -56,7 +57,7 @@ export function RoleHolders({
   /** Show "Add me": the caller giving the role to themselves. */
   offerSelf?: boolean;
 }) {
-  const { me } = useAccess();
+  const { me, can } = useAccess();
   const [holders, setHolders] = useState<AdminUser[] | null>(null);
   const [truncated, setTruncated] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -81,7 +82,20 @@ export function RoleHolders({
     void load();
   }, [load]);
 
-  async function add(target: { user_id: string } | { email: string }, name: string) {
+  // Nobody gives themselves a role except the holder of the permission to appoint
+  // super administrators (API: 403 `assignment_not_allowed`), so that is not offered.
+  const picksSelf =
+    !!me &&
+    (who.user
+      ? who.user.id === me.user.id
+      : typedEmail(who) === me.user.email.trim().toLowerCase());
+  const selfBlocked = picksSelf && !can("jurisdiction_super_admin.assign");
+
+  async function add(
+    target: { user_id: string } | { email: string },
+    name: string,
+    self = false
+  ) {
     setBusy(true);
     try {
       await createAssignment(target, jurisdiction, role);
@@ -89,7 +103,7 @@ export function RoleHolders({
       setWho(NOBODY);
       await load();
     } catch (err) {
-      toast.error(errorMessage(err));
+      toast.error(errorMessage(err, { self }));
     } finally {
       setBusy(false);
     }
@@ -111,8 +125,8 @@ export function RoleHolders({
 
   function submit() {
     const email = typedEmail(who);
-    if (who.user) void add({ user_id: who.user.id }, who.user.email);
-    else if (email) void add({ email }, email);
+    if (who.user) void add({ user_id: who.user.id }, who.user.email, picksSelf);
+    else if (email) void add({ email }, email, picksSelf);
   }
 
   return (
@@ -129,7 +143,7 @@ export function RoleHolders({
         className="flex flex-wrap items-start gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          if (hasTarget(who) && !busy) submit();
+          if (hasTarget(who) && !busy && !selfBlocked) submit();
         }}
       >
         <UserPicker
@@ -139,7 +153,10 @@ export function RoleHolders({
           disabled={busy}
         />
         <div className="flex gap-2 pt-6">
-          <Button type="submit" disabled={busy || !hasTarget(who)}>
+          <Button
+            type="submit"
+            disabled={busy || !hasTarget(who) || selfBlocked}
+          >
             <Plus className="mr-1 h-4 w-4" aria-hidden />
             Add {noun}
           </Button>
@@ -148,13 +165,18 @@ export function RoleHolders({
               type="button"
               variant="outline"
               disabled={busy}
-              onClick={() => void add({ user_id: me.user.id }, "You")}
+              onClick={() => void add({ user_id: me.user.id }, "You", true)}
             >
               Add me
             </Button>
           )}
         </div>
       </form>
+      {selfBlocked && (
+        <p role="status" className="text-sm text-muted-foreground">
+          {SELF_ASSIGNMENT_NOTE}
+        </p>
+      )}
 
       {error ? (
         <div role="alert" className="text-destructive">

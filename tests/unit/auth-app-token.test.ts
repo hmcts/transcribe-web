@@ -411,6 +411,84 @@ describe("POST /auth/context", () => {
   });
 });
 
+describe("a context change whose token chain has ended (API sess_exp)", () => {
+  const post = (body: unknown) =>
+    req("/auth/context", { transcribe_session: "sess-1" }, {
+      method: "POST",
+      body: JSON.stringify(body),
+      headers: { "Content-Type": "application/json" },
+    });
+  const expired = () =>
+    json({ detail: { code: "invalid_token", message: "The token has expired." } }, 401);
+
+  it("mints again from Entra, keeping the context, and repeats the call once: the user is not bounced", async () => {
+    await seed();
+    api
+      .mockResolvedValueOnce(expired()) // PUT /api/me/context: the chain ended
+      .mockResolvedValueOnce(json(tokenBody("app-token-remint", ET))) // POST /api/auth/session
+      .mockResolvedValueOnce(json(tokenBody("app-token-ctx", ET, 120))); // the PUT again
+    const { POST } = await import("@/app/auth/context/route");
+
+    const res = await POST(post({ jurisdiction: "ET", role: "Judge" }));
+
+    expect(res.status).toBe(200);
+    expect(api.mock.calls.map(([url]) => url)).toEqual([
+      `${API}/api/me/context`,
+      `${API}/api/auth/session`,
+      `${API}/api/me/context`,
+    ]);
+    const mint = headersOf(api.mock.calls[1]);
+    expect(mint.get("authorization")).toBe("Bearer entra-id-token");
+    expect(mint.get("x-requested-context")).toBe("ET:Judge");
+    expect(headersOf(api.mock.calls[2]).get("authorization")).toBe("Bearer app-token-remint");
+    const session = await stored();
+    expect(session?.appToken).toBe("app-token-ctx");
+    // The bounded expiry the API gave is the one kept.
+    expect((session?.appTokenExpiresAt ?? 0) - Date.now()).toBeLessThan(121_000);
+    expect(await res.text()).not.toContain("app-token");
+  });
+
+  it("does so for leaving a jurisdiction as well", async () => {
+    await seed();
+    api
+      .mockResolvedValueOnce(expired())
+      .mockResolvedValueOnce(json(tokenBody("app-token-remint", ET)))
+      .mockResolvedValueOnce(json(tokenBody("app-token-left", ET)));
+    const { DELETE } = await import("@/app/auth/jurisdictions/[code]/route");
+
+    const res = await DELETE(req("/auth/jurisdictions/IAC", { transcribe_session: "sess-1" }, { method: "DELETE" }), {
+      params: Promise.resolve({ code: "IAC" }),
+    });
+
+    expect(res.status).toBe(200);
+    expect(api).toHaveBeenCalledTimes(3);
+    expect((await stored())?.appToken).toBe("app-token-left");
+  });
+
+  it("asks again only once: a second 401 is passed on", async () => {
+    await seed();
+    api
+      .mockResolvedValueOnce(expired())
+      .mockResolvedValueOnce(json(tokenBody("app-token-remint", ET)))
+      .mockResolvedValueOnce(expired());
+    const { POST } = await import("@/app/auth/context/route");
+
+    const res = await POST(post({ jurisdiction: "ET", role: "Judge" }));
+
+    expect(res.status).toBe(401);
+    expect(api).toHaveBeenCalledTimes(3);
+  });
+
+  it("is not retried for a refusal that is not a 401", async () => {
+    await seed();
+    api.mockResolvedValueOnce(json({ detail: { code: "context_not_available", message: "Not yours" } }, 403));
+    const { POST } = await import("@/app/auth/context/route");
+
+    expect((await POST(post({ jurisdiction: "IAC", role: "Judge" }))).status).toBe(403);
+    expect(api).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("DELETE /auth/jurisdictions/{code}", () => {
   it("leaves with the API, keeps the new token in the session, and returns only me", async () => {
     await seed();

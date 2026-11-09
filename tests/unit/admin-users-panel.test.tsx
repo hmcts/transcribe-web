@@ -78,7 +78,7 @@ interface Server {
   users: AdminUser[];
   roles: string[];
   history: RoleHistoryEntry[];
-  refuse?: Record<string, { error: string; status: number }>;
+  refuse?: Record<string, { error: string; status: number; code?: string }>;
 }
 
 function serve(initial: Partial<Server> = {}) {
@@ -457,6 +457,108 @@ describe("deactivating and reactivating", () => {
   });
 });
 
+describe("refusals about who a role goes to", () => {
+  async function addAs(email: string, role = "Judge") {
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
+    await user.type(within(form).getByLabelText("Sign-in email"), email);
+    await user.click(await within(form).findByLabelText(role === "Judge" ? "Judge" : "Legal text manager"));
+    return { user, form };
+  }
+
+  it("does not offer to give yourself a role: a note instead, and Add stays off (typed email)", async () => {
+    serve();
+    const { form } = await addAs("Someone@Localhost.test");
+
+    expect(within(form).getByText("You cannot give yourself a role. Ask another administrator to add you.")).toBeTruthy();
+    expect((within(form).getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(calls("POST", "/admin/assignments")).toHaveLength(0);
+  });
+
+  it("does the same for yourself picked from the list of people who have signed in", async () => {
+    serve();
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
+    await user.type(within(form).getByLabelText("Sign-in email"), "someone@loc");
+    await user.click(await within(form).findByRole("button", { name: /someone@localhost.test/ }));
+    await user.click(await within(form).findByLabelText("Judge"));
+
+    expect(within(form).getByText(/You cannot give yourself a role/)).toBeTruthy();
+    expect((within(form).getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("lets the holder of jurisdiction_super_admin.assign give themselves a role (the API excepts them)", async () => {
+    persona = ME.sysadminOnly;
+    serve({ roles: ["JurisdictionAdministrator", "JurisdictionSuperAdministrator"] });
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
+    await user.type(within(form).getByLabelText("Sign-in email"), "someone@localhost.test");
+
+    expect(within(form).queryByText(/You cannot give yourself a role/)).toBeNull();
+  });
+
+  it("says why when the API refuses a role for yourself anyway (403 assignment_not_allowed)", async () => {
+    // A caller the web cannot tell is themselves (their email differs in the form).
+    serve();
+    const base = request.getMockImplementation() as typeof apiClient.request;
+    request.mockImplementation(async (endpoint, options) =>
+      endpoint === "/admin/assignments"
+        ? { error: "You cannot give yourself a role.", status: 403, code: "assignment_not_allowed" }
+        : base(endpoint, options)
+    );
+    const { user, form } = await addAs("x@example.test");
+    await user.click(within(form).getByRole("button", { name: "Add" }));
+
+    // Not known to be themselves: the API's own words are shown.
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Judge was not added: You cannot give yourself a role.")
+    );
+  });
+
+  it("explains an ambiguous email (409) and says to pick the person from the list", async () => {
+    serve({
+      refuse: {
+        "POST /admin/assignments": {
+          error: "More than one user has signed in with that email address: choose the person from the user list.",
+          status: 409,
+          code: "ambiguous_email",
+        },
+      },
+    });
+    const { user, form } = await addAs("twin@example.test");
+    await user.click(within(form).getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        expect.stringMatching(/^Judge was not added: More than one person has signed in with that email address.*Choose the person from the list/)
+      )
+    );
+    // What was refused stays ticked so it can be tried again with the person picked.
+    expect(within(form).getByLabelText("Judge").getAttribute("aria-checked")).toBe("true");
+  });
+
+  it("explains a disabled jurisdiction (409)", async () => {
+    serve({
+      refuse: {
+        "POST /admin/assignments": {
+          error: "That jurisdiction is disabled: nobody can be given a role there.",
+          status: 409,
+          code: "jurisdiction_disabled",
+        },
+      },
+    });
+    const { user, form } = await addAs("new@example.test");
+    await user.click(within(form).getByRole("button", { name: "Add" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("That jurisdiction is switched off"))
+    );
+  });
+});
+
 describe("the role-change history", () => {
   const entry = (over: Partial<RoleHistoryEntry> = {}): RoleHistoryEntry => ({
     id: "h-1",
@@ -500,6 +602,43 @@ describe("the role-change history", () => {
     expect(within(table).getAllByText("anna@example.test").length).toBeGreaterThan(0);
     expect(within(table).getAllByText("as jurisdiction administrator in IAC").length).toBeGreaterThan(0);
     expect(calls("GET", "/admin/role-history")).toHaveLength(1);
+  });
+
+  it("shows a change made through the system administrator's own permissions (actor.id null) without breaking", async () => {
+    serve({
+      history: [
+        entry({ id: "h-sys", actor: { id: null, email: "system administrator" }, actor_context: null }),
+        entry({ id: "h-sys2", actor: { id: null, email: "sysadmin@example.test" }, actor_context: null }),
+        entry({ id: "h-norm", actor: { id: "u-bob", email: "bob@example.test" } }),
+      ],
+    });
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "Role history" }));
+
+    const table = await screen.findByRole("table");
+    // The API's marker (not an address) reads as words; an address it did give is shown.
+    expect(within(table).getByText("System administrator")).toBeTruthy();
+    expect(within(table).queryByText("system administrator")).toBeNull();
+    expect(within(table).getByText("sysadmin@example.test")).toBeTruthy();
+    expect(within(table).getByText("bob@example.test")).toBeTruthy();
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+  });
+
+  it("does not crash on a row with no actor or target at all", async () => {
+    serve({
+      history: [
+        { ...entry({ id: "h-odd" }), actor: undefined, target: undefined } as unknown as RoleHistoryEntry,
+      ],
+    });
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "Role history" }));
+
+    expect(await screen.findByText("System administrator")).toBeTruthy();
+    expect(screen.getByText("Role given")).toBeTruthy();
   });
 
   it("says so when nothing has been recorded, and shows the API's reason on a refusal", async () => {

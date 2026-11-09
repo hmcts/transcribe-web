@@ -25,11 +25,13 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
+import { SELF_ASSIGNMENT_NOTE } from "@/lib/access/refusal-messages";
 import { fetchAdminJurisdictions } from "@/lib/admin-jurisdictions-api";
 import { errorMessage } from "@/lib/admin-request";
 import {
   type AdminAssignment,
   type AdminUser,
+  actorLabel,
   assignRoles,
   deactivateUser,
   deleteAssignment,
@@ -526,7 +528,7 @@ function AddRolesForm({
   jurisdictions: JurisdictionRef[];
   onAdded: () => Promise<void>;
 }) {
-  const { active } = useAccess();
+  const { active, me, can } = useAccess();
   const [who, setWho] = useState<PickedUser>(NOBODY);
   const [chosen, setChosen] = useState<string[]>([]);
   const [jurisdiction, setJurisdiction] = useState("");
@@ -544,8 +546,19 @@ function AddRolesForm({
     jurisdictions.find((j) => j.code === wanted)?.code ??
     (jurisdictions.length === 1 ? jurisdictions[0].code : "");
 
+  // Nobody gives themselves a role, except the one who holds the permission to
+  // appoint super administrators (the API: 403 `assignment_not_allowed`). The
+  // person picked, or an email typed, being the caller is known here, so the
+  // refusal is not provoked.
+  const picksSelf =
+    !!me &&
+    (who.user
+      ? who.user.id === me.user.id
+      : typedEmail(who) === me.user.email.trim().toLowerCase());
+  const selfBlocked = picksSelf && !can("jurisdiction_super_admin.assign");
+
   const ready =
-    hasTarget(who) && chosen.length > 0 && target !== "" && !busy;
+    hasTarget(who) && chosen.length > 0 && target !== "" && !busy && !selfBlocked;
 
   function toggle(role: string, on: boolean) {
     setChosen((current) =>
@@ -559,7 +572,7 @@ function AddRolesForm({
       const email = typedEmail(who);
       const to = who.user ? { user_id: who.user.id } : email ? { email } : null;
       if (!to) return;
-      const result = await assignRoles(to, target, chosen);
+      const result = await assignRoles(to, target, chosen, picksSelf);
       const name = who.user?.email ?? email;
       if (result.added.length > 0) {
         toast.success(
@@ -646,6 +659,11 @@ function AddRolesForm({
               </div>
             )}
           </fieldset>
+          {selfBlocked && (
+            <p role="status" className="text-sm text-muted-foreground">
+              {SELF_ASSIGNMENT_NOTE}
+            </p>
+          )}
           <Button type="submit" disabled={!ready}>
             {busy ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />
@@ -768,11 +786,11 @@ function RoleHistorySection({
                     {formatTime(entry.timestamp)}
                   </TableCell>
                   <TableCell>{describeRoleChange(entry.change)}</TableCell>
-                  <TableCell>{entry.target.email}</TableCell>
+                  <TableCell>{entry.target?.email ?? ""}</TableCell>
                   <TableCell>{entry.role ? roleLabel(entry.role) : ""}</TableCell>
                   <TableCell>{entry.jurisdiction ?? ""}</TableCell>
                   <TableCell>
-                    {entry.actor.email}
+                    {actorLabel(entry)}
                     {entry.actor_context && (
                       <span className="block text-xs text-muted-foreground">
                         as {roleLabel(entry.actor_context.role).toLowerCase()}

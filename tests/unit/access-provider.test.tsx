@@ -313,6 +313,23 @@ describe("a user with no access yet (DIAAT-384, DIAAT-396)", () => {
     expect((await screen.findByRole("alert")).textContent).toBe("You already asked for this.");
   });
 
+  it.each([
+    ["too_many_pending_requests", 409, "You already have 5 requests waiting to be decided: withdraw one first.", /Withdraw one of them, then ask again/],
+    ["jurisdiction_not_found", 404, "There is no such jurisdiction.", /There is no such jurisdiction\./],
+  ])("says plainly what to do for a refusal with code %s", async (code, status, apiMessage, shown) => {
+    api.fetchMe.mockResolvedValue(ME.noAccess);
+    api.createAccessRequest.mockRejectedValue(new AccessApiError(apiMessage, status, code));
+    renderProvider();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole("combobox", { name: "Jurisdiction" }));
+    await user.click(await screen.findByRole("option", { name: "Employment Tribunal" }));
+    await user.click(screen.getByRole("checkbox", { name: /^Judge/ }));
+    await user.click(screen.getByRole("button", { name: "Send request" }));
+
+    expect((await screen.findByRole("alert")).textContent).toMatch(shown);
+  });
+
   it("lists pending requests, withdraws one, and shows decided ones as such", async () => {
     const pending: AccessRequest = {
       id: "r-2",

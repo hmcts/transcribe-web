@@ -14,8 +14,10 @@ import {
   type PendingAccessRequest,
 } from "@/lib/admin-access-requests-api";
 import { errorMessage } from "@/lib/admin-request";
+import { OWN_REQUEST_NOTE } from "@/lib/access/refusal-messages";
 import { roleLabel } from "@/lib/access/types";
 import { cn } from "@/lib/utils";
+import { useAccess } from "@/providers/access";
 
 /**
  * Admin > Approvals (DIAAT-396, DIAAT-398): the requests waiting for the
@@ -47,6 +49,8 @@ export function ApprovalsPanel({
 }: {
   highlightRequestId?: string | null;
 }) {
+  const { me } = useAccess();
+  const myId = me?.user.id;
   const [requests, setRequests] = useState<PendingAccessRequest[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reasons, setReasons] = useState<Record<string, string>>({});
@@ -146,6 +150,9 @@ export function ApprovalsPanel({
         <ul className="space-y-3" aria-label="Requests waiting for a decision">
           {requests.map((request) => {
             const isHighlighted = request.id === highlightRequestId;
+            // The API refuses (403 `own_request`) to let anyone decide their own
+            // request, so it is shown with the reason instead of the buttons.
+            const isOwn = !!myId && request.requester.id === myId;
             return (
               <li
                 key={request.id}
@@ -183,44 +190,53 @@ export function ApprovalsPanel({
                     </Badge>
                   ))}
                 </div>
-                <div className="flex flex-wrap items-end gap-2">
-                  <div className="space-y-1">
-                    <Label htmlFor={`reason-${request.id}`}>
-                      Reason (optional)
-                    </Label>
-                    <Input
-                      id={`reason-${request.id}`}
-                      value={reasons[request.id] ?? ""}
-                      onChange={(e) =>
-                        setReasons((r) => ({ ...r, [request.id]: e.target.value }))
-                      }
-                      className="w-72"
-                      maxLength={500}
+                {isOwn ? (
+                  <p
+                    className="rounded-md bg-muted p-3 text-sm"
+                    data-own-request="true"
+                  >
+                    {OWN_REQUEST_NOTE}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap items-end gap-2">
+                    <div className="space-y-1">
+                      <Label htmlFor={`reason-${request.id}`}>
+                        Reason (optional)
+                      </Label>
+                      <Input
+                        id={`reason-${request.id}`}
+                        value={reasons[request.id] ?? ""}
+                        onChange={(e) =>
+                          setReasons((r) => ({ ...r, [request.id]: e.target.value }))
+                        }
+                        className="w-72"
+                        maxLength={500}
+                        disabled={busy !== null}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      size="sm"
                       disabled={busy !== null}
-                    />
+                      aria-label={`Approve the request from ${request.requester.email}`}
+                      onClick={() => void decide(request, "approve")}
+                    >
+                      <Check className="mr-1 h-4 w-4" aria-hidden />
+                      Approve
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={busy !== null}
+                      aria-label={`Reject the request from ${request.requester.email}`}
+                      onClick={() => void decide(request, "reject")}
+                    >
+                      <X className="mr-1 h-4 w-4" aria-hidden />
+                      Reject
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    disabled={busy !== null}
-                    aria-label={`Approve the request from ${request.requester.email}`}
-                    onClick={() => void decide(request, "approve")}
-                  >
-                    <Check className="mr-1 h-4 w-4" aria-hidden />
-                    Approve
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={busy !== null}
-                    aria-label={`Reject the request from ${request.requester.email}`}
-                    onClick={() => void decide(request, "reject")}
-                  >
-                    <X className="mr-1 h-4 w-4" aria-hidden />
-                    Reject
-                  </Button>
-                </div>
+                )}
               </li>
             );
           })}

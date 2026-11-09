@@ -409,6 +409,78 @@ describe("JurisdictionsPanel", () => {
       expect(request.mock.calls.some(([endpoint]) => String(endpoint).startsWith("/admin/users"))).toBe(false);
     });
 
+    it("lets a jurisdiction administrator edit the settings but not rename or switch off (needs jurisdiction.create)", async () => {
+      persona = ME.jurisdictionAdministrator;
+      serve({ jurisdictions: [IAC] });
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "IAC" }));
+
+      expect((screen.getByLabelText("Name") as HTMLInputElement).readOnly).toBe(true);
+      expect(screen.getByLabelText("Enabled").hasAttribute("disabled")).toBe(true);
+      expect(screen.getByText(/Only a super administrator can rename a jurisdiction/)).toBeTruthy();
+      // The settings stay theirs: template, recordings, wording.
+      expect(screen.getByLabelText("Uses hearing recordings").hasAttribute("disabled")).toBe(false);
+      await user.type(screen.getByLabelText("Under the service name"), "Words");
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved IAC"));
+      // What is sent is the name and enabled it already has, as the API asks.
+      const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+      const sent = JSON.parse(String(put?.[1]?.body));
+      expect(sent.name).toBe("Immigration and Asylum Chamber");
+      expect(sent.enabled).toBe(true);
+      expect(sent.settings.wording).toEqual({ "help.subtitle": "Words" });
+    });
+
+    it("lets a super administrator (jurisdiction.create) rename and switch off", async () => {
+      persona = ME.jurisdictionSuperAdministrator;
+      serve({ jurisdictions: [IAC] });
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "IAC" }));
+
+      expect((screen.getByLabelText("Name") as HTMLInputElement).readOnly).toBe(false);
+      expect(screen.getByLabelText("Enabled").hasAttribute("disabled")).toBe(false);
+      expect(screen.queryByText(/Only a super administrator can rename/)).toBeNull();
+    });
+
+    it("explains a 403 permission_denied on save as the rename rule", async () => {
+      persona = ME.jurisdictionSuperAdministrator;
+      serve({ jurisdictions: [IAC] });
+      const base = request.getMockImplementation() as typeof apiClient.request;
+      request.mockImplementation(async (endpoint: string, options?: RequestInit) =>
+        options?.method === "PUT"
+          ? { error: "Your role cannot do that", status: 403, code: "permission_denied" }
+          : base(endpoint, options)
+      );
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "IAC" }));
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() =>
+        expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Only a super administrator can rename or switch off"))
+      );
+    });
+
+    it("does not offer a super administrator to appoint themselves as a jurisdiction administrator", async () => {
+      // jurisdiction_admin.assign without jurisdiction_super_admin.assign: a super administrator.
+      persona = ME.jurisdictionSuperAdministrator;
+      serve({ jurisdictions: [ET] });
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "ET" }));
+      await user.type(await screen.findByLabelText("Sign-in email"), "someone@localhost.test");
+
+      expect(screen.getByText(/You cannot give yourself a role/)).toBeTruthy();
+      expect((screen.getByRole("button", { name: /Add administrator/ }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
     it("gives whoever assigns administrators but cannot manage jurisdictions only the names and the administrators", async () => {
       persona = ME.sysadminOnly; // jurisdiction_admin.assign, no jurisdictions.manage or jurisdiction.create
       serve({ admins: [] });

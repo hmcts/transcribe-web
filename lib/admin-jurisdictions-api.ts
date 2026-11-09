@@ -1,3 +1,4 @@
+import { AdminApiError } from "@/lib/admin-api";
 import { apiClient } from "@/lib/api-client";
 import type { JurisdictionStage } from "@/lib/jurisdiction-api";
 
@@ -37,11 +38,13 @@ export const STAGES: { value: JurisdictionStage; label: string }[] = [
   { value: "live", label: "Live: everyone with a role there sees it" },
 ];
 
-/** apiClient returns a refusal as `error` (the API's reason); throw it, for the
- * panel to show as it is. */
+/** apiClient returns a refusal as `error` (the API's reason); throw it with its
+ * status and `detail.code`, for the panel to show in words that fit the code. */
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await apiClient.request<T>(endpoint, options);
-  if (response.error) throw new Error(response.error);
+  if (response.error) {
+    throw new AdminApiError(response.error, response.status, response.code);
+  }
   return response.data as T;
 }
 

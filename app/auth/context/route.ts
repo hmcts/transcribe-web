@@ -1,10 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
-import {
-  asContextResponse,
-  backendCallWithToken,
-} from "@/lib/auth/app-token";
+import { asContextResponse } from "@/lib/auth/app-token";
 import {
   backendRefusal,
+  callWithSessionToken,
   NO_STORE,
   requireSession,
   storeTokenAndReply,
@@ -50,11 +48,10 @@ export async function POST(request: NextRequest) {
 
   try {
     const response = asContextResponse(
-      await backendCallWithToken(
-        "/api/me/context",
-        held.session.appToken as string,
-        { method: "PUT", body: { jurisdiction, role } }
-      )
+      await callWithSessionToken(held, "/api/me/context", {
+        method: "PUT",
+        body: { jurisdiction, role },
+      })
     );
     return await storeTokenAndReply(held.sessionId, held.session, response);
   } catch (error) {

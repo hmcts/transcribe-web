@@ -40,6 +40,7 @@ import {
 import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 import { JURISDICTION_ADMINISTRATOR } from "@/lib/access/assignable-roles";
 import { fetchPublicJurisdictions } from "@/lib/access/api";
+import { describeRefusal } from "@/lib/access/refusal-messages";
 import { useAccess } from "@/providers/access";
 
 /**
@@ -61,8 +62,8 @@ import { useAccess } from "@/providers/access";
  * `templates.manage`), for whoever picks a jurisdiction here.
  */
 
-const message = (error: unknown) =>
-  error instanceof Error ? error.message : "Something went wrong";
+const message = (error: unknown, savingJurisdiction = false) =>
+  describeRefusal(error, { savingJurisdiction });
 
 export function JurisdictionsPanel() {
   const { can } = useAccess();
@@ -229,6 +230,7 @@ export function JurisdictionsPanel() {
         <JurisdictionEditor
           key={`${creating ? "new" : current?.code}:${editorGeneration}`}
           jurisdiction={creating ? null : current}
+          canRename={canCreate}
           existingCodes={jurisdictions.map((j) => j.code)}
           wordingKeys={wordingKeys}
           stagesSupported={stagesSupported}
@@ -267,6 +269,7 @@ export function JurisdictionsPanel() {
 
 function JurisdictionEditor({
   jurisdiction,
+  canRename,
   existingCodes,
   wordingKeys,
   stagesSupported,
@@ -274,6 +277,9 @@ function JurisdictionEditor({
   onDiscard,
 }: {
   jurisdiction: AdminJurisdiction | null;
+  /** May change the name and the enabled switch of an existing jurisdiction
+   * (`jurisdiction.create`; the API refuses it otherwise, 403 `permission_denied`). */
+  canRename: boolean;
   existingCodes: string[];
   wordingKeys: Record<string, string>;
   /** False: an API before DIAAT-345, which would ignore the stage. */
@@ -320,6 +326,8 @@ function JurisdictionEditor({
   // Saving creates or replaces: adding one with an existing code would overwrite it.
   const duplicate =
     !jurisdiction && existingCodes.includes(code.trim().toUpperCase());
+  // A new jurisdiction is only ever added by someone who may create one.
+  const nameLocked = jurisdiction !== null && !canRename;
 
   async function save() {
     if (duplicate) return;
@@ -348,7 +356,7 @@ function JurisdictionEditor({
       toast.success(`Saved ${saved.code}`);
       await onSaved(saved.code);
     } catch (err) {
-      toast.error(message(err));
+      toast.error(message(err, true));
     } finally {
       setSaving(false);
     }
@@ -385,6 +393,8 @@ function JurisdictionEditor({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Employment Tribunal"
+            readOnly={nameLocked}
+            aria-describedby={nameLocked ? "jurisdiction-locked" : undefined}
           />
         </div>
         {stagesSupported && (
@@ -452,7 +462,13 @@ function JurisdictionEditor({
           </Select>
         </div>
         <div className="space-y-2 pt-6">
-          <CheckboxField id="jurisdiction-enabled" label="Enabled" checked={enabled} onChange={setEnabled} />
+          <CheckboxField
+            id="jurisdiction-enabled"
+            label="Enabled"
+            checked={enabled}
+            onChange={setEnabled}
+            disabled={nameLocked}
+          />
           <CheckboxField
             id="jurisdiction-recordings"
             label="Uses hearing recordings"
@@ -484,6 +500,14 @@ function JurisdictionEditor({
             ))}
           </ul>
         </div>
+      )}
+
+      {nameLocked && (
+        <p id="jurisdiction-locked" className="text-sm text-muted-foreground">
+          Only a super administrator can rename a jurisdiction or switch it on or
+          off. Its template, hearing recordings and screen wording are yours to
+          change.
+        </p>
       )}
 
       <details>
@@ -526,15 +550,22 @@ function CheckboxField({
   label,
   checked,
   onChange,
+  disabled,
 }: {
   id: string;
   label: string;
   checked: boolean;
   onChange: (value: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-center gap-2">
-      <Checkbox id={id} checked={checked} onCheckedChange={(value) => onChange(value === true)} />
+      <Checkbox
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(value) => onChange(value === true)}
+      />
       <Label htmlFor={id}>{label}</Label>
     </div>
   );
