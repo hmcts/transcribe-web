@@ -17,9 +17,10 @@ import RecordAlertBanner from "@/components/audio/recording/record-alert-banner"
 import RecordStatusRow from "@/components/audio/recording/record-status-row";
 import DictationForm from "@/components/audio/dictation/dictation-form";
 import {
+  asksForLegalIssues,
   type DictationFormValues,
   defaultFormValues,
-  dictationFormSchema,
+  getDictationFormSchema,
 } from "@/components/audio/dictation/formData";
 import {
   SECTION_CONFIG,
@@ -45,6 +46,7 @@ import {
   dictationHtml,
   dictationText,
 } from "@/lib/dictation-copy";
+import { IAC_CODE } from "@/lib/jurisdiction-context";
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import {
   isLeavingForJurisdictionSwitch,
@@ -60,8 +62,10 @@ import {
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { fetchUserDocumentContent } from "@/lib/document-content-api";
 import {
+  contentForJurisdiction,
   type DocumentContent,
   liveTranscriptionSubmissionPayloadSchema,
+  liveTranscriptionSubmissionPayloadWithoutLegalIssuesSchema,
   liveTranscriptionSubmissionResponseSchema,
   normalizeOptionalEditorText,
   submissionErrorResponseSchema,
@@ -114,7 +118,9 @@ export default function RecordPage() {
   // DIAAT-333: without the decision template (DIAAT-323 adds others), the judge
   // dictates into the general section and copies the text out: no hearing form,
   // no section tabs, no submission.
-  const { wording, hasDecisionTemplate } = useJurisdiction();
+  const { current, wording, hasDecisionTemplate } = useJurisdiction();
+  const jurisdictionCode = current?.code;
+  const jurisdictionName = current?.name;
   const defaultNotes = hasDecisionTemplate
     ? DEFAULT_NOTES_EDITOR_CONTENT
     : GENERAL_NOTES_EDITOR_CONTENT;
@@ -135,9 +141,27 @@ export default function RecordPage() {
   );
   const [formData, setFormData] =
     useState<DictationFormValues>(defaultFormValues);
-  const [documentContent, setDocumentContent] = useState<
-    DocumentContent | undefined
-  >();
+  const [fetched, setFetched] = useState<{
+    code: string | undefined;
+    content: DocumentContent;
+  }>();
+  // DIAAT-342: only this jurisdiction's wording, and the IAC's shipped legal
+  // issues only for the IAC; with no legal wording the form has no legal issues.
+  const documentContent =
+    fetched?.code === jurisdictionCode
+      ? contentForJurisdiction(fetched?.content, jurisdictionCode)
+      : undefined;
+  const legalIssuesFallback = jurisdictionCode === IAC_CODE;
+  const asksLegalIssues = asksForLegalIssues(
+    documentContent,
+    legalIssuesFallback
+  );
+  // Another jurisdiction's wording is not guessed: until its own has loaded (or
+  // when it could not), a hearing is not submitted, since whether it has legal
+  // issues to ask for is not yet known.
+  const [contentFailed, setContentFailed] = useState(false);
+  const legalWordingPending =
+    hasDecisionTemplate && !legalIssuesFallback && !documentContent;
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
   const [speechDemoKey, setSpeechDemoKey] = useState(0);
@@ -291,26 +315,30 @@ export default function RecordPage() {
     previousLayoutModeRef.current = layoutMode;
   }, [layoutMode, hasDecisionTemplate]);
 
-  useEffect(() => {
+  const contentRequest = useRef(0);
+  const loadContent = useCallback(async () => {
     // The hearing form's options: the decision template's alone.
     if (!hasDecisionTemplate) return;
-    let isCancelled = false;
-
-    void (async () => {
-      try {
-        const content = await fetchUserDocumentContent();
-        if (!isCancelled) {
-          setDocumentContent(content);
-        }
-      } catch (error) {
-        console.error("Failed to load document content", error);
+    const request = ++contentRequest.current;
+    setContentFailed(false);
+    try {
+      const content = await fetchUserDocumentContent();
+      if (request === contentRequest.current) {
+        setFetched({ code: jurisdictionCode, content });
       }
-    })();
+    } catch (error) {
+      console.error("Failed to load document content", error);
+      if (request === contentRequest.current) setContentFailed(true);
+    }
+  }, [hasDecisionTemplate, jurisdictionCode]);
 
+  useEffect(() => {
+    void loadContent();
     return () => {
-      isCancelled = true;
+      // An answer still on its way is for a jurisdiction (or page) left behind.
+      contentRequest.current += 1;
     };
-  }, [hasDecisionTemplate]);
+  }, [loadContent]);
 
   // Keep the Easy Auth session alive during idle/paused recording — the token is only
   // refreshed on API calls, so a long pause would otherwise expire the 1-hour Azure AD token.
@@ -618,7 +646,16 @@ export default function RecordPage() {
   }, [sectionedTranscript, editorContent]);
 
   const handleSubmitHearing = useCallback(async () => {
-    const validation = dictationFormSchema.safeParse(formData);
+    if (legalWordingPending) {
+      toast.error(
+        contentFailed
+          ? `Legal wording for ${jurisdictionName ?? "this jurisdiction"} could not be loaded, reload and try again.`
+          : `Legal wording for ${jurisdictionName ?? "this jurisdiction"} hasn't loaded yet, reload and try again.`,
+        { action: { label: "Try again", onClick: () => void loadContent() } }
+      );
+      return;
+    }
+    const validation = getDictationFormSchema(asksLegalIssues).safeParse(formData);
     if (!validation.success) {
       const fieldErrors: Partial<Record<keyof DictationFormValues, string>> =
         {};
@@ -651,8 +688,15 @@ export default function RecordPage() {
         const dictationSessionId = dictationSessionTelemetry.currentSessionId();
 
         const body = JSON.stringify(
-          liveTranscriptionSubmissionPayloadSchema.parse({
-            form_data: validation.data,
+          (asksLegalIssues
+            ? liveTranscriptionSubmissionPayloadSchema
+            : liveTranscriptionSubmissionPayloadWithoutLegalIssuesSchema
+          ).parse({
+            // No legal issues where there is no legal wording, whatever a
+            // restored draft still carries.
+            form_data: asksLegalIssues
+              ? validation.data
+              : { ...validation.data, legalIssues: [] },
             messages: sectionedTranscript,
             notes: normalizeOptionalEditorText(editorContent),
           })
@@ -733,7 +777,19 @@ export default function RecordPage() {
     })();
 
     submitHearingToast(submissionPromise);
-  }, [formData, sectionedTranscript, router, editorContent, mode, stopDraftSaves]);
+  }, [
+    formData,
+    sectionedTranscript,
+    router,
+    editorContent,
+    mode,
+    stopDraftSaves,
+    asksLegalIssues,
+    legalWordingPending,
+    contentFailed,
+    jurisdictionName,
+    loadContent,
+  ]);
 
   // Only "healthy" counts as recording. `isRecordingActive` is intent; a
   // session can be collapsing behind it.
@@ -1095,6 +1151,7 @@ export default function RecordPage() {
                             onFormStateChange={setFormData}
                             externalErrors={formErrors}
                             documentContent={documentContent}
+                            legalIssuesFallback={legalIssuesFallback}
                           />
                         </div>
                       </div>
@@ -1188,6 +1245,7 @@ export default function RecordPage() {
                           onFormStateChange={setFormData}
                           externalErrors={formErrors}
                           documentContent={documentContent}
+                          legalIssuesFallback={legalIssuesFallback}
                         />
                       </div>
                     </section>

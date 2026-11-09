@@ -48,8 +48,9 @@ const PAGES_WITHOUT_MATERIAL = [
   "/privacy",
   "/cookies",
   "/support",
-  // The admin area manages users and content by role, not by the admin's own
-  // jurisdiction (DIAAT-328 will scope it).
+  // The admin area manages users and jurisdictions by role, so it opens even for
+  // someone with no jurisdiction. Its legal wording tab is the exception
+  // (DIAAT-342): it edits the tab's jurisdiction, so it waits for it itself.
   "/admin",
 ];
 
@@ -138,17 +139,17 @@ export function JurisdictionProvider({
     reloadInJurisdiction(chosen.current.code);
   }, []);
 
-  const value = useMemo(
-    () =>
-      state.kind === "loaded"
-        ? jurisdictionContextValue(
-            state.data.current,
-            state.data.jurisdictions,
-            switchTo
-          )
-        : NEUTRAL,
-    [state, switchTo]
-  );
+  const value = useMemo(() => {
+    if (state.kind === "loaded") {
+      return jurisdictionContextValue(
+        state.data.current,
+        state.data.jurisdictions,
+        switchTo
+      );
+    }
+    // Failed: settled, with no jurisdiction. Loading: not yet.
+    return state.kind === "failed" ? jurisdictionContextValue(null) : NEUTRAL;
+  }, [state, switchTo]);
 
   let content: React.ReactNode;
   if (!needsJurisdiction(pathname)) {

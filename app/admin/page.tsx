@@ -4,11 +4,13 @@ import {
   BookOpen,
   Building2,
   Gavel,
+  Info,
   Loader2,
   Plus,
   Save,
   Scale,
   Shield,
+  ShieldAlert,
   Trash2,
   Users,
   X,
@@ -50,6 +52,9 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
+import { holdJurisdictionSwitch } from "@/lib/jurisdiction-switch";
+import { useLegalWording } from "@/hooks/use-legal-wording";
 import type {
   AnonymityStatus,
   DocumentContent,
@@ -61,13 +66,16 @@ import {
   createLegalFramework,
   deleteHearingType,
   deleteLegalFramework,
-  fetchDocumentContent,
+  describeLegalWordingError,
+  isLegalWordingRefusal,
   updateAnonymityStatus,
   updateHearingType,
   updateLegalFramework,
 } from "@/lib/admin-api";
+import { hasLegalWording } from "@/lib/editor-contracts";
 import { type AdminRole, getAdminRole } from "@/lib/admin-access";
 import type { AdminUser } from "@/lib/admin-users-api";
+import { useJurisdiction } from "@/providers/jurisdiction";
 import {
   VALID_ROLES,
   deleteAdminUser,
@@ -96,61 +104,12 @@ function getDefaultSelection(content: DocumentContent): Selection | null {
 }
 
 export default function AdminPage() {
-  const [content, setContent] = useState<DocumentContent | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [selection, setSelection] = useState<Selection | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<Selection | null>(null);
+  const { current, resolved } = useJurisdiction();
   const [adminRole, setAdminRole] = useState<AdminRole | null>(null);
-
-  const load = useCallback(async (silent = false) => {
-    try {
-      if (!silent) setLoading(true);
-      setError(null);
-      const data = await fetchDocumentContent();
-      setContent(data);
-      setSelection(
-        (currentSelection) => currentSelection ?? getDefaultSelection(data)
-      );
-    } catch (err: unknown) {
-      const message =
-        err instanceof Error ? err.message : "Failed to load content";
-      setError(message);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   useEffect(() => {
     getAdminRole().then(setAdminRole).catch(() => {});
   }, []);
-
-  if (loading) {
-    return (
-      <div className="flex min-h-[60vh] items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
-
-  if (error || !content) {
-    return (
-      <div className="text-center text-destructive py-12">
-        <p>{error ?? "Failed to load content"}</p>
-        <Button variant="outline" className="mt-4" onClick={() => load()}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-
-  const deleteName = deleteTarget
-    ? resolveItemTitle(content, deleteTarget)
-    : "";
 
   return (
     <div className="fixed inset-0 top-14 flex flex-col bg-background">
@@ -185,48 +144,17 @@ export default function AdminPage() {
         </div>
 
         <TabsContent value="document-content" className="flex-1 min-h-0 overflow-hidden mt-0 data-[state=inactive]:hidden">
-          <div className="flex h-full w-full justify-center overflow-hidden">
-            <div className="h-full w-full max-w-[1280px] min-w-0">
-              <SidebarProvider
-                className="h-full min-h-0"
-                style={
-                  {
-                    "--sidebar-width": "360px",
-                  } as React.CSSProperties
-                }
-              >
-                <div className="relative">
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-y-0 right-full w-[100vw] bg-sidebar"
-                  />
-                  <AppSidebar
-                    documentContent={content}
-                    selection={selection}
-                    onItemSelect={setSelection}
-                  />
-                </div>
-                <SidebarInset className="relative overflow-y-auto bg-background">
-                  <div
-                    aria-hidden="true"
-                    className="absolute inset-y-0 left-full w-[100vw] bg-background"
-                  />
-                  {selection ? (
-                    <ContentPanel
-                      key={`${selection.category}-${selection.id}-${selection.isNew}`}
-                      content={content}
-                      selection={selection}
-                      onRefresh={() => load(true)}
-                      onSelect={setSelection}
-                      onDelete={setDeleteTarget}
-                    />
-                  ) : (
-                    <EmptyState />
-                  )}
-                </SidebarInset>
-              </SidebarProvider>
-            </div>
-          </div>
+          {/* DIAAT-342: the legal wording of the jurisdiction this tab works in.
+              Keyed by it, so nothing of another jurisdiction's carries over. */}
+          {resolved ? (
+            <LegalWordingTab
+              key={current?.code ?? "none"}
+              code={current?.code ?? null}
+              name={current?.name ?? null}
+            />
+          ) : (
+            <LoadingState />
+          )}
         </TabsContent>
 
         <TabsContent value="users" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
@@ -238,17 +166,149 @@ export default function AdminPage() {
           {adminRole === "SystemAdministrator" && <JurisdictionsPanel />}
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Legal wording tab (one jurisdiction's: the one this tab works in)
+// ---------------------------------------------------------------------------
+
+function LoadingState() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+    </div>
+  );
+}
+
+function LegalWordingTab({
+  code,
+  name,
+}: {
+  code: string | null;
+  name: string | null;
+}) {
+  const { state, reload } = useLegalWording(code);
+  const [selection, setSelection] = useState<Selection | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<Selection | null>(null);
+  const content = state.status === "loaded" ? state.content : null;
+  // What the API calls it, else what this tab was told.
+  const label = content?.jurisdiction?.name ?? name ?? code ?? undefined;
+
+  // Only on new content: a selection cleared by a delete waits for the refreshed content.
+  useEffect(() => {
+    if (content)
+      setSelection((current) => current ?? getDefaultSelection(content));
+  }, [content]);
+
+  if (!code) {
+    return (
+      <BlockedState message="You are not working in a jurisdiction yet. Choose one from the home page (or ask for access if you have none) before editing its legal wording." />
+    );
+  }
+
+  if (state.status === "loading") return <LoadingState />;
+
+  if (state.status === "error") {
+    return (
+      <BlockedState
+        message={describeLegalWordingError(state.error, label)}
+        // Trying again cannot change who you are or where you work.
+        onRetry={
+          isLegalWordingRefusal(state.error) ? undefined : () => reload()
+        }
+      />
+    );
+  }
+
+  const { content: loaded } = state;
+  const deleteName = deleteTarget
+    ? resolveItemTitle(loaded, deleteTarget)
+    : "";
+  const deletesLastFramework =
+    deleteTarget?.category === "legal-frameworks" &&
+    loaded.legal_frameworks.length === 1;
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="shrink-0 border-b bg-muted/40 px-4 py-2 text-sm">
+        <p>
+          Editing the legal wording of <strong>{label}</strong>
+          {loaded.jurisdiction && <> ({loaded.jurisdiction.code})</>}. Changes
+          apply to this jurisdiction only.
+        </p>
+        {!hasLegalWording(loaded) && (
+          <p className="mt-1 flex items-start gap-1.5 text-muted-foreground">
+            <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+            <span>
+              {label} has no legal frameworks yet. Judges are not asked for
+              legal issues, and their decisions leave out the Issues and Legal
+              Framework sections. Add a legal framework to turn them on.
+            </span>
+          </p>
+        )}
+      </div>
+      <div className="flex min-h-0 w-full flex-1 justify-center overflow-hidden">
+        <div className="h-full w-full max-w-[1280px] min-w-0">
+          <SidebarProvider
+            className="h-full min-h-0"
+            style={
+              {
+                "--sidebar-width": "360px",
+              } as React.CSSProperties
+            }
+          >
+            <div className="relative">
+              <div
+                aria-hidden="true"
+                className="absolute inset-y-0 right-full w-[100vw] bg-sidebar"
+              />
+              <AppSidebar
+                documentContent={loaded}
+                selection={selection}
+                onItemSelect={setSelection}
+              />
+            </div>
+            <SidebarInset className="relative overflow-y-auto bg-background">
+              <div
+                aria-hidden="true"
+                className="absolute inset-y-0 left-full w-[100vw] bg-background"
+              />
+              {selection ? (
+                <ContentPanel
+                  key={`${selection.category}-${selection.id}-${selection.isNew}`}
+                  content={loaded}
+                  selection={selection}
+                  onRefresh={() => reload(true)}
+                  onSelect={setSelection}
+                  onDelete={setDeleteTarget}
+                />
+              ) : (
+                <EmptyState />
+              )}
+            </SidebarInset>
+          </SidebarProvider>
+        </div>
+      </div>
 
       <DeleteConfirmDialog
         open={!!deleteTarget}
         name={deleteName}
+        warning={
+          deletesLastFramework
+            ? `This is the last legal framework of ${label}. Without one, judges are no longer asked for legal issues and their decisions leave out the Issues and Legal Framework sections.`
+            : undefined
+        }
         onOpenChange={(open) => !open && setDeleteTarget(null)}
         onConfirm={async () => {
           if (!deleteTarget) return;
           if (deleteTarget.category === "hearing-types") {
-            await deleteHearingType(deleteTarget.id);
+            await holdJurisdictionSwitch(deleteHearingType(deleteTarget.id));
           } else if (deleteTarget.category === "legal-frameworks") {
-            await deleteLegalFramework(deleteTarget.id);
+            await holdJurisdictionSwitch(
+              deleteLegalFramework(deleteTarget.id)
+            );
           }
           toast.success(`Deleted "${deleteName}"`);
           if (
@@ -258,9 +318,38 @@ export default function AdminPage() {
             setSelection(null);
           }
           setDeleteTarget(null);
-          await load(true);
+          await reload(true);
         }}
       />
+    </div>
+  );
+}
+
+/** Why there is no legal wording to edit (or why it did not load), in words. */
+function BlockedState({
+  message,
+  onRetry,
+}: {
+  message: string;
+  onRetry?: () => void;
+}) {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center p-6">
+      <div
+        role="alert"
+        className="mx-auto max-w-md rounded-lg border bg-card p-8 text-center shadow-sm"
+      >
+        <ShieldAlert className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
+        <h2 className="mb-2 text-lg font-semibold">
+          Legal wording is not available
+        </h2>
+        <p className="text-sm text-muted-foreground">{message}</p>
+        {onRetry && (
+          <Button variant="outline" className="mt-4" onClick={onRetry}>
+            Retry
+          </Button>
+        )}
+      </div>
     </div>
   );
 }
@@ -509,6 +598,21 @@ function UsersPanel() {
   );
 }
 
+/** The same form values: what the editors compare to know what is unsaved. */
+function sameForm(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// The saved version replaces the form only if nothing was typed while the save was under
+// way; later edits stay, and show as unsaved.
+function keepLaterEdits<T>(
+  setForm: (update: (prev: T) => T) => void,
+  submitted: T,
+  saved: T,
+): void {
+  setForm((prev) => (sameForm(prev, submitted) ? saved : prev));
+}
+
 function resolveItemTitle(content: DocumentContent, sel: Selection): string {
   if (sel.category === "hearing-types") {
     return content.hearing_types.find((h) => h.id === sel.id)?.title ?? sel.id;
@@ -623,10 +727,14 @@ function HearingTypeEditor({
   onSaved: (saved: HearingType) => Promise<void>;
   onDelete?: () => void;
 }) {
-  const [form, setForm] = useState<HearingType>(
-    item ?? { id: "", title: "", hearing_title: "", hearing_description: "" }
-  );
+  const blank = { id: "", title: "", hearing_title: "", hearing_description: "" };
+  const [form, setForm] = useState<HearingType>(item ?? blank);
   const [saving, setSaving] = useState(false);
+  // DIAAT-332: a switch reloads the tab, losing edits not saved, or a save under way.
+  useJurisdictionSwitchGuard({
+    busy: saving,
+    unsaved: !sameForm(form, item ?? blank),
+  });
 
   const set = (field: keyof HearingType, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -637,17 +745,22 @@ function HearingTypeEditor({
       return;
     }
     setSaving(true);
+    const submitted = form;
     try {
       if (isNew) {
-        await createHearingType(form);
+        await holdJurisdictionSwitch(createHearingType(form));
         toast.success(`Created "${form.title}"`);
       } else {
-        await updateHearingType(form.id, form);
+        // The API's (trimmed) version is what is saved, so nothing shows as unsaved.
+        const saved = await holdJurisdictionSwitch(
+          updateHearingType(form.id, form)
+        );
+        keepLaterEdits(setForm, submitted, saved);
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      toast.error(describeLegalWordingError(err, undefined, "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -715,11 +828,14 @@ function LegalFrameworkEditor({
   onSaved: (saved: LegalFramework) => Promise<void>;
   onDelete?: () => void;
 }) {
-  const [form, setForm] = useState<LegalFramework>(
-    item ?? { id: "", title: "", rank: 1, content: "", issues: [] }
-  );
+  const blank = { id: "", title: "", rank: 1, content: "", issues: [] };
+  const [form, setForm] = useState<LegalFramework>(item ?? blank);
   const [saving, setSaving] = useState(false);
   const [newIssue, setNewIssue] = useState("");
+  useJurisdictionSwitchGuard({
+    busy: saving,
+    unsaved: !sameForm(form, item ?? blank) || newIssue.trim() !== "",
+  });
 
   const set = <K extends keyof LegalFramework>(
     field: K,
@@ -752,17 +868,21 @@ function LegalFrameworkEditor({
       return;
     }
     setSaving(true);
+    const submitted = form;
     try {
       if (isNew) {
-        await createLegalFramework(form);
+        await holdJurisdictionSwitch(createLegalFramework(form));
         toast.success(`Created "${form.title}"`);
       } else {
-        await updateLegalFramework(form.id, form);
+        const saved = await holdJurisdictionSwitch(
+          updateLegalFramework(form.id, form)
+        );
+        keepLaterEdits(setForm, submitted, saved);
         toast.success(`Saved "${form.title}"`);
       }
       await onSaved(form);
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      toast.error(describeLegalWordingError(err, undefined, "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -879,18 +999,23 @@ function AnonymityEditor({
 }) {
   const [form, setForm] = useState<AnonymityStatus>(item);
   const [saving, setSaving] = useState(false);
+  useJurisdictionSwitchGuard({ busy: saving, unsaved: !sameForm(form, item) });
 
   const set = (field: keyof AnonymityStatus, value: string) =>
     setForm((prev) => ({ ...prev, [field]: value }));
 
   async function handleSave() {
     setSaving(true);
+    const submitted = form;
     try {
-      await updateAnonymityStatus(form.id, form);
+      const saved = await holdJurisdictionSwitch(
+        updateAnonymityStatus(form.id, form)
+      );
+      keepLaterEdits(setForm, submitted, saved);
       toast.success(`Saved "${form.title}"`);
       await onSaved();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Save failed");
+      toast.error(describeLegalWordingError(err, undefined, "Save failed"));
     } finally {
       setSaving(false);
     }
@@ -1019,22 +1144,26 @@ function FieldRow({
 function DeleteConfirmDialog({
   open,
   name,
+  warning,
   onOpenChange,
   onConfirm,
 }: {
   open: boolean;
   name: string;
+  /** What else deleting it does (DIAAT-342), beyond removing the entry. */
+  warning?: string;
   onOpenChange: (open: boolean) => void;
   onConfirm: () => Promise<void>;
 }) {
   const [deleting, setDeleting] = useState(false);
+  useJurisdictionSwitchGuard({ busy: deleting, unsaved: false });
 
   async function handleConfirm() {
     setDeleting(true);
     try {
       await onConfirm();
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Delete failed");
+      toast.error(describeLegalWordingError(err, undefined, "Delete failed"));
     } finally {
       setDeleting(false);
     }
@@ -1048,6 +1177,9 @@ function DeleteConfirmDialog({
           <AlertDialogDescription>
             This action cannot be undone. The entry will be permanently removed
             from the document content configuration.
+            {warning && (
+              <strong className="mt-2 block text-foreground">{warning}</strong>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>

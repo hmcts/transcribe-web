@@ -23,8 +23,9 @@ import { getJudgeNameFromEmail, getJudgeTitleFromEmail } from "@/lib/utils";
 import { useUserSettings } from "@/providers/user-settings";
 import {
   type DictationFormValues,
-  dictationFormSchema,
+  asksForLegalIssues,
   getDefaultFormValues,
+  getDictationFormSchema,
   getFormFields,
   sanitizeFormValues,
   shouldShowField,
@@ -37,6 +38,9 @@ type DictationFormProps = {
   externalErrors?: FormErrors;
   initialValues?: DictationFormValues;
   documentContent?: DocumentContent;
+  /** Ask for legal issues from the IAC's shipped list until `documentContent`
+   * loads (DIAAT-342). Only the IAC has such a list. */
+  legalIssuesFallback?: boolean;
 };
 
 const APPEAL_DATE_PICKER_PROPS = {
@@ -102,6 +106,7 @@ function DictationForm({
   externalErrors,
   initialValues,
   documentContent,
+  legalIssuesFallback = false,
 }: DictationFormProps) {
   const { user } = useUserSettings();
   const [formState, setFormState] = useState<DictationFormValues>(
@@ -117,8 +122,12 @@ function DictationForm({
   const judgeTitle = user?.email ? getJudgeTitleFromEmail(user.email) : "";
   const judgeName = user?.email ? getJudgeNameFromEmail(user.email) : "";
   const formFields = useMemo(
-    () => getFormFields(documentContent),
-    [documentContent]
+    () => getFormFields(documentContent, legalIssuesFallback),
+    [documentContent, legalIssuesFallback]
+  );
+  const requireLegalIssues = asksForLegalIssues(
+    documentContent,
+    legalIssuesFallback
   );
 
   // Sync initialValues prop to internal state when it changes (e.g., on remount)
@@ -251,7 +260,7 @@ function DictationForm({
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    const result = dictationFormSchema.safeParse(formState);
+    const result = getDictationFormSchema(requireLegalIssues).safeParse(formState);
 
     if (!result.success) {
       const fieldErrors: FormErrors = {};
