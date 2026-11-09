@@ -1,5 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { BackendError, mintAppToken, withToken } from "@/lib/auth/app-token";
+import {
+  BackendError,
+  backendErrorCode,
+  mintAppToken,
+  withToken,
+} from "@/lib/auth/app-token";
 import { getAuthConfig } from "@/lib/auth/config";
 import { completeLogin } from "@/lib/auth/oidc";
 import {
@@ -91,6 +96,13 @@ export async function GET(request: NextRequest) {
     session = withToken(session, await mintAppToken({ idToken: session.idToken }));
   } catch (err) {
     if (err instanceof BackendError && (err.status === 401 || err.status === 403)) {
+      if (backendErrorCode(err) === "user_deactivated") {
+        return failed(
+          403,
+          `the API refused to start a session: user ${session.user.oid} is deactivated`,
+          "Your BenchNotes account has been deactivated. Ask your BenchNotes administrator to reactivate it."
+        );
+      }
       return failed(
         403,
         `the API refused to start a session for user ${session.user.oid}: ${err.message}`,

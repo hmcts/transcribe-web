@@ -145,4 +145,15 @@ describe("JurisdictionWordingEditor", () => {
     ).toBeTruthy();
     expect(request).not.toHaveBeenCalled();
   });
+
+  it("says there is no one jurisdiction to edit for a global role (the API answers 403 no_jurisdiction), and does not ask", () => {
+    mockPersona = ME.jurisdictionSuperAdministrator;
+    render(<JurisdictionWordingEditor />);
+
+    expect(screen.getByText(/working across all jurisdictions/)).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Admin, Jurisdictions" }).getAttribute("href")).toBe(
+      "/admin?tab=jurisdictions"
+    );
+    expect(request).not.toHaveBeenCalled();
+  });
 });

@@ -263,3 +263,64 @@ describe("the mock API: deactivation, history, requests, flags, recordings", () 
     expect((await call(admin.token, "GET", `/api/v1/jobs/${id}/history`)).status).toBe(403);
   });
 });
+
+// Phase 7: each of these was checked against the real API (transcribe-api at 438a03a) and the mock
+// was changed to answer the same.
+describe("the mock API: refusals as the real API gives them", () => {
+  const code = (r: { body: { detail?: { code?: string } } }) => r.body.detail?.code;
+
+  it("lists the requestable roles with each public jurisdiction", async () => {
+    const { token } = await session("no-role");
+    const list = (await call(token, "GET", "/api/jurisdictions/public")).body;
+    expect(list[0]).toEqual({ code: expect.any(String), name: expect.any(String), roles: ["Judge", "LegalTextManager"] });
+  });
+
+  it("refuses an access request with duplicate_request, jurisdiction_not_found or roles_required", async () => {
+    const { token } = await session("no-role");
+    const ask = (jurisdiction: string, roles: string[]) =>
+      call(token, "POST", "/api/access-requests", { jurisdiction, roles });
+    expect((await ask("ET", ["LegalTextManager"])).status).toBe(201);
+    const again = await ask("ET", ["LegalTextManager"]);
+    expect([again.status, code(again)]).toEqual([409, "duplicate_request"]);
+    const unknown = await ask("ZZ", ["Judge"]);
+    expect([unknown.status, code(unknown)]).toEqual([404, "jurisdiction_not_found"]);
+    const none = await ask("ET", []);
+    expect([none.status, code(none)]).toEqual([400, "roles_required"]);
+    const bad = await ask("ET", ["JurisdictionAdministrator"]);
+    expect([bad.status, code(bad)]).toEqual([400, "role_not_requestable"]);
+  });
+
+  it("answers no_jurisdiction to a global role asking for a jurisdiction's material, context_required to no context", async () => {
+    const boss = await session("jsuper");
+    expect(code(await call(boss.token, "GET", "/api/jurisdictions/current"))).toBe("no_jurisdiction");
+    expect(code(await call(boss.token, "GET", "/api/jurisdictions/wording"))).toBe("no_jurisdiction");
+    const sys = await session("sysadmin");
+    expect(code(await call(sys.token, "GET", "/api/jurisdictions/current"))).toBe("context_required");
+    // What a role has, asked for with no context at all: context_required, not permission_denied.
+    expect(code(await call(sys.token, "GET", "/api/admin/role-history"))).toBe("context_required");
+    const judge = await session("judge-et");
+    expect(code(await call(judge.token, "GET", "/api/admin/role-history"))).toBe("permission_denied");
+  });
+
+  it("tells who the admin is, and lists roles only to those who may assign", async () => {
+    const admin = await session("jadmin-iac");
+    expect((await call(admin.token, "GET", "/api/admin/me")).body).toEqual({
+      email: "jadmin-iac@localhost.test",
+      role: "JurisdictionAdministrator",
+      user_id: expect.any(String),
+    });
+    const judge = await session("judge-et");
+    expect(code(await call(judge.token, "GET", "/api/admin/roles"))).toBe("permission_denied");
+  });
+
+  it("refuses dictation routes with dictation_disabled while the flag is off", async () => {
+    const judge = await session("judge-et");
+    const sys = await session("sysadmin");
+    expect((await call(judge.token, "GET", "/api/transcriptions-metadata")).status).toBe(200);
+    await call(sys.token, "PUT", "/api/admin/feature-flags/dictation_enabled", { value: false });
+    const refused = await call(judge.token, "GET", "/api/transcriptions-metadata");
+    expect([refused.status, code(refused)]).toEqual([403, "dictation_disabled"]);
+    await call(sys.token, "PUT", "/api/admin/feature-flags/dictation_enabled", { value: true });
+    expect((await call(judge.token, "GET", "/api/transcriptions-metadata")).status).toBe(200);
+  });
+});

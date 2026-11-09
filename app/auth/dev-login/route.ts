@@ -1,5 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { BackendError, mintAppToken, withToken } from "@/lib/auth/app-token";
+import {
+  BackendError,
+  backendErrorCode,
+  mintAppToken,
+  withToken,
+} from "@/lib/auth/app-token";
 import { getAuthConfig } from "@/lib/auth/config";
 import { isDevLoginEnabled } from "@/lib/auth/dev-mode";
 import {
@@ -53,6 +58,12 @@ export async function GET(request: NextRequest) {
     minted = await mintAppToken({ devPersona: persona });
   } catch (error) {
     if (error instanceof BackendError && error.status > 0 && error.status < 500) {
+      if (backendErrorCode(error) === "user_deactivated") {
+        return text(
+          403,
+          `The user for persona "${persona}" has been deactivated. Reactivate it in Admin, Users (as a user who may), or re-seed a fresh database.`
+        );
+      }
       return text(
         401,
         `The API did not accept the persona "${persona}" (${error.status}). Is it seeded, and is the API running with ENVIRONMENT=local?`

@@ -370,6 +370,9 @@ function UserRow({
   onSetActive: (active: boolean) => void;
 }) {
   const deactivateKey = `deactivate:${user.id}`;
+  const canDeactivate = user.assignments.every((a) =>
+    assignable.includes(a.role)
+  );
   const confirmingAssignment = user.assignments.find(
     (a) => `assignment:${a.id}` === confirming
   );
@@ -475,16 +478,21 @@ function UserRow({
             </Button>
           </span>
         ) : user.is_active ? (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={busy}
-            aria-label={`Deactivate ${user.email}`}
-            onClick={() => onConfirming(deactivateKey)}
-          >
-            Deactivate
-          </Button>
+          // The API refuses (403 `assignment_not_allowed`) to deactivate anyone
+          // who holds a role the caller may not assign, so the button is only
+          // offered where every role shown is one of `GET /api/admin/roles`.
+          canDeactivate && (
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={busy}
+              aria-label={`Deactivate ${user.email}`}
+              onClick={() => onConfirming(deactivateKey)}
+            >
+              Deactivate
+            </Button>
+          )
         ) : (
           <Button
             type="button"

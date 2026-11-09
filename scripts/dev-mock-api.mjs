@@ -24,6 +24,13 @@
  *   GET    /api/admin/jurisdictions     PUT /api/admin/jurisdictions/{code}
  *   GET    /api/admin/feature-flags     PUT /api/admin/feature-flags/{name}
  *   GET    /api/v1/jobs, /api/v1/jobs/{id}, /api/v1/jobs/{id}/history   (two seeded recordings)
+ *   GET    /api/admin/me, /api/templates, /api/transcriptions-metadata (empty; 403 dictation_disabled
+ *          with the flag off), /api/jurisdictions/wording
+ *
+ * Checked against the real API (phase 7): response shapes, status codes and refusal codes of the
+ * endpoints above match it, except that this mock keeps its state in memory, signs nothing, and
+ * does not implement the rest of the API (dictation, uploads, document content...: 404
+ * `mock_not_implemented`).
  *
  * The assignment rules of section 1 are enforced as the real API will: a
  * jurisdiction administrator assigns Judge and LegalTextManager in the active
@@ -433,21 +440,23 @@ const server = createServer(async (req, res) => {
   }
 
   if (method === "GET" && path === "/api/jurisdictions/public") {
-    return send(res, 200, jurisdictions.filter((j) => j.enabled).map((j) => ({ code: j.code, name: j.name })));
+    // `roles`: the requestable roles, as the real API sends them (contract amendment A1).
+    return send(res, 200, jurisdictions.filter((j) => j.enabled).map((j) => ({ code: j.code, name: j.name, roles: [...REQUESTABLE] })));
   }
 
   if (method === "POST" && path === "/api/access-requests") {
     const body = await readBody(req);
     const jurisdiction = jurisdictions.find((j) => j.code === body.jurisdiction);
     const roles = Array.isArray(body.roles) ? body.roles : [];
-    if (!jurisdiction) return refuse(res, 400, "jurisdiction_not_found", "No such jurisdiction");
-    if (roles.length === 0 || roles.some((r) => !REQUESTABLE.includes(r))) {
+    if (!jurisdiction) return refuse(res, 404, "jurisdiction_not_found", "No such jurisdiction");
+    if (roles.length === 0) return refuse(res, 400, "roles_required", "Ask for at least one role");
+    if (roles.some((r) => !REQUESTABLE.includes(r))) {
       return refuse(res, 400, "role_not_requestable", "Only Judge and LegalTextManager can be requested");
     }
     const duplicate = user.requests.find(
       (r) => r.status === "pending" && r.jurisdiction.code === jurisdiction.code && [...r.roles].sort().join() === [...roles].sort().join()
     );
-    if (duplicate) return refuse(res, 409, "request_exists", "You already asked for this");
+    if (duplicate) return refuse(res, 409, "duplicate_request", "You have already asked for that, and it is waiting to be decided.");
     const request = {
       id: randomUUID(),
       jurisdiction: refOf(jurisdiction.code),
@@ -480,20 +489,32 @@ const server = createServer(async (req, res) => {
   if (!claims.ctx && !claims.sysadmin) {
     return refuse(res, 403, "context_required", "Choose where and as what you are working first");
   }
+  // As the real API: a system administrator with no context who reaches for what a
+  // role has is told to choose a context; acting as a role, `permission_denied`.
+  const denied = (what) =>
+    claims.ctx
+      ? refuse(res, 403, "permission_denied", `Needs ${what}`)
+      : refuse(res, 403, "context_required", "Choose where and as what you are working first");
   const need = (permission) => {
     if (permissions.includes(permission)) return true;
-    refuse(res, 403, "permission_denied", `Needs ${permission}`);
+    denied(permission);
     return false;
   };
   const needAny = (...list) => {
     if (list.some((p) => permissions.includes(p))) return true;
-    refuse(res, 403, "permission_denied", `Needs ${list.join(" or ")}`);
+    denied(list.join(" or "));
     return false;
   };
 
   if (method === "GET" && path === "/api/jurisdictions/current") {
-    if (!claims.ctx?.jurisdiction) return refuse(res, 403, "context_required", "No jurisdiction in this context");
+    // As the real API: no context is `context_required`, a global role `no_jurisdiction`.
+    if (!claims.ctx) return refuse(res, 403, "context_required", "Choose where and as what you are working first");
+    if (!claims.ctx.jurisdiction) return refuse(res, 403, "no_jurisdiction", "The role you are working as has no jurisdiction.");
     return send(res, 200, materialOf(claims.ctx.jurisdiction.code));
+  }
+  if (method === "GET" && path === "/api/templates") {
+    if (!need("document_content.read")) return;
+    return send(res, 200, { templates: [] });
   }
   if (method === "GET" && path === "/api/user/onboarding-status") {
     if (!need("app.access")) return;
@@ -512,6 +533,10 @@ const server = createServer(async (req, res) => {
   }
   if (method === "GET" && path === "/api/transcriptions-metadata") {
     if (!need("dictation.use")) return;
+    // As the real API with the dictation flag off (contract amendment A2).
+    if (!flags.find((f) => f.name === "dictation_enabled").value) {
+      return refuse(res, 403, "dictation_disabled", "Dictation is switched off.");
+    }
     return send(res, 200, []);
   }
 
@@ -557,8 +582,12 @@ const server = createServer(async (req, res) => {
     permissions.includes("jurisdiction_super_admin.assign") ||
     (claims.ctx?.jurisdiction?.code ?? null) === code;
 
-  if (method === "GET" && path === "/api/admin/roles") {
+  if (method === "GET" && path === "/api/admin/me") {
     if (!need("admin.access")) return;
+    return send(res, 200, { email: user.email, role: claims.ctx?.role ?? null, user_id: user.id });
+  }
+  if (method === "GET" && path === "/api/admin/roles") {
+    if (!needAny("users.manage", "jurisdiction_admin.assign", "jurisdiction_super_admin.assign")) return;
     return send(res, 200, { roles: assignable() });
   }
 
@@ -755,6 +784,7 @@ const server = createServer(async (req, res) => {
   }
   if (method === "GET" && path === "/api/jurisdictions/wording") {
     if (!need("jurisdiction.wording.edit")) return;
+    if (!claims.ctx?.jurisdiction) return refuse(res, 403, "no_jurisdiction", "The role you are working as has no jurisdiction.");
     return send(res, 200, { code: claims.ctx.jurisdiction.code, name: claims.ctx.jurisdiction.name, keys: { "home.intro": "Introduction under the welcome heading" }, wording: {}, version: "v1" });
   }
 

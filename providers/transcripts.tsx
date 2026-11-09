@@ -25,6 +25,7 @@ import {
 } from "../lib/database";
 import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
+import { useDictationEnabled } from "@/providers/runtime-flags";
 
 interface TranscriptsContextType {
   transcriptsMetadata: TranscriptionMetadata[];
@@ -100,9 +101,14 @@ function TranscriptsProviderContent({
   // (privacy, support...) render before, or without, one: nothing is fetched.
   // DIAAT-373: and only for a context that may dictate (`dictation.use`): any
   // other role has no dictations to load, and the API would refuse the call.
+  // And only while dictation is switched on (the runtime flag, DIAAT-392): with it
+  // off the API refuses these calls too (403 `dictation_disabled`).
   const { can } = useAccess();
+  const dictationEnabled = useDictationEnabled();
   const hasJurisdiction =
-    useJurisdiction().current !== null && can("dictation.use");
+    useJurisdiction().current !== null &&
+    can("dictation.use") &&
+    dictationEnabled;
 
   // Load transcription when ID in URL changes
   useEffect(() => {
@@ -146,9 +152,16 @@ function TranscriptsProviderContent({
         setIsLoading(false);
         return;
       }
-      const returnedMetadata = await getAllTranscriptionMetadata();
-      setTranscriptsMetadata(returnedMetadata);
-      setIsLoading(false);
+      try {
+        const returnedMetadata = await getAllTranscriptionMetadata();
+        setTranscriptsMetadata(returnedMetadata);
+      } catch (error) {
+        // A refusal (dictation switched off meanwhile, a role removed) is
+        // handled where it is seen (lib/access/refusals.ts); the list is empty.
+        console.error("Failed to load metadata:", error);
+      } finally {
+        setIsLoading(false);
+      }
     };
     loadMetadata();
   }, [hasJurisdiction]);

@@ -25,6 +25,12 @@ vi.mock("@/providers/access", async () => {
   return helpers.mockAccessModule(() => mockPersona ?? helpers.ME.judge);
 });
 
+// DIAAT-392: the runtime dictation flag; on unless a test switches it off.
+let dictationEnabled = true;
+vi.mock("@/providers/runtime-flags", () => ({
+  useDictationEnabled: () => dictationEnabled,
+}));
+
 vi.mock("@/lib/database", () => ({
   getAllTranscriptionMetadata: vi.fn(),
   getTranscriptionById: vi.fn(),
@@ -85,6 +91,28 @@ describe("TranscriptsProvider — which roles load dictations (DIAAT-384)", () =
     await new Promise((resolve) => setTimeout(resolve, 20));
 
     expect(getAllTranscriptionMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe("TranscriptsProvider — dictation switched off (DIAAT-392)", () => {
+  it("loads nothing while the dictation flag is off, whose calls the API refuses with 403 dictation_disabled", async () => {
+    dictationEnabled = false;
+    vi.mocked(getAllTranscriptionMetadata).mockClear();
+
+    const { result } = renderHook(() => useTranscripts(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(getAllTranscriptionMetadata).not.toHaveBeenCalled();
+    dictationEnabled = true;
+  });
+
+  it("does not leave the list loading, or reject, when a load is refused anyway", async () => {
+    vi.mocked(getAllTranscriptionMetadata).mockRejectedValue(new Error("Dictation is switched off."));
+    const { result } = renderHook(() => useTranscripts(), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.transcriptsMetadata).toEqual([]);
+    vi.mocked(getAllTranscriptionMetadata).mockReset();
   });
 });
 

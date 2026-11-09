@@ -137,3 +137,30 @@ describe("the dictation flag in the UI", () => {
     expect(screen.getByText("dictation off")).toBeTruthy();
   });
 });
+
+describe("a dictation route refused with 403 dictation_disabled", () => {
+  const original = window.fetch;
+  afterEach(() => {
+    window.fetch = original;
+  });
+
+  it("makes the tab read the flag again, once, so dictation is hidden at once", async () => {
+    vi.stubEnv(ENV, "true");
+    request.mockResolvedValueOnce({ data: { dictation_enabled: true } });
+    window.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ detail: { code: "dictation_disabled", message: "Dictation is switched off." } }), {
+          status: 403,
+        })
+    ) as typeof fetch;
+    mount();
+    expect(await screen.findByText("dictation on")).toBeTruthy();
+
+    request.mockResolvedValue({ data: { dictation_enabled: false } });
+    await fetch("/api/transcriptions-metadata");
+    await fetch("/api/transcriptions-metadata");
+
+    expect(await screen.findByText("dictation off")).toBeTruthy();
+    expect(request).toHaveBeenCalledTimes(2); // the first read, and one more however many calls were refused
+  });
+});

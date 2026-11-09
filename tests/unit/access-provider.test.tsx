@@ -447,3 +447,63 @@ describe("a tab whose context was changed elsewhere (409 context_changed)", () =
     );
   });
 });
+
+describe("refusals about who the user is (the API's 403 codes, DIAAT-373)", () => {
+  const refuse = (code: string) =>
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ detail: { code, message: "x" } }), { status: 403 }))
+    );
+
+  it("shows that the account was deactivated, with a way to sign out, when the API says so", async () => {
+    api.fetchMe.mockResolvedValue(ME.judge);
+    refuse("user_deactivated"); // before the provider, which watches fetch as it finds it
+    renderProvider();
+    await screen.findByText("status: ready");
+
+    await act(async () => {
+      await fetch("/api/anything");
+    });
+
+    expect(await screen.findByRole("heading", { name: "Your account has been deactivated" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Sign out" }).getAttribute("href")).toBe("/auth/logout");
+    expect(screen.queryByText("status: ready")).toBeNull();
+  });
+
+  it("shows the deactivated screen, not 'could not load', when asking who this is is refused", async () => {
+    api.fetchMe.mockRejectedValue(new AccessApiError("This account has been deactivated.", 403, "user_deactivated"));
+    renderProvider();
+
+    expect(await screen.findByRole("heading", { name: "Your account has been deactivated" })).toBeTruthy();
+    expect(screen.queryByText("Bench Notes could not load")).toBeNull();
+  });
+
+  it("asks who the user is again when the session has no context but this tab thinks it has one", async () => {
+    api.fetchMe.mockResolvedValueOnce(ME.judge);
+    refuse("context_required");
+    renderProvider();
+    await screen.findByText("status: ready");
+
+    api.fetchMe.mockResolvedValue(ME.choose);
+    await act(async () => {
+      await fetch("/api/anything");
+    });
+
+    expect(await screen.findByRole("heading", { name: /Choose where and as what/ })).toBeTruthy();
+    expect(api.fetchMe).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not ask again when this tab already knows it has no context", async () => {
+    api.fetchMe.mockResolvedValue(ME.sysadminOnly);
+    refuse("context_required");
+    renderProvider();
+    await screen.findByText("status: ready");
+
+    await act(async () => {
+      await fetch("/api/anything");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(api.fetchMe).toHaveBeenCalledTimes(1);
+  });
+});

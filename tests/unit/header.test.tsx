@@ -145,9 +145,11 @@ describe("Header", () => {
         { admin: true, wording: true, dictation: false, recordings: false, help: true },
       ],
       [
+        // Holds the permission, but works in no one jurisdiction (the API answers
+        // 403 no_jurisdiction): it changes wording from Admin, Jurisdictions.
         "a jurisdiction super administrator",
         ME.jurisdictionSuperAdministrator,
-        { admin: true, wording: true, dictation: false, recordings: false, help: true },
+        { admin: true, wording: false, dictation: false, recordings: false, help: true },
       ],
       [
         "a system administrator with no jurisdiction",

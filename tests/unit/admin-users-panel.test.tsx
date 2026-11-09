@@ -439,7 +439,21 @@ describe("deactivating and reactivating", () => {
     expect(screen.getByText("(you)")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Deactivate someone@localhost.test/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Deactivate later@example.test/ })).toBeNull();
-    expect(screen.getByRole("button", { name: "Deactivate bob@example.test" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Deactivate anna@example.test" })).toBeTruthy();
+  });
+
+  it("offers it only for people whose every role the caller may assign (the API refuses the rest)", async () => {
+    // bob is a jurisdiction administrator: not in this caller's list, so 403 assignment_not_allowed.
+    serve({ roles: ["Judge", "LegalTextManager"] });
+    const { unmount } = render(<UsersPanel />);
+    await screen.findByText("bob@example.test");
+    expect(screen.queryByRole("button", { name: "Deactivate bob@example.test" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Deactivate anna@example.test" })).toBeTruthy();
+    unmount();
+
+    serve({ roles: ["Judge", "LegalTextManager", "JurisdictionAdministrator"] });
+    render(<UsersPanel />);
+    expect(await screen.findByRole("button", { name: "Deactivate bob@example.test" })).toBeTruthy();
   });
 });
 

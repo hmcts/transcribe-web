@@ -7,8 +7,10 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
+import { DICTATION_DISABLED, watchRefusals } from "@/lib/access/refusals";
 import { isDictationEnabled } from "@/lib/environment";
 import {
   fetchRuntimeFlags,
@@ -56,6 +58,22 @@ export function RuntimeFlagsProvider({
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [signedIn, reload]);
+
+  // The API refuses a dictation route with 403 `dictation_disabled` when an
+  // administrator switched dictation off after this page loaded: read the flag
+  // again, so the screens hide dictation instead of showing a failing one. Once
+  // per few seconds, however many calls were refused.
+  const lastReloadRef = useRef(0);
+  useEffect(() => {
+    if (!signedIn) return;
+    return watchRefusals((code) => {
+      if (code !== DICTATION_DISABLED) return;
+      const now = Date.now();
+      if (now - lastReloadRef.current < 3000) return;
+      lastReloadRef.current = now;
+      void reload();
+    });
   }, [signedIn, reload]);
 
   const value = useMemo<RuntimeFlagsValue>(

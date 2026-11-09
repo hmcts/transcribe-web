@@ -40,6 +40,17 @@ export class BackendError extends Error {
   }
 }
 
+/** The API's `detail.code` in a refusal, when it sent one (`user_deactivated`...). */
+export function backendErrorCode(error: unknown): string | undefined {
+  if (!(error instanceof BackendError)) return undefined;
+  const detail = (error.body as { detail?: unknown } | undefined)?.detail;
+  const code =
+    detail && typeof detail === "object"
+      ? (detail as { code?: unknown }).code
+      : undefined;
+  return typeof code === "string" ? code : undefined;
+}
+
 async function parseBody(response: Response): Promise<unknown> {
   const text = await response.text().catch(() => "");
   if (!text) return undefined;

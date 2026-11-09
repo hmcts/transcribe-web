@@ -14,6 +14,7 @@ import {
 import { ChooseContext } from "@/components/access/choose-context";
 import { ContextChangedBanner } from "@/components/access/context-changed-banner";
 import { ContextShell } from "@/components/access/context-shell";
+import { Deactivated } from "@/components/access/deactivated";
 import { DevLoginScreen } from "@/components/access/dev-login-screen";
 import { NoAccess } from "@/components/access/no-access";
 import {
@@ -23,8 +24,13 @@ import {
   postLeaveJurisdiction,
   postRefreshSession,
 } from "@/lib/access/api";
-import { watchContextChanged } from "@/lib/access/context-changed";
 import { accessValueFor } from "@/lib/access/permissions";
+import {
+  CONTEXT_CHANGED,
+  CONTEXT_REQUIRED,
+  USER_DEACTIVATED,
+  watchRefusals,
+} from "@/lib/access/refusals";
 import { landingAfterSwitch } from "@/lib/access/routes";
 import {
   type Assignment,
@@ -57,6 +63,7 @@ export type AccessStatus =
   | "loading"
   | "failed"
   | "unauthenticated"
+  | "deactivated"
   | "ready"
   | "choose"
   | "no_access";
@@ -120,6 +127,7 @@ type LoadState =
   | { kind: "loading" }
   | { kind: "failed" }
   | { kind: "unauthenticated" }
+  | { kind: "deactivated" }
   | { kind: "loaded"; me: MeResponse };
 
 export function AccessProvider({ children }: { children: React.ReactNode }) {
@@ -146,6 +154,11 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     } catch (error) {
       if (error instanceof AccessApiError && error.status === 401) {
         setState({ kind: "unauthenticated" });
+      } else if (
+        error instanceof AccessApiError &&
+        error.code === USER_DEACTIVATED
+      ) {
+        setState({ kind: "deactivated" });
       } else {
         setState({ kind: "failed" });
       }
@@ -157,17 +170,44 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     void load();
   }, [load]);
 
-  useEffect(() => watchContextChanged(() => setStale(true)), []);
-
   const refresh = useCallback(async () => {
     try {
       const me = await fetchMe();
       adopt(me);
       return me;
-    } catch {
+    } catch (error) {
+      if (error instanceof AccessApiError && error.code === USER_DEACTIVATED) {
+        setState({ kind: "deactivated" });
+      }
       return null;
     }
   }, [adopt]);
+
+  // Refusals that are about who the user is, from any call in the tab (the
+  // API's own codes: lib/access/refusals.ts).
+  const lastRefreshRef = useRef(0);
+  useEffect(
+    () =>
+      watchRefusals((code) => {
+        if (code === CONTEXT_CHANGED) {
+          // Another tab switched context: this tab's page state is stale.
+          setStale(true);
+        } else if (code === USER_DEACTIVATED) {
+          setState({ kind: "deactivated" });
+        } else if (code === CONTEXT_REQUIRED) {
+          // The session has no context but this tab thinks it has (a role was
+          // removed at a re-mint): ask who the user is now and show that
+          // screen (choose, or no access). Not more than once in a few
+          // seconds, and not when this tab already knows it has none.
+          const now = Date.now();
+          if (meRef.current?.active && now - lastRefreshRef.current > 3000) {
+            lastRefreshRef.current = now;
+            void refresh();
+          }
+        }
+      }),
+    [refresh]
+  );
 
   const checkAgain = useCallback(async () => {
     try {
@@ -268,6 +308,12 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     content = (
       <ContextShell>
         <Loading />
+      </ContextShell>
+    );
+  } else if (state.kind === "deactivated") {
+    content = (
+      <ContextShell>
+        <Deactivated />
       </ContextShell>
     );
   } else if (state.kind === "failed") {

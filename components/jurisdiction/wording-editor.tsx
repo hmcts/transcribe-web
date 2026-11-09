@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, Save } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
@@ -38,8 +39,11 @@ function sameWording(a: Record<string, string>, b: Record<string, string>): bool
 export function JurisdictionWordingEditor() {
   const { current } = useJurisdiction();
   // DIAAT-373: from the permissions the API returns, not from a role name.
-  const { can } = useAccess();
+  const { can, active } = useAccess();
   const isAdmin = can("jurisdiction.wording.edit");
+  // A global role (a super administrator) works in no jurisdiction, so there is
+  // none to edit here: the API refuses with 403 `no_jurisdiction`.
+  const inJurisdiction = Boolean(active?.jurisdiction);
   const [loaded, setLoaded] = useState<JurisdictionWording | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -61,8 +65,8 @@ export function JurisdictionWordingEditor() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) void load();
-  }, [isAdmin, load]);
+    if (isAdmin && inJurisdiction) void load();
+  }, [isAdmin, inJurisdiction, load]);
 
   async function save() {
     setSaving(true);
@@ -90,6 +94,15 @@ export function JurisdictionWordingEditor() {
         <p className="text-muted-foreground">
           Your role cannot change the wording of{" "}
           {current?.code ?? "this jurisdiction"}.
+        </p>
+      ) : !inJurisdiction ? (
+        <p className="text-muted-foreground">
+          You are working across all jurisdictions, so there is no one
+          jurisdiction here. Change a jurisdiction&apos;s wording from{" "}
+          <Link className="underline" href="/admin?tab=jurisdictions">
+            Admin, Jurisdictions
+          </Link>
+          , or switch to a role in one jurisdiction.
         </p>
       ) : error ? (
         <div className="space-y-4">

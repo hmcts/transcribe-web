@@ -177,16 +177,17 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       "You do not belong to Decision Tribunal, or it is not available to you.",
     ],
     [
-      "jurisdiction_admin_required",
+      "permission_denied",
       403,
-      "Only an admin for Decision Tribunal can change its legal wording.",
+      "Your role cannot change the legal wording of Decision Tribunal.",
     ],
-    ["no_jurisdiction", 403, "You have not been added to a jurisdiction"],
     [
-      "jurisdiction_choice_required",
-      409,
-      "Choose the jurisdiction you are working in",
+      "jurisdiction_not_in_scope",
+      403,
+      "Decision Tribunal is not the jurisdiction you are working in.",
     ],
+    ["no_jurisdiction", 403, "The role you are working as is not tied to one jurisdiction"],
+    ["context_required", 403, "Choose where and as what you are working"],
   ])("explains %s, without offering a retry", async (code, status, text) => {
     request.mockResolvedValue({ error: "raw message", status, code });
     render(<AdminPage />);
@@ -238,15 +239,15 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       await screen.findByRole("button", { name: "Face to face" })
     );
     request.mockResolvedValue({
-      error: "Only an admin for DT can change its legal wording.",
+      error: "Your role does not allow this.",
       status: 403,
-      code: "jurisdiction_admin_required",
+      code: "permission_denied",
     });
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Only an admin for this jurisdiction can change its legal wording."
+        "Your role cannot change the legal wording of this jurisdiction. Switch to a role that can, or ask a legal text manager."
       )
     );
   });

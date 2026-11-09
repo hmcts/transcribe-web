@@ -175,6 +175,17 @@ describe("GET /auth/dev-login", () => {
     expect(res.cookies.get("transcribe_session")).toBeUndefined();
   });
 
+  it("says the user is deactivated, not that the persona is unknown, when the API says so", async () => {
+    api.mockResolvedValue(json({ detail: { code: "user_deactivated", message: "This account has been deactivated." } }, 403));
+    const { GET } = await import("@/app/auth/dev-login/route");
+
+    const res = await GET(req("/auth/dev-login?persona=judge-iac"));
+
+    expect(res.status).toBe(403);
+    expect(await res.text()).toMatch(/deactivated/);
+    expect(res.cookies.get("transcribe_session")).toBeUndefined();
+  });
+
   it("is 502 when the API is not running", async () => {
     api.mockRejectedValue(new Error("connect ECONNREFUSED"));
     const { GET } = await import("@/app/auth/dev-login/route");

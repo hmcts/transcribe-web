@@ -50,13 +50,17 @@ export default function Header() {
   // DIAAT-373: every link is shown from the permissions of the active context,
   // never from a role name. DIAAT-330: hearing recordings also only where the
   // jurisdiction uses them, in its words.
-  const { can } = useAccess();
+  const { can, active } = useAccess();
   // DIAAT-392: the runtime flag, else the deploy-time default.
   const dictationEnabled = useDictationEnabled();
   const { current, hasHearingRecordings, wording } = useJurisdiction();
   const canAdmin = can("admin.access");
   // DIAAT-356: whoever may edit the jurisdiction's wording reaches its editor.
-  const canEditWording = can("jurisdiction.wording.edit");
+  // Only while working in a jurisdiction: a global role has none to edit here
+  // (the API answers 403 `no_jurisdiction`), and changes a jurisdiction's wording
+  // from Admin, Jurisdictions.
+  const canEditWording =
+    can("jurisdiction.wording.edit") && Boolean(active?.jurisdiction);
   const recordingsLabel = wording("nav.recordings");
   const router = useRouter();
   const pathname = usePathname();

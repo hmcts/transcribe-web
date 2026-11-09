@@ -59,14 +59,19 @@ export function describeLegalWordingError(
   if (error.code === "jurisdiction_not_available") {
     return `You do not belong to ${jurisdiction}, or it is not available to you. Switch to a jurisdiction you work in.`;
   }
-  if (error.code === "jurisdiction_admin_required") {
-    return `Only an admin for ${jurisdiction} can change its legal wording.`;
+  // The API's one refusal for a missing permission (contract amendment A2; it
+  // replaced `jurisdiction_admin_required`). Legal wording needs `legal_text.manage`.
+  if (error.code === "permission_denied") {
+    return `Your role cannot change the legal wording of ${jurisdiction}. Switch to a role that can, or ask a legal text manager.`;
+  }
+  if (error.code === "jurisdiction_not_in_scope") {
+    return `${jurisdiction} is not the jurisdiction you are working in. Switch to it first.`;
   }
   if (error.code === "no_jurisdiction") {
-    return "You have not been added to a jurisdiction, so there is no legal wording for you to edit.";
+    return "The role you are working as is not tied to one jurisdiction, so there is no legal wording for you to edit here. Switch to a role in a jurisdiction.";
   }
-  if (error.code === "jurisdiction_choice_required") {
-    return "Choose the jurisdiction you are working in, from the home page, before editing its legal wording.";
+  if (error.code === "context_required") {
+    return "Choose where and as what you are working, from the top of the page, before editing legal wording.";
   }
   if (error.status === 404 && error.message === NO_TEMPLATE_DETAIL) {
     return `${jurisdiction} does not use the decision document, so it has no legal wording to edit.`;
