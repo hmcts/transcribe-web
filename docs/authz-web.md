@@ -72,6 +72,16 @@ local dev proxy does the same, so the token cannot be fetched by hand either.
   dictated is lost, and the stale tab's saves are refused until it does.
 * `GET /api/me/permissions` is asked without any context headers, and the tab
   adopts the answer.
+* The API's other refusals about who the user is are caught by the same watcher
+  (`lib/access/refusals.ts`) and acted on once for the whole app, whichever call
+  met them: 403 `user_deactivated` shows "Your account has been deactivated" (also
+  when `GET /api/me/permissions` itself is refused with it); 403 `context_required`
+  while this tab thinks it has a context (a role was removed at a re-mint) asks who
+  the user is again and shows the choose or no-access screen; 403
+  `dictation_disabled` reads the dictation flag again, so dictation is hidden at
+  once (the dictation list is also not loaded while the flag is off). Every other
+  refusal (`permission_denied`, `jurisdiction_not_in_scope`, `assignment_not_allowed`,
+  ...) is shown where it happened, in the API's own words.
 * Switching (`providers/access.tsx`, `switchContext`): save the tab's work
   (the `onBeforeJurisdictionSwitch` handlers), `POST /auth/context`, save again,
   then reload at the same page if it is a list-level page the new context may use
@@ -90,7 +100,7 @@ that are nobody's material render in any state.
 | UI | Needs |
 |---|---|
 | Header: Admin link, home-page Admin tile, `/admin` | `admin.access` |
-| Header: Wording link, `/jurisdiction-wording` | `jurisdiction.wording.edit` |
+| Header: Wording link, `/jurisdiction-wording` | `jurisdiction.wording.edit` and a jurisdiction in the active context (a super administrator holds the permission but works in none: the API answers 403 `no_jurisdiction`, so the page points to Admin, Jurisdictions) |
 | Header/home: Dictation, `/record`, `/upload`, `/speech-demo`, dictation list, backup recovery, dictation help | `dictation.use` and the dictation flag (below) |
 | Header/home: hearing recordings, `/recording/**` | `recording.own` (and the jurisdiction using them) |
 | Admin tab Document Content | `legal_text.manage` |
@@ -142,7 +152,9 @@ A role change reaches the person at their next token re-mint, so the screens say
   (one `POST /api/admin/assignments` per role; a refused role stays ticked and the
   API's reason is shown). Removing a role (`DELETE /api/admin/assignments/{id}`)
   and deactivating (`POST .../deactivate`) ask first; reactivating does not.
-  There is no Deactivate button on your own row (the API refuses it too).
+  There is no Deactivate button on your own row, nor on a row with a role that is
+  not in `GET /api/admin/roles` (the API refuses both: 403 `cannot_deactivate_self`,
+  `assignment_not_allowed`).
   Role history (`GET /api/admin/role-history`, 50 a page) is a second view, shown
   only with `role_audit.read`.
 * **Approvals** (`approvals-panel.tsx`, `GET /api/admin/access-requests?status=pending`):
@@ -235,6 +247,133 @@ yarn dev                              # NODE_ENV=development; `yarn build && yar
   and the browser side needs `NEXT_PUBLIC_DEV_LOGIN=true` and is off in a
   production build. `tests/unit/dev-login.test.ts` has a test for each refusal.
 
+## Running against the real API
+
+Checked end to end in a browser, as every persona, against transcribe-api branch
+`authz/p4-management-api` (head `438a03a`). Two terminals, plus Docker for Postgres.
+
+**0. Postgres.** The API's `docker compose up -d postgres azurite` serves port 5432.
+On the development machine the bridge to the host does not work, and the Postgres
+that is used listens on **5433** (container `transcribe-postgres-hostnet`); the API's
+`.env` already points to it. Check:
+
+```bash
+docker ps --format '{{.Names}} {{.Ports}}'
+grep DATABASE_CONNECTION_STRING /home/oleg/code_repos/transcribe-api/.env
+# DATABASE_CONNECTION_STRING=postgresql://transcribe:transcribe@localhost:5433/transcribe
+```
+
+**1. API, terminal 1** (port 8000, `ENVIRONMENT=local` is in its `.env`; the token key
+`APP_JWT_SIGNING_KEY` must be set there too):
+
+```bash
+cd /home/oleg/code_repos/transcribe-api            # branch authz/p4-management-api
+set -a; . ./.env; set +a                          # alembic reads the environment, not .env
+.venv/bin/alembic upgrade head
+.venv/bin/python scripts-seed-personas.py          # idempotent: adds what is missing, deletes nothing
+./run-local.sh                                     # http://127.0.0.1:8000, takes ~20 s to start
+# a role change reaches people at their next token; to see that in a minute, not five:
+#   APP_JWT_TTL_SECONDS=75 ./run-local.sh
+```
+
+**2. Web, terminal 2** (port 3000):
+
+```bash
+cd /home/oleg/code_repos/transcribe-web            # branch authz/p7-web-integration
+cat > .env.local <<'EOF'
+AUTH_ENABLED=false
+NEXT_PUBLIC_DEV_LOGIN=true
+NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+BACKEND_INTERNAL_URL=http://127.0.0.1:8000
+EOF
+corepack yarn dev
+```
+
+**3. Sign in** at `http://localhost:3000/auth/dev-login?persona=<name>` (or use the
+"Persona" button in the header, which links to the same). `yarn dev` is required:
+`yarn build && yarn start` is a production build and always answers 404 here. The
+session lives in the dev server's memory: restarting `yarn dev` signs everyone out.
+
+| persona | holds | what to expect |
+|---|---|---|
+| `judge-et` | Judge in ET | Dictation and Recordings; Admin is "not available in your role" |
+| `judge-iac` | Judge in IAC | the same, with the IAC's words ("Hearing recordings") |
+| `multi` | Judge in ET, administrator in IAC | "Choose where and as what"; the header menu switches or leaves |
+| `jadmin-iac`, `jadmin-et` | administrator of IAC / ET | Admin: Templates, Users, Approvals, Jurisdictions; Wording; no Document Content |
+| `legal-iac` | legal text manager in IAC | Admin: Document Content (editable), Templates; nothing else |
+| `jsuper` | super administrator (global) | Admin: Users (everyone), Approvals, Jurisdictions (add one, appoint administrators); no Wording link |
+| `sysadmin` | none (system administrator) | Admin: Jurisdictions (names, administrators), Super administrators, Feature flags |
+| `no-role` | none | "You do not have access yet" with the request form |
+
+**4. Things to try**
+
+* *Access request.* As `no-role` ask for IAC / Judge. As `jadmin-iac` open Admin,
+  Approvals (the email link is `/admin?tab=approvals&request=<id>`; it highlights that
+  request), approve with a reason. As `no-role`, **Check again** (or just wait: the
+  token re-mints by itself within 5 minutes, 75 s with the short TTL, and a reload
+  shows it): you are in, and "Earlier requests" shows the reason.
+* *Users.* As `jadmin-iac`: add `anyone@localhost.test` as Judge (shown "Not signed in
+  yet"), remove the role, search `no-role` and add it, **Deactivate** and **Reactivate**
+  someone, read **Role history**. A deactivated person who has the app open gets "Your
+  account has been deactivated" on their next call.
+* *Jurisdictions.* As `jsuper`: Add jurisdiction `UT`, then Administrators of UT, add an
+  email. As `sysadmin`: Super administrators, **Add me**, then remove it again.
+* *Feature flag.* As `sysadmin`: Feature flags, switch `dictation_enabled` off. As
+  `judge-et` (reload): Dictation is gone, `/record` goes to the home page. The API
+  answers its dictation routes 403 `dictation_disabled`; a tab already open hides
+  dictation as soon as it meets one. Switch it back on.
+* *Stale tab.* As `multi`, choose IAC administrator in tab 1; in tab 2 switch to ET
+  Judge. In tab 1 click anything that calls the API: the "changed in another tab,
+  reload" banner (409 `context_changed`).
+* *History.* A recording is needed (uploading needs ffmpeg and Azure Speech, so insert
+  one for `judge-et`, then open `/recording`, the recording, **History**):
+
+```bash
+cd /home/oleg/code_repos/transcribe-api
+set -a; . ./.env; set +a
+.venv/bin/python - <<'EOF'
+from sqlmodel import Session, create_engine, select
+import os
+from transcribe_api.domain.models_dictation import Jurisdiction, User
+from transcribe_api.domain.models_recording import DialogueEntry, JobStatus, SpeechBatchJob
+with Session(create_engine(os.environ["DATABASE_CONNECTION_STRING"])) as s:
+    u = s.exec(select(User).where(User.email == "judge-et@localhost.test")).one()
+    et = s.exec(select(Jurisdiction).where(Jurisdiction.code == "ET")).one()
+    e = [DialogueEntry(id="seg_a", speaker="Speaker 1", text="Opening", start_time=0.0, end_time=2.0, confidence=0.4)]
+    j = SpeechBatchJob(audio_url="https://example.invalid/a.wav", user_id=u.id, jurisdiction_id=et.id,
+                       status=JobStatus.SUCCEEDED, dialogue_entries=[x.model_dump() for x in e])
+    s.add(j); s.commit(); print("/recording/jobs/" + str(j.id))
+EOF
+```
+
+**5. Reset.** Re-running the seed script puts back a persona's missing roles (for
+instance `multi` after leaving ET) but never removes anything, and does not reactivate
+a deactivated persona (do that in Admin, Users, as someone who may). For a clean slate
+(this deletes the local development database, nothing else):
+
+```bash
+docker exec transcribe-postgres-hostnet psql -U transcribe -p 5433 -d postgres \
+  -c 'DROP DATABASE transcribe WITH (FORCE)' -c 'CREATE DATABASE transcribe'
+cd /home/oleg/code_repos/transcribe-api && set -a; . ./.env; set +a
+.venv/bin/alembic upgrade head && .venv/bin/python scripts-seed-personas.py
+# then restart ./run-local.sh (its connections are gone) and `yarn dev` (its sessions name deleted users)
+```
+
+(Do not drop `transcribe_test`: the API's tests use it.)
+
+**6. If something is off.** `/auth/dev-login` answers 401 "did not accept the
+persona": the API is not running with `ENVIRONMENT=local`, or the persona is not seeded
+(409 `persona_not_seeded`). 502: the API is not up yet. 403 "deactivated": reactivate
+that persona. A blank "Bench Notes could not load" means the API is unreachable from
+the dev server (`BACKEND_INTERNAL_URL`). Browser console: a 403 `context_required` or
+409 `context_changed` after you changed a role elsewhere is expected, and the screen
+moves on by itself (see "Working context").
+
+No BenchNotes token reaches the browser: `POST /api/auth/session`, `PUT /api/me/context`
+and `DELETE /api/me/jurisdictions/{code}` answer 404 `not_through_the_browser`, the
+cookie `transcribe_session` is opaque, and no response body, header or storage held
+a token when this was driven.
+
 ## The mock API
 
 `scripts/dev-mock-api.mjs` is a dependency-free stand-in for the API, for
@@ -274,7 +413,14 @@ Anything it does not know is 404 `mock_not_implemented`.
 
 To drive the web against it: start the mock, start `yarn dev` with the `.env.local`
 above, open `http://localhost:3000` and pick a persona. For the real API, stop the
-mock and run the API with `ENVIRONMENT=local`.
+mock and follow "Running against the real API". The mock was compared with the real
+API (status codes, refusal codes and response shapes of every endpoint it has, for
+every persona) and changed to match: roles on `GET /api/jurisdictions/public`,
+`duplicate_request`, `jurisdiction_not_found`, `no_jurisdiction` for a global role,
+`context_required` (not `permission_denied`) for a system administrator with no
+context, `/api/admin/me`, `/api/templates`, `dictation_disabled`. It stays a stand-in:
+it implements nothing of dictation, uploads, document content, and its tokens are not
+signed.
 
 ## Tests
 
@@ -284,7 +430,7 @@ proxy and every guard), `access-provider.test.tsx` (provider, `can`, choose,
 no-access, 409, dev picker), `jurisdiction-switch.test.tsx` (switch, leave),
 `route-guards.test.tsx`, `header.test.tsx`, `permission-driven-ui.test.tsx`,
 `legal-wording-admin.test.tsx` (admin tabs), `admin-roles-api.test.ts`,
-`context-changed.test.ts`. Phase 6 and 7: `admin-users-panel.test.tsx`,
+`context-changed.test.ts`, `refusals.test.ts`. Phase 6 and 7: `admin-users-panel.test.tsx`,
 `admin-approvals-panel.test.tsx` (including the deep link),
 `admin-super-administrators.test.tsx`, `admin-feature-flags.test.tsx`,
 `jurisdictions-panel.test.tsx`, `runtime-flags.test.tsx`,
