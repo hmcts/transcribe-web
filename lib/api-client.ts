@@ -1,4 +1,5 @@
 import { getEnv } from "@/lib/env";
+import { isDevLoginMode } from "@/lib/dev-login-mode";
 import { isLocalDevelopment } from "@/lib/environment";
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import type { User } from "@/src/api/generated";
@@ -59,10 +60,21 @@ function detailProblems(detail: unknown): string[] | undefined {
 }
 
 class ApiClient {
-  private baseUrl: string;
+  private explicitBaseUrl: string | undefined;
 
-  constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.explicitBaseUrl = baseUrl;
+  }
+
+  /**
+   * Where calls go. Deployed: this app's own origin, which Caddy forwards to
+   * the API. Local development with personas (isDevLoginMode): the same-origin
+   * dev proxy at /api, which attaches the session's token. Otherwise the API
+   * directly, as before.
+   */
+  private get baseUrl(): string {
+    if (this.explicitBaseUrl) return this.explicitBaseUrl;
+    return isDevLoginMode() ? "/api" : API_BASE_URL;
   }
 
   /**
@@ -118,8 +130,9 @@ class ApiClient {
         },
       };
 
-      // In local development, we need to be explicit about CORS
-      if (isLocalDevelopment()) {
+      // In local development against the API directly, be explicit about CORS.
+      // Through the dev proxy the call is same-origin and carries the cookie.
+      if (isLocalDevelopment() && !isDevLoginMode()) {
         requestOptions.mode = "cors";
         requestOptions.credentials = "omit";
       } else {
