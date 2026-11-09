@@ -91,33 +91,117 @@ that are nobody's material render in any state.
 |---|---|
 | Header: Admin link, home-page Admin tile, `/admin` | `admin.access` |
 | Header: Wording link, `/jurisdiction-wording` | `jurisdiction.wording.edit` |
-| Header/home: Dictation, `/record`, `/upload`, `/speech-demo`, dictation list, backup recovery, dictation help | `dictation.use` (and the dictation switch) |
+| Header/home: Dictation, `/record`, `/upload`, `/speech-demo`, dictation list, backup recovery, dictation help | `dictation.use` and the dictation flag (below) |
 | Header/home: hearing recordings, `/recording/**` | `recording.own` (and the jurisdiction using them) |
 | Admin tab Document Content | `legal_text.manage` |
 | Admin tab Templates | `templates.manage` |
-| Admin tab Users | `users.manage` |
+| Admin tab Users | `users.manage` (its Role history view: `role_audit.read`) |
 | Admin tab Approvals | `access.approve` |
-| Admin tab Jurisdictions | `jurisdictions.manage` or `jurisdiction.create` |
+| Admin tab Jurisdictions | `jurisdictions.manage`, `jurisdiction.create` or `jurisdiction_admin.assign` (settings: `jurisdictions.manage`; Add jurisdiction: `jurisdiction.create`; Administrators of a jurisdiction: `jurisdiction_admin.assign`) |
 | Admin tab Super administrators | `jurisdiction_super_admin.assign` |
 | Admin tab Feature flags | `feature_flags.manage` |
+| Recording "History" | `recording.audit.read` |
 | Onboarding check, dictation list loading | `app.access`, `dictation.use` |
 
 The path-to-permission table for pages is `lib/access/routes.ts`; the route
 layouts (`app/record/layout.tsx` and the others) use it, and a page at its
-address without the permission shows "This is not available in your role". Users,
-Approvals, Templates, Super administrators and Feature flags are placeholders
-(Phase 6 and 7 build them); Document Content and Jurisdictions are the existing
-panels.
+address without the permission shows "This is not available in your role". Templates is
+still a placeholder (templates belong to another epic); every other tab is a
+working screen, described under "Administration" below.
 
 The only role values in the web are the two on the access request form
-(`lib/access/requestable-roles.ts`: what `POST /api/access-requests` accepts) and
-the test fixtures. Role names are shown by splitting what the API returned
-(`roleLabel`).
+(`lib/access/requestable-roles.ts`: what `POST /api/access-requests` accepts),
+the two the Jurisdictions and Super administrators screens assign
+(`lib/access/assignable-roles.ts`: which of the roles the API lists is which)
+and the test fixtures. Role names are shown by splitting what the API returned
+(`roleLabel`). `tests/unit/no-role-strings.test.ts` fails if a role string
+appears anywhere else in the app source, or if the system administrator role is
+named anywhere at all.
 
 `GET /api/jurisdictions/current` (a contract amendment) gives the active
 jurisdiction's template, features and wording, which the removed
 `GET /api/jurisdictions/me` used to carry. If the API does not have it (404) the
 web carries on with neutral wording and no template.
+
+## Administration (DIAAT-385, 391, 394, 396, 392)
+
+All of Admin is permission-driven and the API enforces every rule; the screens
+show what they are given and show the API's own message when it refuses.
+A role change reaches the person at their next token re-mint, so the screens say
+"takes effect within a few minutes".
+
+* **Users** (`components/admin/users-panel.tsx`, `GET /api/admin/users`): paged
+  (25), searchable by email, filterable by jurisdiction, each user's roles as
+  chips per jurisdiction. The roles a caller can give or take away are exactly
+  `GET /api/admin/roles`: the add form offers those and the remove button shows
+  only on a chip whose role is in that list. A jurisdiction administrator is
+  therefore never offered JurisdictionAdministrator, because the API does not
+  list it for them (a test drives this from the list, with the list changed).
+  The add form takes a signed-in user (picked from a search as you type, by id)
+  or an email (pending until first sign-in), a jurisdiction and one or more roles
+  (one `POST /api/admin/assignments` per role; a refused role stays ticked and the
+  API's reason is shown). Removing a role (`DELETE /api/admin/assignments/{id}`)
+  and deactivating (`POST .../deactivate`) ask first; reactivating does not.
+  There is no Deactivate button on your own row (the API refuses it too).
+  Role history (`GET /api/admin/role-history`, 50 a page) is a second view, shown
+  only with `role_audit.read`.
+* **Approvals** (`approvals-panel.tsx`, `GET /api/admin/access-requests?status=pending`):
+  approve or reject with an optional reason. The email link is
+  `/admin?tab=approvals&request=<id>`: the Admin page opens that tab (if the
+  caller has it, else the first one they have) and the panel highlights that
+  request and scrolls to it. The link carries only the id and grants nothing: the
+  highlight is of a request in the queue the API returned, and an id that is not
+  there (decided, withdrawn, or another jurisdiction's) gets a neutral "not
+  waiting for your decision" that confirms nothing about it.
+* **Jurisdictions** (`jurisdictions-panel.tsx`): settings for
+  `jurisdictions.manage`, *Add jurisdiction* only for `jurisdiction.create`, and,
+  for `jurisdiction_admin.assign`, *Administrators of X*: the JurisdictionAdministrator
+  assignments of that jurisdiction, added by email or by picking a signed-in user,
+  removed by assignment id (`components/admin/role-holders.tsx`). `auto_enrol` and
+  the judge/admin member endpoints are gone. Someone who holds only
+  `jurisdiction_admin.assign` sees the names (`GET /api/jurisdictions/public`) and
+  the administrators, none of the settings.
+* **Super administrators** (`super-administrators-panel.tsx`): the holders of the
+  global JurisdictionSuperAdministrator role, with add (by email, by picking, or
+  *Add me*) and remove, oneself included.
+* **Feature flags** (`feature-flags-panel.tsx`, `GET/PUT /api/admin/feature-flags`):
+  a switch per flag; shows what the API stored, last changed by whom.
+
+The two screens that list holders of one role ask `GET /api/admin/users` with
+`role=` and keep only the matching assignments themselves, reading pages of 100
+(at most 20). The contract has no `role` filter; sending it is harmless and lets an
+API that adds one answer in a page (see the contract's Amendments). If the cap is
+reached the screen says its list may be incomplete.
+
+### The dictation flag at runtime
+
+`GET /api/flags` (`{dictation_enabled}`, any signed-in user) replaces the
+build-time `NEXT_PUBLIC_DICTATION_ENABLED` as the decision. The env value stays as
+the **default**: used until the flag has loaded and whenever it cannot be read
+(API unreachable, a refusal, a body that is not the promised shape), so a failure
+leaves the deployment's own setting in force and never opens dictation in prod.
+
+* UI: `providers/runtime-flags.tsx` loads the flag once the user is known and when
+  the tab becomes visible; the header, home page and help page read
+  `useDictationEnabled()` / `<DictationOnly>`.
+* `proxy.ts` (the redirect of `/record` and `/speech-demo` to `/`): it has no
+  token, so it asks this app's own `/auth/runtime-flags` route
+  (`app/auth/runtime-flags/route.ts`), passing the session cookie; that route calls
+  `GET /api/flags` with the session's token. Only dictation paths trigger the call;
+  the answer is kept 10 s (a failure 3 s) in `lib/flags/proxy-flags.ts`, so a change
+  applies within about ten seconds without a redeploy.
+* `charts/transcribe-web/values.yaml` keeps `NEXT_PUBLIC_DICTATION_ENABLED` (off in
+  prod): that is the default described above.
+
+### Recording history (DIAAT-395)
+
+A **History** section on the recording page (`recording-history.tsx`), beside the
+per-segment *Modification history* (which it does not touch), only with
+`recording.audit.read`. The browser reads it from `GET /api/jobs/{id}/history`
+(a Next route handler, like the rest of the recording area), which calls
+`GET /api/v1/jobs/{id}/history` with the session's token; a 403 or 404 from the API
+is shown as "not available". It lists action, who and in which role, when and the
+outcome, 20 a page, and no transcript text (the API sends none).
 
 ## Local development: dev login and the dev proxy
 
@@ -162,16 +246,31 @@ caller.
 node scripts/dev-mock-api.mjs        # http://127.0.0.1:8000  (PORT=... to change)
 ```
 
-It implements the no-context endpoints for the nine personas (`judge-et`,
-`judge-iac`, `multi`, `jadmin-iac`, `jadmin-et`, `legal-iac`, `jsuper`,
-`sysadmin`, `no-role`): `POST /api/auth/session` (with `X-Dev-Persona`),
-`GET /api/me/permissions`, `PUT /api/me/context`,
-`DELETE /api/me/jurisdictions/{code}`, `GET /api/jurisdictions/public`, the
-access request endpoints, `GET /api/jurisdictions/current`, `GET /api/flags`,
-and a few empty reads so the pages render. The role map in it is a copy of the
-contract's. It answers 403 `context_required` to anything else when there is no
-context, and 409 `context_changed` when `X-Jurisdiction` / `X-Role` differ from
-the token's context. Anything it does not know is 404 `mock_not_implemented`.
+It implements the contract for the nine personas (`judge-et`, `judge-iac`,
+`multi`, `jadmin-iac`, `jadmin-et`, `legal-iac`, `jsuper`, `sysadmin`, `no-role`)
+with in-memory state, so every admin screen can be driven end to end: the
+no-context endpoints (session, permissions, context, leave, public jurisdictions,
+access requests, `GET /api/flags`, `GET /api/jurisdictions/current`), and
+`GET /api/admin/roles`, `GET /api/admin/users`, `POST /api/admin/assignments`,
+`DELETE /api/admin/assignments/{id}`, `POST /api/admin/users/{id}/deactivate` and
+`reactivate`, `GET /api/admin/role-history`, the access request queue and its
+approve/reject, `GET`/`PUT /api/admin/jurisdictions`, `GET`/`PUT /api/admin/feature-flags`,
+and `GET /api/v1/jobs`, `/jobs/{id}` and `/jobs/{id}/history` (two seeded
+recordings, owned by `judge-et` and `judge-iac`). The role map is a copy of the
+contract's, and the assignment rules of section 1 are enforced as the real API
+will (a jurisdiction administrator gives Judge and LegalTextManager in the active
+jurisdiction only; a super administrator also JurisdictionAdministrator; a system
+administrator both administrator roles, and any role to themselves; nobody changes
+their own admin role or deactivates themselves; nobody grants SystemAdministrator).
+`tests/unit/dev-mock-api.test.ts` starts it and checks those rules.
+
+What a token may do is what it carried when minted, as in the real API, so a role
+given or removed reaches the user at their next mint. `APP_JWT_TTL_SECONDS=75`
+makes that quick (the web re-mints 60 s before expiry). At start-up it prints the
+ids of two seeded pending requests, for `/admin?tab=approvals&request=<id>`.
+It answers 403 `context_required` to anything else when there is no context, and 409
+`context_changed` when `X-Jurisdiction` / `X-Role` differ from the token's context.
+Anything it does not know is 404 `mock_not_implemented`.
 
 To drive the web against it: start the mock, start `yarn dev` with the `.env.local`
 above, open `http://localhost:3000` and pick a persona. For the real API, stop the
@@ -185,5 +284,12 @@ proxy and every guard), `access-provider.test.tsx` (provider, `can`, choose,
 no-access, 409, dev picker), `jurisdiction-switch.test.tsx` (switch, leave),
 `route-guards.test.tsx`, `header.test.tsx`, `permission-driven-ui.test.tsx`,
 `legal-wording-admin.test.tsx` (admin tabs), `admin-roles-api.test.ts`,
-`context-changed.test.ts`. `tests/access-helpers.ts` has a `MeResponse` for each
+`context-changed.test.ts`. Phase 6 and 7: `admin-users-panel.test.tsx`,
+`admin-approvals-panel.test.tsx` (including the deep link),
+`admin-super-administrators.test.tsx`, `admin-feature-flags.test.tsx`,
+`jurisdictions-panel.test.tsx`, `runtime-flags.test.tsx`,
+`runtime-flags-route.test.ts`, `dictation-feature-flag.test.ts` (the proxy and the
+fallback), `recording-history.test.tsx` and the history route test under
+`tests/recording/unit`, `user-settings-access.test.tsx`, `no-role-strings.test.ts`,
+`dev-mock-api.test.ts`. `tests/access-helpers.ts` has a `MeResponse` for each
 persona shape; its role names and role map are test data copied from the contract.
