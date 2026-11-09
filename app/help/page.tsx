@@ -15,8 +15,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { DictationOnly } from "@/components/flags/dictation-only";
 import { Button } from "@/components/ui/button";
-import { isDictationEnabled } from "@/lib/environment";
 import cn from "@/lib/utils";
 
 export default function HelpPage() {
@@ -208,39 +208,37 @@ export default function HelpPage() {
               </div>
             </DecisionTemplateOnly>
 
-            {isDictationEnabled() && (
-              <>
-                <h3 id="live-transcription">Live Transcription</h3>
-                <DecisionTemplateOnly
-                  otherwise={
-                    <p>
-                      Speech is converted to text in real-time, and you can edit
-                      it as you go. Your dictation is saved as you dictate and
-                      can be restored within 24 hours if you leave the page.
-                      When you have finished, copy your text into your own
-                      document.
-                    </p>
-                  }
-                >
+            <DictationOnly>
+              <h3 id="live-transcription">Live Transcription</h3>
+              <DecisionTemplateOnly
+                otherwise={
                   <p>
-                    Speech is converted to text in real-time. The first speaker
-                    is labelled as &quot;Judge&quot;. Use the section tabs to
-                    organise your dictation into Background, Evidence, and
-                    Facts. Recording auto-saves locally and can be paused and
-                    resumed at any time.
+                    Speech is converted to text in real-time, and you can edit
+                    it as you go. Your dictation is saved as you dictate and
+                    can be restored within 24 hours if you leave the page.
+                    When you have finished, copy your text into your own
+                    document.
                   </p>
+                }
+              >
+                <p>
+                  Speech is converted to text in real-time. The first speaker
+                  is labelled as &quot;Judge&quot;. Use the section tabs to
+                  organise your dictation into Background, Evidence, and
+                  Facts. Recording auto-saves locally and can be paused and
+                  resumed at any time.
+                </p>
 
-                  <h3 id="document-generation">Document Generation</h3>
-                  <p>
-                    Submitting a hearing generates a Word document using the
-                    official decision template. Form data, dates (in long
-                    format), and legal framework content are automatically
-                    populated. Documents are available for download for 24
-                    hours.
-                  </p>
-                </DecisionTemplateOnly>
-              </>
-            )}
+                <h3 id="document-generation">Document Generation</h3>
+                <p>
+                  Submitting a hearing generates a Word document using the
+                  official decision template. Form data, dates (in long
+                  format), and legal framework content are automatically
+                  populated. Documents are available for download for 24
+                  hours.
+                </p>
+              </DecisionTemplateOnly>
+            </DictationOnly>
             </Can>
 
             <h3 id="privacy">Privacy</h3>

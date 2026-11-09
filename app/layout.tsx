@@ -14,6 +14,7 @@ import { AccessProvider } from "@/providers/access";
 import { AppAccessGate } from "@/providers/app-access-gate";
 import { JurisdictionProvider } from "@/providers/jurisdiction";
 import PageViewTracker from "@/providers/page-view-tracker";
+import { RuntimeFlagsProvider } from "@/providers/runtime-flags";
 import TelemetryBootstrap from "@/providers/telemetry-bootstrap";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { TranscriptsProvider } from "@/providers/transcripts";
@@ -57,26 +58,28 @@ export default async function RootLayout({
         >
           {/* DIAAT-373: who the user is and what they may do first (choose a
               context, or ask for access, before anything else), then the
-              user's settings, access to the app, the tab's jurisdiction and
-              its material. */}
+              runtime feature flags (DIAAT-392), the user's settings, access to
+              the app, the tab's jurisdiction and its material. */}
           <AccessProvider>
-            <UserSettingsProvider>
-              <TelemetryBootstrap />
-              <PageViewTracker />
-              <AppAccessGate>
-                <JurisdictionProvider>
-                  <TranscriptsProvider>
-                    <div className="flex min-h-screen min-w-0 flex-col">
-                      <Header />
-                      <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
-                        <main className="mt-14 w-full min-w-0">{children}</main>
+            <RuntimeFlagsProvider>
+              <UserSettingsProvider>
+                <TelemetryBootstrap />
+                <PageViewTracker />
+                <AppAccessGate>
+                  <JurisdictionProvider>
+                    <TranscriptsProvider>
+                      <div className="flex min-h-screen min-w-0 flex-col">
+                        <Header />
+                        <div className={cn("mx-auto flex w-full min-w-0 flex-1")}>
+                          <main className="mt-14 w-full min-w-0">{children}</main>
+                        </div>
                       </div>
-                    </div>
-                    <Toaster />
-                  </TranscriptsProvider>
-                </JurisdictionProvider>
-              </AppAccessGate>
-            </UserSettingsProvider>
+                      <Toaster />
+                    </TranscriptsProvider>
+                  </JurisdictionProvider>
+                </AppAccessGate>
+              </UserSettingsProvider>
+            </RuntimeFlagsProvider>
           </AccessProvider>
         </ThemeProvider>
         <CookieBanner />

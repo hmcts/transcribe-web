@@ -24,7 +24,6 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { isDictationEnabled } from "@/lib/environment";
 import {
   DICTATION_BASE_PATH,
   DICTATION_HREF,
@@ -35,6 +34,7 @@ import { inSentence } from "@/lib/jurisdiction-wording";
 import cn from "@/lib/utils";
 import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
+import { useDictationEnabled } from "@/providers/runtime-flags";
 import { useTranscripts } from "@/providers/transcripts";
 
 export default function Header() {
@@ -51,6 +51,8 @@ export default function Header() {
   // never from a role name. DIAAT-330: hearing recordings also only where the
   // jurisdiction uses them, in its words.
   const { can } = useAccess();
+  // DIAAT-392: the runtime flag, else the deploy-time default.
+  const dictationEnabled = useDictationEnabled();
   const { current, hasHearingRecordings, wording } = useJurisdiction();
   const canAdmin = can("admin.access");
   // DIAAT-356: whoever may edit the jurisdiction's wording reaches its editor.
@@ -62,7 +64,7 @@ export default function Header() {
   const lastScrollY = useRef(0);
   const [isHidden, setIsHidden] = useState(false);
   const showDictation =
-    !hideNavLinks && isDictationEnabled() && can("dictation.use");
+    !hideNavLinks && dictationEnabled && can("dictation.use");
   const showRecordings =
     !hideNavLinks && can("recording.own") && hasHearingRecordings;
   const isDictationActive = isPathActive(pathname, DICTATION_BASE_PATH);

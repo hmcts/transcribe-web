@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { isDictationEnabled } from "@/lib/environment";
+import { isDictationEnabledAtRuntime } from "@/lib/flags/proxy-flags";
 import {
   DICTATION_BASE_PATH,
   isPathActive,
@@ -15,7 +15,9 @@ import {
  *  1. Generate a per-response CSP nonce and forward it to Server Components via
  *     the x-nonce request header (used for the next-themes inline script).
  *  2. Send anyone without a session to the login (/auth/login).
- *  3. Send Dictation pages home when the feature is switched off (DIAAT-366).
+ *  3. Send Dictation pages home when the feature is switched off (DIAAT-366):
+ *     by the runtime flag (`GET /api/flags`, DIAAT-392), else the deploy-time
+ *     NEXT_PUBLIC_DICTATION_ENABLED when the flag cannot be read.
  *
  * The session cookie's presence is only a routing hint. What protects data is
  * the API: every backend call carries the session's bearer token (Caddy's
@@ -46,7 +48,7 @@ export function isPublicPath(pathname: string): boolean {
   );
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ── 1. CSP nonce (production only) ────────────────────────────────────────
@@ -127,10 +129,12 @@ export function proxy(request: NextRequest) {
   }
 
   // ── 3. Dictation feature flag ─────────────────────────────────────────────
+  // The flag is read only for the pages it guards. When it cannot be read the
+  // deploy-time value decides (lib/flags/proxy-flags.ts).
   if (
-    !isDictationEnabled() &&
     (isPathActive(pathname, DICTATION_BASE_PATH) ||
-      isPathActive(pathname, SPEECH_DEMO_PATH))
+      isPathActive(pathname, SPEECH_DEMO_PATH)) &&
+    !(await isDictationEnabledAtRuntime(request.headers.get("cookie")))
   ) {
     return NextResponse.redirect(new URL("/", request.url));
   }

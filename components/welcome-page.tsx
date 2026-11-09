@@ -15,12 +15,12 @@ import { Button } from "@/components/ui/button";
 import StartNewRecordingButton from "@/components/ui/start-new-recording-button";
 import useMediaQuery from "@/hooks/use-media-query";
 import { track } from "@/lib/analytics";
-import { isDictationEnabled } from "@/lib/environment";
 import type { AudioBackup } from "@/lib/indexeddb-backup";
 import { HEARING_RECORDINGS_HREF } from "@/lib/navigation";
 import { getFullNameFromEmail } from "@/lib/utils";
 import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
+import { useDictationEnabled } from "@/providers/runtime-flags";
 import { useTranscripts } from "@/providers/transcripts";
 import { useUserSettings } from "@/providers/user-settings";
 
@@ -51,8 +51,10 @@ function WelcomePage() {
     React.useState<AudioBackup | null>(null);
   const _isMobile = useMediaQuery("(max-width: 768px)");
 
+  // DIAAT-392: the runtime flag, else the deploy-time default.
+  const dictationEnabled = useDictationEnabled();
   const canDictate = can("dictation.use");
-  const showDictation = isDictationEnabled() && canDictate;
+  const showDictation = dictationEnabled && canDictate;
   const showRecordings = can("recording.own") && hasHearingRecordings;
   const showAdmin = can("admin.access");
 
