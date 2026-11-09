@@ -51,9 +51,6 @@ vi.mock("@/components/audio/dictation/dictation-form", () => ({
 vi.mock("@/lib/document-content-api", () => ({
   fetchUserDocumentContent: mockFetchContent,
 }));
-vi.mock("@/lib/admin-access", () => ({
-  getAdminAccessStatus: vi.fn().mockResolvedValue("unauthorised"),
-}));
 vi.mock("@/lib/auth-utils", () => ({
   getAuthToken: vi.fn().mockResolvedValue(null),
 }));

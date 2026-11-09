@@ -2,6 +2,13 @@ import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 // DIAAT-322: these screens as the IAC sees them.
+// DIAAT-373: as a judge, the role whose permissions these screens are for.
+vi.mock("@/providers/access", async () =>
+  (await import("../access-helpers")).mockAccessModule(
+    (await import("../access-helpers")).ME.judge
+  )
+);
+
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
 );

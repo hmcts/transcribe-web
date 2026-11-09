@@ -6,6 +6,7 @@ import {
   DecisionTemplateOnly,
   JurisdictionText,
 } from "@/components/jurisdiction/jurisdiction-content";
+import { Can } from "@/components/access/require-permission";
 import { MultistepTutorial } from "@/components/help/multistep-tutorial";
 import { TableOfContents } from "@/components/help/table-of-contents";
 import {
@@ -62,6 +63,8 @@ export default function HelpPage() {
 
           {/* Main content */}
           <section id="help-content" className="max-w-4xl">
+            {/* DIAAT-373: the dictation and recording guidance only for a role that uses them. */}
+            <Can permission="dictation.use">
             <DecisionTemplateOnly
               otherwise={
                 <p>
@@ -96,9 +99,11 @@ export default function HelpPage() {
                 >Online training</Link>
               </h2>
             </DecisionTemplateOnly>
+            </Can>
 
             <ContactSupport className="mb-20 [&_h2]:m-0" />
 
+            <Can permission="dictation.use">
             {/* DIAAT-330: the IAC hearing form and decision, for jurisdictions that use them. */}
             <DecisionTemplateOnly>
               {/* Quick Start Guide */}
@@ -236,6 +241,7 @@ export default function HelpPage() {
                 </DecisionTemplateOnly>
               </>
             )}
+            </Can>
 
             <h3 id="privacy">Privacy</h3>
             <p>
@@ -250,6 +256,7 @@ export default function HelpPage() {
               </Link>
             </p>
 
+            <Can permission="dictation.use">
             <h3 id="troubleshooting">Troubleshooting</h3>
             <Accordion type="single" collapsible className="not-prose">
               <AccordionItem value="microphone">
@@ -267,6 +274,7 @@ export default function HelpPage() {
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
+            </Can>
           </section>
 
           {/* Table of contents sidebar */}

@@ -8,6 +8,7 @@ import {
   IDLE,
   TemplatesEditor,
 } from "@/components/admin/templates-editor";
+import { roleLabel } from "@/lib/access/types";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,7 +45,7 @@ import {
 import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 
 /**
- * Jurisdictions and their members (DIAAT-356), for SystemAdministrators: what
+ * Jurisdictions and their members (DIAAT-356), for whoever holds `jurisdictions.manage`: what
  * used to need a command on the server. A jurisdiction's wording, template and
  * hearing recordings are its settings; its members are added by sign-in email,
  * before or after they first sign in.
@@ -661,7 +662,7 @@ function MembersEditor({
             <SelectContent>
               {MEMBER_ROLES.map((r) => (
                 <SelectItem key={r} value={r}>
-                  {r === "judge" ? "Judge" : "Admin"}
+                  {roleLabel(r)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -695,7 +696,7 @@ function MembersEditor({
             {members.map((m) => (
               <TableRow key={m.email}>
                 <TableCell className="font-medium">{m.email}</TableCell>
-                <TableCell>{m.role === "admin" ? "Admin" : "Judge"}</TableCell>
+                <TableCell>{roleLabel(m.role)}</TableCell>
                 {stagesSupported && (
                   <TableCell>
                     <Checkbox

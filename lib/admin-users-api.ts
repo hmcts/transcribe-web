@@ -1,82 +1,27 @@
 import { apiClient } from "@/lib/api-client";
 
-export interface AdminUser {
-  id: string;
-  email: string;
-  role: string;
-  has_completed_onboarding: boolean;
-  created_datetime: string;
+/**
+ * `GET /api/admin/roles` (authz contract, section 3): the roles the caller may
+ * assign, as `{"roles": [...]}`. The API never lists a role the caller cannot
+ * assign, and never the system administrator role, so the web shows what it is
+ * given and keeps no list of its own (DIAAT-374).
+ */
+export interface AdminRolesResponse {
+  roles: string[];
 }
 
-export interface AdminUsersResponse {
-  items: AdminUser[];
-  total: number;
-  page: number;
-  page_size: number;
-}
-
-export const VALID_ROLES = [
-  "Normal",
-  "Judge",
-  "LegalTextManager",
-  "SystemAdministrator",
-] as const;
-
-export type AppRole = (typeof VALID_ROLES)[number];
-
+/** The roles the caller may assign. Throws with the API's reason if it refuses. */
 export async function fetchAdminRoles(): Promise<string[]> {
-  const data = await request<{ roles: string[] }>("/admin/roles", {
+  const response = await apiClient.request<AdminRolesResponse>("/admin/roles", {
     method: "GET",
     cache: "no-store",
   });
-  return data.roles;
-}
-
-async function request<T>(
-  endpoint: string,
-  options?: RequestInit
-): Promise<T> {
-  const response = await apiClient.request<T>(endpoint, options);
-  if (response.error || response.data === undefined) {
-    throw new Error(response.error ?? "Request failed");
+  if (response.error) throw new Error(response.error);
+  const roles = response.data?.roles;
+  if (!Array.isArray(roles) || !roles.every((r) => typeof r === "string")) {
+    // The shape the API promised is not what came back: say so, rather than
+    // letting `undefined` reach a component that maps over it.
+    throw new Error("The role list from the API was not in the expected shape");
   }
-  return response.data;
-}
-
-export async function fetchAdminUsers(
-  page = 1,
-  pageSize = 50,
-  searchEmail?: string
-): Promise<AdminUsersResponse> {
-  const params = new URLSearchParams({
-    page: String(page),
-    page_size: String(pageSize),
-  });
-  if (searchEmail?.trim()) {
-    params.set("search_email", searchEmail.trim());
-  }
-  return request<AdminUsersResponse>(`/admin/users?${params}`, {
-    method: "GET",
-    cache: "no-store",
-  });
-}
-
-export async function updateUserRole(
-  userId: string,
-  role: string
-): Promise<AdminUser> {
-  return request<AdminUser>(`/admin/users/${userId}/role`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ role }),
-  });
-}
-
-export async function deleteAdminUser(userId: string): Promise<void> {
-  const response = await apiClient.request(`/admin/users/${userId}`, {
-    method: "DELETE",
-  });
-  if (response.error) {
-    throw new Error(response.error);
-  }
+  return roles;
 }

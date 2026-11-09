@@ -23,6 +23,7 @@ import {
   saveTranscription,
   saveTranscriptionJob,
 } from "../lib/database";
+import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
 
 interface TranscriptsContextType {
@@ -97,7 +98,11 @@ function TranscriptsProviderContent({
   const transcriptId = searchParams?.get("id");
   // DIAAT-322: material is loaded only in a jurisdiction. Pages that hold none
   // (privacy, support...) render before, or without, one: nothing is fetched.
-  const hasJurisdiction = useJurisdiction().current !== null;
+  // DIAAT-373: and only for a context that may dictate (`dictation.use`): any
+  // other role has no dictations to load, and the API would refuse the call.
+  const { can } = useAccess();
+  const hasJurisdiction =
+    useJurisdiction().current !== null && can("dictation.use");
 
   // Load transcription when ID in URL changes
   useEffect(() => {

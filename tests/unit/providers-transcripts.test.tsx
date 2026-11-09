@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // ─── mocks ────────────────────────────────────────────────────────────────────
 
@@ -15,6 +15,14 @@ vi.mock("@/providers/jurisdiction", async () => {
     useJurisdiction: () =>
       mockInJurisdiction ? inIac : { ...inIac, current: null },
   };
+});
+
+// DIAAT-373: as a judge, the role whose permissions these screens are for, unless
+// a test says otherwise.
+let mockPersona: import("@/lib/access/types").MeResponse | undefined;
+vi.mock("@/providers/access", async () => {
+  const helpers = await import("../access-helpers");
+  return helpers.mockAccessModule(() => mockPersona ?? helpers.ME.judge);
 });
 
 vi.mock("@/lib/database", () => ({
@@ -62,6 +70,23 @@ describe("useTranscripts", () => {
 });
 
 // ─── initial state ────────────────────────────────────────────────────────────
+
+describe("TranscriptsProvider — which roles load dictations (DIAAT-384)", () => {
+  afterEach(() => {
+    mockPersona = undefined;
+  });
+
+  it("loads nothing for a role without dictation.use, whose calls the API would refuse", async () => {
+    const { ME } = await import("../access-helpers");
+    mockPersona = ME.legalTextManager;
+    vi.mocked(getAllTranscriptionMetadata).mockClear();
+
+    renderHook(() => useTranscripts(), { wrapper });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(getAllTranscriptionMetadata).not.toHaveBeenCalled();
+  });
+});
 
 describe("TranscriptsProvider — initial state", () => {
   it("starts with isLoading true and empty transcriptsMetadata", async () => {

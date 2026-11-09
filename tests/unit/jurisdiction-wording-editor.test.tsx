@@ -5,16 +5,20 @@ import { JurisdictionWordingEditor } from "@/components/jurisdiction/wording-edi
 import { apiClient } from "@/lib/api-client";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import { jurisdictionContextValue } from "@/lib/jurisdiction-context";
+import type { MeResponse } from "@/lib/access/types";
+import { ME } from "../access-helpers";
 import { ET } from "../jurisdiction-helpers";
 
-// DIAAT-356: a judge made an admin for a jurisdiction changes its wording; a judge
-// who is not its admin is told they cannot.
+// DIAAT-356: whoever holds `jurisdiction.wording.edit` changes the jurisdiction's
+// wording; any other role is told it cannot.
 
-let role: "judge" | "admin" = "admin";
-let template: "iac_decision" | null = null;
+// DIAAT-373: whether the user may edit the wording is the API's permission.
+let mockPersona: MeResponse = ME.jurisdictionAdministrator;
+vi.mock("@/providers/access", async () =>
+  (await import("../access-helpers")).mockAccessModule(() => mockPersona)
+);
 vi.mock("@/providers/jurisdiction", () => ({
-  useJurisdiction: () =>
-    jurisdictionContextValue({ ...ET, role, template }, [{ ...ET, role }]),
+  useJurisdiction: () => jurisdictionContextValue(ET, [ET]),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
@@ -29,8 +33,7 @@ const KEYS = {
 
 describe("JurisdictionWordingEditor", () => {
   beforeEach(() => {
-    role = "admin";
-    template = null;
+    mockPersona = ME.jurisdictionAdministrator;
     request.mockReset();
     vi.mocked(toast.success).mockClear();
     vi.mocked(toast.error).mockClear();
@@ -130,26 +133,16 @@ describe("JurisdictionWordingEditor", () => {
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
   });
 
-  it("tells a judge who is not its admin, without asking the API", () => {
-    role = "judge";
+  it.each([
+    ["a judge", ME.judge],
+    ["a legal text manager", ME.legalTextManager],
+  ])("tells %s it cannot change the wording, without asking the API", (_n, persona) => {
+    mockPersona = persona;
     render(<JurisdictionWordingEditor />);
 
-    expect(screen.getByText("Only an admin for ET can change its wording.")).toBeTruthy();
+    expect(
+      screen.getByText("Your role cannot change the wording of ET.")
+    ).toBeTruthy();
     expect(request).not.toHaveBeenCalled();
-  });
-
-  it("links to the legal wording only where the jurisdiction has some (DIAAT-342)", async () => {
-    request.mockResolvedValue({
-      data: { code: "ET", name: ET.name, keys: KEYS, wording: {}, version: "v1" },
-    });
-    const { unmount } = render(<JurisdictionWordingEditor />);
-    await screen.findByRole("button", { name: "Save wording" });
-    expect(screen.queryByRole("link", { name: "legal wording" })).toBeNull();
-    unmount();
-
-    template = "iac_decision";
-    render(<JurisdictionWordingEditor />);
-    const link = await screen.findByRole("link", { name: "legal wording" });
-    expect(link.getAttribute("href")).toBe("/admin");
   });
 });

@@ -3,7 +3,9 @@
 import {
   BookOpen,
   Building2,
+  Flag,
   Gavel,
+  Inbox,
   Info,
   Loader2,
   Plus,
@@ -11,13 +13,15 @@ import {
   Scale,
   Shield,
   ShieldAlert,
+  ShieldCheck,
   Trash2,
   Users,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
+import { TemplatesEditor } from "@/components/admin/templates-editor";
 import { AppSidebar, type Selection } from "@/components/app-sidebar";
 import { AdminEditor } from "@/components/editor/admin-editor";
 import {
@@ -33,22 +37,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 
@@ -73,16 +62,9 @@ import {
   updateLegalFramework,
 } from "@/lib/admin-api";
 import { hasLegalWording } from "@/lib/editor-contracts";
-import { type AdminRole, getAdminRole } from "@/lib/admin-access";
-import type { AdminUser } from "@/lib/admin-users-api";
+import type { Permission } from "@/lib/access/types";
+import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
-import {
-  VALID_ROLES,
-  deleteAdminUser,
-  fetchAdminRoles,
-  fetchAdminUsers,
-  updateUserRole,
-} from "@/lib/admin-users-api";
 
 function getDefaultSelection(content: DocumentContent): Selection | null {
   const firstHearingType = content.hearing_types[0];
@@ -103,71 +85,151 @@ function getDefaultSelection(content: DocumentContent): Selection | null {
   return null;
 }
 
+/**
+ * The Admin tabs (DIAAT-384). Each shows only to a context holding one of its
+ * permissions, which the API returns; no role names are involved. The API
+ * enforces the same permissions on every call behind them.
+ */
+interface AdminTab {
+  value: string;
+  label: string;
+  icon?: React.ComponentType<{ className?: string }>;
+  anyOf: Permission[];
+}
+
+const ADMIN_TABS: AdminTab[] = [
+  { value: "document-content", label: "Document Content", anyOf: ["legal_text.manage"] },
+  { value: "templates", label: "Templates", anyOf: ["templates.manage"] },
+  { value: "users", label: "Users", icon: Users, anyOf: ["users.manage"] },
+  { value: "approvals", label: "Approvals", icon: Inbox, anyOf: ["access.approve"] },
+  {
+    value: "jurisdictions",
+    label: "Jurisdictions",
+    icon: Building2,
+    anyOf: ["jurisdictions.manage", "jurisdiction.create"],
+  },
+  {
+    value: "super-admins",
+    label: "Super administrators",
+    icon: ShieldCheck,
+    anyOf: ["jurisdiction_super_admin.assign"],
+  },
+  { value: "feature-flags", label: "Feature flags", icon: Flag, anyOf: ["feature_flags.manage"] },
+];
+
+const TAB_TRIGGER_CLASS =
+  "rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium";
+
+/** What a tab not yet built shows. The tabs themselves are Phase 6 (DIAAT-385, 391, 394, 396). */
+const PLACEHOLDERS: Record<string, { title: string; text: string }> = {
+  users: {
+    title: "Users",
+    text: "Adding users and managing their roles is not available in this screen yet.",
+  },
+  approvals: {
+    title: "Approvals",
+    text: "Deciding requests for access is not available in this screen yet.",
+  },
+  "super-admins": {
+    title: "Super administrators",
+    text: "Assigning super administrators is not available in this screen yet.",
+  },
+  "feature-flags": {
+    title: "Feature flags",
+    text: "Managing feature flags is not available in this screen yet.",
+  },
+};
+
 export default function AdminPage() {
   const { current, resolved } = useJurisdiction();
-  const [adminRole, setAdminRole] = useState<AdminRole | null>(null);
+  const { can } = useAccess();
+  const tabs = ADMIN_TABS.filter((tab) => tab.anyOf.some(can));
 
-  useEffect(() => {
-    getAdminRole().then(setAdminRole).catch(() => {});
-  }, []);
+  if (tabs.length === 0) {
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center p-6">
+        <p role="status" className="text-muted-foreground">
+          There is nothing to manage here in your role.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="fixed inset-0 top-14 flex flex-col bg-background">
-      <Tabs defaultValue="document-content" className="flex flex-col h-full min-h-0">
+      <Tabs defaultValue={tabs[0].value} className="flex flex-col h-full min-h-0">
         <div className="shrink-0 border-b px-4">
           <TabsList className="h-10 rounded-none bg-transparent p-0 gap-4">
-            <TabsTrigger
-              value="document-content"
-              className="rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium"
-            >
-              Document Content
-            </TabsTrigger>
-            {adminRole === "SystemAdministrator" && (
-              <TabsTrigger
-                value="users"
-                className="rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium"
-              >
-                <Users className="mr-1.5 h-4 w-4" />
-                Users
+            {tabs.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value} className={TAB_TRIGGER_CLASS}>
+                {tab.icon && <tab.icon className="mr-1.5 h-4 w-4" />}
+                {tab.label}
               </TabsTrigger>
-            )}
-            {adminRole === "SystemAdministrator" && (
-              <TabsTrigger
-                value="jurisdictions"
-                className="rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium"
-              >
-                <Building2 className="mr-1.5 h-4 w-4" />
-                Jurisdictions
-              </TabsTrigger>
-            )}
+            ))}
           </TabsList>
         </div>
 
-        <TabsContent value="document-content" className="flex-1 min-h-0 overflow-hidden mt-0 data-[state=inactive]:hidden">
-          {/* DIAAT-342: the legal wording of the jurisdiction this tab works in.
-              Keyed by it, so nothing of another jurisdiction's carries over. */}
-          {resolved ? (
-            <LegalWordingTab
-              key={current?.code ?? "none"}
-              code={current?.code ?? null}
-              name={current?.name ?? null}
-            />
-          ) : (
-            <LoadingState />
-          )}
-        </TabsContent>
-
-        <TabsContent value="users" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
-          <UsersPanel />
-        </TabsContent>
-
-        {/* DIAAT-356: jurisdictions and their members, without a server command. */}
-        {/* Kept mounted while another tab is open: unsaved jurisdiction or template
-            edits survive a look at another tab (DIAAT-344). */}
-        <TabsContent forceMount value="jurisdictions" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
-          {adminRole === "SystemAdministrator" && <JurisdictionsPanel />}
-        </TabsContent>
+        {tabs.map((tab) => {
+          if (tab.value === "document-content") {
+            return (
+              <TabsContent
+                key={tab.value}
+                value={tab.value}
+                className="flex-1 min-h-0 overflow-hidden mt-0 data-[state=inactive]:hidden"
+              >
+                {/* DIAAT-342: the legal wording of the jurisdiction this tab works in.
+                    Keyed by it, so nothing of another jurisdiction's carries over. */}
+                {resolved ? (
+                  <LegalWordingTab
+                    key={current?.code ?? "none"}
+                    code={current?.code ?? null}
+                    name={current?.name ?? null}
+                  />
+                ) : (
+                  <LoadingState />
+                )}
+              </TabsContent>
+            );
+          }
+          return (
+            <TabsContent
+              key={tab.value}
+              value={tab.value}
+              // Kept mounted while another tab is open: unsaved jurisdiction or template
+              // edits survive a look at another tab (DIAAT-344).
+              forceMount={tab.value === "jurisdictions" ? true : undefined}
+              className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden"
+            >
+              {tab.value === "jurisdictions" ? (
+                // DIAAT-356: jurisdictions and their members, without a server command.
+                <JurisdictionsPanel />
+              ) : tab.value === "templates" ? (
+                // DIAAT-344: the Word templates of the jurisdiction this tab works in.
+                resolved && current ? (
+                  <TemplatesEditor key={`templates:${current.code}`} code={current.code} />
+                ) : resolved ? (
+                  <p role="status" className="text-muted-foreground">
+                    Choose a jurisdiction to manage its templates.
+                  </p>
+                ) : (
+                  <LoadingState />
+                )
+              ) : (
+                <AdminPlaceholder {...PLACEHOLDERS[tab.value]} />
+              )}
+            </TabsContent>
+          );
+        })}
       </Tabs>
+    </div>
+  );
+}
+
+function AdminPlaceholder({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="mx-auto max-w-4xl space-y-2">
+      <h2 className="text-xl font-semibold">{title}</h2>
+      <p className="text-muted-foreground">{text}</p>
     </div>
   );
 }
@@ -352,250 +414,6 @@ function BlockedState({
           </Button>
         )}
       </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Users panel (SystemAdministrator only)
-// ---------------------------------------------------------------------------
-
-function UsersPanel() {
-  const PAGE_SIZE = 50;
-  const [users, setUsers] = useState<AdminUser[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
-  const [searchEmail, setSearchEmail] = useState("");
-  const [searchInput, setSearchInput] = useState("");
-  const [loadingUsers, setLoadingUsers] = useState(true);
-  const [usersError, setUsersError] = useState<string | null>(null);
-  const [updatingRole, setUpdatingRole] = useState<string | null>(null);
-  const [userDeleteTarget, setUserDeleteTarget] = useState<AdminUser | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const [validRoles, setValidRoles] = useState<string[]>([...VALID_ROLES]);
-
-  useEffect(() => {
-    fetchAdminRoles().then(setValidRoles).catch(() => {});
-  }, []);
-
-  const loadUsers = useCallback(async () => {
-    setLoadingUsers(true);
-    setUsersError(null);
-    try {
-      const data = await fetchAdminUsers(page, PAGE_SIZE, searchEmail || undefined);
-      setUsers(data.items);
-      setTotal(data.total);
-    } catch (err: unknown) {
-      setUsersError(err instanceof Error ? err.message : "Failed to load users");
-    } finally {
-      setLoadingUsers(false);
-    }
-  }, [page, searchEmail]);
-
-  useEffect(() => {
-    loadUsers();
-  }, [loadUsers]);
-
-  async function handleRoleChange(userId: string, newRole: string) {
-    setUpdatingRole(userId);
-    try {
-      await updateUserRole(userId, newRole);
-      toast.success("Role updated");
-      setUsers((prev) =>
-        prev.map((u) => (u.id === userId ? { ...u, role: newRole } : u))
-      );
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to update role");
-    } finally {
-      setUpdatingRole(null);
-    }
-  }
-
-  async function handleDeleteUser() {
-    if (!userDeleteTarget) return;
-    setDeleting(true);
-    try {
-      await deleteAdminUser(userDeleteTarget.id);
-      toast.success(`Deleted ${userDeleteTarget.email}`);
-      setUserDeleteTarget(null);
-      await loadUsers();
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Failed to delete user");
-    } finally {
-      setDeleting(false);
-    }
-  }
-
-  function applySearch() {
-    setPage(1);
-    setSearchEmail(searchInput);
-  }
-
-  function clearSearch() {
-    setSearchInput("");
-    setSearchEmail("");
-    setPage(1);
-  }
-
-  const totalPages = Math.ceil(total / PAGE_SIZE);
-
-  return (
-    <div className="mx-auto max-w-4xl space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold">Users</h2>
-          {!loadingUsers && (
-            <p className="text-sm text-muted-foreground">{total} total</p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Input
-            placeholder="Search by email..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") applySearch();
-            }}
-            className="w-64"
-          />
-          <Button variant="outline" size="sm" onClick={applySearch}>
-            Search
-          </Button>
-          {searchEmail && (
-            <Button variant="ghost" size="icon" onClick={clearSearch} aria-label="Clear search">
-              <X className="h-4 w-4" />
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {loadingUsers ? (
-        <div className="flex justify-center py-12">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
-        </div>
-      ) : usersError ? (
-        <div className="text-center text-destructive py-8">
-          <p>{usersError}</p>
-          <Button variant="outline" size="sm" className="mt-4" onClick={loadUsers}>
-            Retry
-          </Button>
-        </div>
-      ) : users.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          No users found.
-        </div>
-      ) : (
-        <>
-          <div className="rounded-md border">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Role</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead className="w-12" />
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {users.map((user) => (
-                  <TableRow key={user.id}>
-                    <TableCell className="font-medium">{user.email}</TableCell>
-                    <TableCell>
-                      <Select
-                        value={user.role}
-                        onValueChange={(val) => handleRoleChange(user.id, val)}
-                        disabled={updatingRole === user.id}
-                      >
-                        <SelectTrigger className="w-[200px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {validRoles.map((role) => (
-                            <SelectItem key={role} value={role}>
-                              {role}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {new Date(user.created_datetime).toLocaleDateString("en-GB")}
-                    </TableCell>
-                    <TableCell>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="text-destructive hover:bg-destructive/10 hover:text-destructive focus-visible:ring-destructive/40"
-                        onClick={() => setUserDeleteTarget(user)}
-                        aria-label={`Delete ${user.email}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </div>
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between text-sm text-muted-foreground">
-              <span>
-                Page {page} of {totalPages}
-              </span>
-              <div className="flex gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => p - 1)}
-                >
-                  Previous
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  disabled={page >= totalPages}
-                  onClick={() => setPage((p) => p + 1)}
-                >
-                  Next
-                </Button>
-              </div>
-            </div>
-          )}
-        </>
-      )}
-
-      <AlertDialog
-        open={!!userDeleteTarget}
-        onOpenChange={(open) => !open && setUserDeleteTarget(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Delete &ldquo;{userDeleteTarget?.email}&rdquo;?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              This will permanently remove the user. Users who have transcriptions
-              cannot be deleted. This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(e) => {
-                e.preventDefault();
-                handleDeleteUser();
-              }}
-              disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleting && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />}
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

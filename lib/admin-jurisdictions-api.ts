@@ -1,7 +1,7 @@
 import { apiClient } from "@/lib/api-client";
 import type { JurisdictionStage } from "@/lib/jurisdiction-api";
 
-/** /api/admin/jurisdictions (transcribe-api, DIAAT-356): SystemAdministrator only. */
+/** /api/admin/jurisdictions (transcribe-api, DIAAT-356): behind `jurisdictions.manage` (and `jurisdiction.create` to add one). */
 
 export interface JurisdictionSettingsData {
   wording?: Record<string, string>;
