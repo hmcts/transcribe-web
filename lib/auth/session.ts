@@ -1,6 +1,13 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
+import {
+  BackendError,
+  mintAppToken,
+  REMINT_WITHIN_MS,
+  withToken,
+} from "@/lib/auth/app-token";
 import { getAuthConfig } from "@/lib/auth/config";
+import { isDevLoginEnabled } from "@/lib/auth/dev-mode";
 import { refreshIfNeeded } from "@/lib/auth/oidc";
 import {
   deleteSession,
@@ -53,11 +60,67 @@ export function hasAppAccess(session: Session): boolean {
   );
 }
 
+/** Mint a token for this session's user, keeping its remembered context. */
+export function mintForSession(session: Session) {
+  return mintAppToken({
+    idToken: session.devPersona ? undefined : session.idToken,
+    devPersona: session.devPersona,
+    requestedContext: session.context,
+  });
+}
+
+/** Re-mints in flight, so concurrent requests of one session mint once. */
+const minting = new Map<string, Promise<Session | null>>();
+
 /**
- * Resolve the session for a cookie value, refreshing the ID token when it is
- * close to expiry. Returns null when there is no usable session; a session
- * that cannot be refreshed, or whose user no longer holds an access role, is
- * deleted.
+ * Make sure the session holds a BenchNotes token with more than a minute left,
+ * minting a new one from the Entra ID token (or, in local development, the
+ * persona) and the session's remembered context. Returns null when the API
+ * says the session is over (the ID token is refused, or the user is blocked);
+ * a blip (API unreachable or erroring) keeps a still-valid token.
+ */
+async function ensureAppToken(
+  sessionId: string,
+  session: Session
+): Promise<Session | null> {
+  const expiresAt = session.appTokenExpiresAt ?? 0;
+  if (session.appToken && expiresAt - Date.now() > REMINT_WITHIN_MS) {
+    return session;
+  }
+  const inFlight = minting.get(sessionId);
+  if (inFlight) return inFlight;
+
+  const work = (async (): Promise<Session | null> => {
+    try {
+      return withToken(session, await mintForSession(session));
+    } catch (error) {
+      if (
+        error instanceof BackendError &&
+        (error.status === 401 || error.status === 403)
+      ) {
+        console.warn("[auth] token mint refused; session ends", error.message);
+        await deleteSession(sessionId);
+        return null;
+      }
+      console.warn("[auth] token mint failed", error);
+      // Still valid for a while: keep going on it. Otherwise there is nothing
+      // to send, and the caller treats it as signed out for now.
+      return session.appToken && expiresAt > Date.now() ? session : null;
+    }
+  })();
+  minting.set(sessionId, work);
+  try {
+    return await work;
+  } finally {
+    minting.delete(sessionId);
+  }
+}
+
+/**
+ * Resolve the session for a cookie value: refresh the Entra ID token when it
+ * is close to expiry, then make sure there is a usable BenchNotes token.
+ * Returns null when there is no usable session; a session that cannot be
+ * refreshed, or whose user no longer holds an access role, is deleted.
  */
 export async function getActiveSession(
   sessionId: string | undefined
@@ -65,21 +128,36 @@ export async function getActiveSession(
   if (!sessionId) return null;
   const session = await readSession(sessionId);
   if (!session) return null;
-  const current = await refreshIfNeeded(session);
-  if (!current || !hasAppAccess(current)) {
-    await deleteSession(sessionId);
-    return null;
+
+  let current: Session | null;
+  if (session.devPersona) {
+    // A persona session means nothing outside local development.
+    if (!isDevLoginEnabled()) {
+      await deleteSession(sessionId);
+      return null;
+    }
+    current = session;
+  } else {
+    current = await refreshIfNeeded(session);
+    if (!current || !hasAppAccess(current)) {
+      await deleteSession(sessionId);
+      return null;
+    }
   }
-  if (current !== session) {
-    await writeSession(sessionId, current);
+
+  const withApp = await ensureAppToken(sessionId, current);
+  if (!withApp) return null;
+  if (withApp !== session) {
+    await writeSession(sessionId, withApp);
   }
-  return current;
+  return withApp;
 }
 
-/** The bearer token to send to the API for this session, if any. */
+/** The bearer token to send to the API for this session, if any: the BenchNotes
+ * token, never the Entra one. */
 export async function bearerForSession(
   sessionId: string | undefined
 ): Promise<string | null> {
   const session = await getActiveSession(sessionId);
-  return session?.idToken ?? null;
+  return session?.appToken ?? null;
 }

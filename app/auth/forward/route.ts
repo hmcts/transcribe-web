@@ -7,7 +7,8 @@ export const dynamic = "force-dynamic";
 /**
  * Caddy's forward_auth target for every backend /api/* call (see Caddyfile).
  *
- * 200 with `Authorization: Bearer <id token>` → Caddy copies that header onto
+ * 200 with `Authorization: Bearer <BenchNotes token>` (minted by the API from
+ * the Entra ID token, re-minted near expiry; DIAAT-373) → Caddy copies that header onto
  * the proxied request. 401 → Caddy returns it to the browser, which sends the
  * user to /auth/login.
  *

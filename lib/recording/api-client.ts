@@ -12,7 +12,7 @@ import type {
   Word,
   WordCorrection,
 } from "./types";
-import { JURISDICTION_HEADER } from "@/lib/jurisdiction-session";
+import { JURISDICTION_HEADER, ROLE_HEADER } from "@/lib/jurisdiction-session";
 
 // Server-only client for the transcription_svc backend. Never import this
 // from a "use client" component — it reads the backend API key, which must
@@ -179,6 +179,9 @@ async function rawBackendFetch(
   // DIAAT-334: the tab's jurisdiction; the API refuses another's material.
   if (auth?.jurisdiction) {
     headers[JURISDICTION_HEADER] = auth.jurisdiction;
+  }
+  if (auth?.role) {
+    headers[ROLE_HEADER] = auth.role;
   }
   return fetch(`${backendUrl()}${path}`, {
     ...init,
