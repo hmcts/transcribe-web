@@ -452,6 +452,49 @@ export async function deleteJob(
   await backendFetch(`/api/v1/jobs/${jobId}`, { method: "DELETE" }, auth);
 }
 
+/**
+ * One entry of a recording's audit history (DIAAT-395): who did what, in which
+ * role, and how it ended. The API sends no transcript text.
+ */
+export interface JobHistoryEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  actor_label: string;
+  actor_role: string | null;
+  outcome: string;
+}
+
+export interface JobHistoryPage {
+  items: JobHistoryEntry[];
+  total: number;
+}
+
+/**
+ * `GET /api/v1/jobs/{id}/history` (recording.audit.read, the recording's owner
+ * only; anyone else gets the answer for a recording they cannot see, a 404).
+ * Passed through as the API sent it.
+ */
+export async function getJobHistory(
+  jobId: string,
+  params: { page?: number; pageSize?: number } | undefined,
+  auth: BackendAuthContext | null
+): Promise<JobHistoryPage> {
+  const query = new URLSearchParams();
+  if (params?.page !== undefined) query.set("page", String(params.page));
+  if (params?.pageSize !== undefined) {
+    query.set("page_size", String(params.pageSize));
+  }
+  const qs = query.toString();
+  const response = await backendFetch(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/history${qs ? `?${qs}` : ""}`,
+    undefined,
+    auth
+  );
+  const body: JobHistoryPage = await response.json();
+  return { items: body.items ?? [], total: body.total ?? 0 };
+}
+
 // Returns the backend's raw Response — including non-2xx ones (404 if the
 // job/blob doesn't exist, 416 for an unsatisfiable range, etc.) — so the
 // route handler can forward the real status, headers, and body straight to

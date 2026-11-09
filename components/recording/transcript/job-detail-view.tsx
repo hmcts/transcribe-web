@@ -7,6 +7,7 @@ import { JobProgress } from "@/components/recording/job-status/job-progress";
 import { JobStatusBadge } from "@/components/recording/job-status/job-status-badge";
 import { AudioPlayerBar } from "@/components/recording/transcript/audio-player-bar";
 import { ModificationHistoryTable } from "@/components/recording/transcript/modification-history-table";
+import { RecordingHistory } from "@/components/recording/transcript/recording-history";
 import { NeedsReviewPanel } from "@/components/recording/transcript/needs-review-panel";
 import { TranscriptAccuracy } from "@/components/recording/transcript/transcript-accuracy";
 import { TranscriptSegment } from "@/components/recording/transcript/transcript-segment";
@@ -520,6 +521,11 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
               </div>
             )}
           </section>
+
+          {/* DIAAT-395: the recording's audit history (who did what to it, in
+              which role), for a context with recording.audit.read. Separate from
+              the per-segment history above, which it leaves alone. */}
+          <RecordingHistory jobId={jobId} />
         </div>
       </main>
     );
