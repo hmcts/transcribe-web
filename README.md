@@ -43,9 +43,9 @@ tests/recording/                 recording's suite (+ e2e/ for Playwright)
 ## Branches and environments
 
 - Feature branches start from `develop`, and their PRs go into `develop`. Each PR gets its own preview.
-- `develop` deploys to demo (`benchnotes.demo.platform.hmcts.net`). The permanent draft PR #25 (`develop` → `master`) rebuilds on every push to `develop`, and Flux deploys its `pr-25-*` image. Never merge, close or mark #25 ready.
+- `develop` deploys to demo (`benchnotes.demo.platform.hmcts.net`). The permanent draft PR #25 (`develop` → `master`) rebuilds on every push to `develop`, and Flux deploys its `pr-25-*` image. Never merge, close or mark #25 ready. Fast-forwarding `master` to the head of `develop` makes GitHub mark #25 as merged and close it (a merged PR cannot be reopened). Until demo builds from `develop` without #25, promote a commit behind the head of `develop`.
 - `develop` is the default branch. Its PRs are squash-merged, so its history stays linear.
-- To release, run the "Promote to master" workflow (Actions tab), optionally with a commit SHA on `develop` (default: the head of `develop`). It fast-forwards `master` to that commit, never force-pushes, and fails if `master` is not an ancestor of it. Only that workflow can push to `master`; there are no PRs into `master`. The Jenkins `master` build then deploys to AAT, then prod.
+- To release, run the "Promote to master" workflow (Actions tab), optionally with a commit SHA on `develop` (default: the head of `develop`). It fast-forwards `master` to that commit, never force-pushes, and fails if `master` is not an ancestor of it. Release only through this workflow, never by a PR into `master`. The Jenkins `master` build then deploys to AAT, then prod.
 - Old `pr-*` images expire after about 3 weeks, and demo pods then fail to pull. If `develop` has had no push in that time, re-run the latest Jenkins build of `PR-25`, which pushes a fresh tag.
 - Migrations go only through `master` of transcribe-api, so a feature that needs schema waits until its additive migration is on transcribe-api `master` and merged into its `develop`.
 - `demo` is the CNP branch for the demo Terraform only, and every `master` build overwrites it. Demo uses `master`'s Helm chart, so demo-only settings go in cnp-flux-config `apps/transcribe/transcribe-web/demo.yaml`.
