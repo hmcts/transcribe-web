@@ -316,7 +316,7 @@ describe("GET /auth/forward (Caddy forward_auth)", () => {
 });
 
 describe("app access roles (AUTH_ACCESS_ROLES)", () => {
-  const ROLES = "Judge,LegalTextManager,SystemAdministrator,Normal";
+  const ROLES = "Judge,LegalTextManager,SystemAdministrator";
 
   async function startLogin() {
     const { GET } = await import("@/app/auth/login/route");
@@ -371,7 +371,7 @@ describe("app access roles (AUTH_ACCESS_ROLES)", () => {
 
   it("ignores roles outside the list and blank entries", async () => {
     vi.stubEnv("AUTH_ACCESS_ROLES", " Judge, ,LegalTextManager ");
-    const res = await callback(["Normal", "SomethingElse"]);
+    const res = await callback(["Viewer", "SomethingElse"]);
     expect(res.status).toBe(403);
   });
 

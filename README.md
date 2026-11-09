@@ -80,6 +80,12 @@ itself — the CNP pattern for internal users (DARTS does the same):
   with PKCE against the MoJ tenant app registration, as a confidential client.
 - Tokens are kept in a server-side session in Redis (`lib/auth`). The browser
   only ever holds an opaque, httpOnly `transcribe_session` cookie.
+- At sign-in the API turns the Entra ID token into a short-lived BenchNotes
+  access token (`POST /api/auth/session`), kept in the session next to it and
+  minted again near expiry. That token, not the Entra one, is what every backend
+  call carries. The user's chosen jurisdiction and role, and what they may do,
+  come from the API (`GET /api/me/permissions`); the UI shows only what those
+  permissions allow. See [docs/authz-web.md](docs/authz-web.md).
 - Caddy attaches the session's bearer token to every backend `/api/*` call via
   `forward_auth` (`/auth/forward`), after discarding any `Authorization` or
   Easy Auth header the client sent. The recording area's own `/api/*` route
@@ -87,13 +93,19 @@ itself — the CNP pattern for internal users (DARTS does the same):
 - `proxy.ts` sends anyone without a session to the login. The API verifies
   the token on every call; the cookie check is only a routing hint.
 
-Locally, leave `AUTH_ENABLED=false`: nothing is gated, and the backend uses its
-mock identity with `ENVIRONMENT=local`.
+Locally, leave `AUTH_ENABLED=false`: nothing is gated. To work as one of the
+API's seeded personas (`ENVIRONMENT=local`), set `NEXT_PUBLIC_DEV_LOGIN=true`
+and run `yarn dev`: a persona picker appears, `/auth/dev-login?persona=<name>`
+signs in, and `/api/*` goes through a dev-only proxy that attaches the session's
+token. Both are refused when `AUTH_ENABLED=true` or in a production build
+(`yarn build && yarn start`). `node scripts/dev-mock-api.mjs` is a stand-in for
+the API when the real one is not running. Details in
+[docs/authz-web.md](docs/authz-web.md).
 
 ## Tests
 
 ```bash
-yarn test:unit    # vitest — 779 tests
+yarn test:unit    # vitest
 yarn test:e2e     # playwright (recording e2e specs)
 yarn type-check
 ```
