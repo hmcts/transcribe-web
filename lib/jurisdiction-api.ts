@@ -3,10 +3,24 @@ import type { Wording } from "@/lib/jurisdiction-wording";
 
 /** GET /api/jurisdictions/me (transcribe-api routes_jurisdictions.py). */
 
+/** DIAAT-345: draft (only its admins see it), test (its test group too) or live
+ * (every member). Absent from an API before stages: live. */
+export type JurisdictionStage = "draft" | "test" | "live";
+
 export interface JurisdictionSummary {
   code: string;
+  /** What users see: its display name, else its name. */
   name: string;
   role: "judge" | "admin";
+  stage?: JurisdictionStage;
+}
+
+/** Said beside a jurisdiction not yet live for everyone, so its admins and testers
+ * know; null for a live one. */
+export function stageNote(stage: JurisdictionStage | undefined): string | null {
+  if (stage === "draft") return "Draft";
+  if (stage === "test") return "Test";
+  return null;
 }
 
 export interface CurrentJurisdiction extends JurisdictionSummary {

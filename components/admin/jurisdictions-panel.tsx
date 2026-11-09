@@ -33,14 +33,20 @@ import {
   fetchWordingKeys,
   MEMBER_ROLES,
   removeJurisdictionMember,
+  STAGES,
   saveJurisdiction,
 } from "@/lib/admin-jurisdictions-api";
+import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 
 /**
  * Jurisdictions and their members (DIAAT-356), for SystemAdministrators: what
  * used to need a command on the server. A jurisdiction's wording, template and
  * hearing recordings are its settings; its members are added by sign-in email,
  * before or after they first sign in.
+ *
+ * DIAAT-345: a new jurisdiction is a draft only its admins see. Moved to test,
+ * its testers see it too; live, every member. It leaves draft only when it is
+ * ready, and the editor lists what is missing.
  */
 
 const message = (error: unknown) =>
@@ -155,11 +161,16 @@ export function JurisdictionsPanel() {
                     {j.code}
                   </button>
                 </TableCell>
-                <TableCell>{j.name}</TableCell>
+                <TableCell>
+                  {j.display_name || j.name}
+                  {j.service && (
+                    <span className="block text-xs text-muted-foreground">{j.service}</span>
+                  )}
+                </TableCell>
                 <TableCell>{j.member_count}</TableCell>
                 <TableCell className="space-x-1">
                   <Badge variant={j.enabled ? "default" : "secondary"}>
-                    {j.enabled ? "Enabled" : "Disabled"}
+                    {j.enabled ? stageNote(j.stage) ?? "Live" : "Disabled"}
                   </Badge>
                   {j.auto_enrol && <Badge variant="outline">New users join</Badge>}
                 </TableCell>
@@ -210,6 +221,12 @@ function JurisdictionEditor({
   const settings = jurisdiction?.settings ?? {};
   const [code, setCode] = useState(jurisdiction?.code ?? "");
   const [name, setName] = useState(jurisdiction?.name ?? "");
+  const [displayName, setDisplayName] = useState(jurisdiction?.display_name ?? "");
+  const [service, setService] = useState(jurisdiction?.service ?? "");
+  // A new one is a draft; one from an API before stages is live.
+  const [stage, setStage] = useState<JurisdictionStage>(
+    jurisdiction ? (jurisdiction.stage ?? "live") : "draft"
+  );
   const [enabled, setEnabled] = useState(jurisdiction?.enabled ?? true);
   const [autoEnrol, setAutoEnrol] = useState(jurisdiction?.auto_enrol ?? false);
   const [template, setTemplate] = useState<string>(settings.template ?? "none");
@@ -223,7 +240,18 @@ function JurisdictionEditor({
   const [version, setVersion] = useState(jurisdiction?.version ?? "");
 
   // DIAAT-332: a switch reloads the tab, losing changes not saved, or a save under way.
-  const form = JSON.stringify({ code, name, enabled, autoEnrol, template, recordings, wording });
+  const form = JSON.stringify({
+    code,
+    name,
+    displayName,
+    service,
+    stage,
+    enabled,
+    autoEnrol,
+    template,
+    recordings,
+    wording,
+  });
   const [savedForm, setSavedForm] = useState(form);
   useJurisdictionSwitchGuard({ busy: saving, unsaved: form !== savedForm });
 
@@ -237,6 +265,9 @@ function JurisdictionEditor({
     try {
       const saved = await saveJurisdiction(code, {
         name,
+        display_name: displayName,
+        service,
+        stage,
         enabled,
         auto_enrol: autoEnrol,
         settings: {
@@ -297,6 +328,54 @@ function JurisdictionEditor({
           />
         </div>
         <div className="space-y-1">
+          <Label htmlFor="jurisdiction-display-name">Display name</Label>
+          <Input
+            id="jurisdiction-display-name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Employment Tribunals (ET)"
+            maxLength={200}
+            aria-describedby="jurisdiction-display-name-hint"
+          />
+          <p id="jurisdiction-display-name-hint" className="text-xs text-muted-foreground">
+            What users see. Blank: the name.
+          </p>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="jurisdiction-service">Service (where it applies)</Label>
+          <Input
+            id="jurisdiction-service"
+            value={service}
+            onChange={(e) => setService(e.target.value)}
+            placeholder="England and Wales"
+            maxLength={200}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="jurisdiction-stage">Who sees it</Label>
+          <Select
+            value={stage}
+            onValueChange={(v) => setStage(v as JurisdictionStage)}
+            disabled={!jurisdiction}
+          >
+            <SelectTrigger id="jurisdiction-stage" aria-describedby="jurisdiction-stage-hint">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STAGES.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p id="jurisdiction-stage-hint" className="text-xs text-muted-foreground">
+            {jurisdiction
+              ? "Mark members as testers below to put them in the test group."
+              : "A new jurisdiction starts as a draft. Add its admins, then switch it on."}
+          </p>
+        </div>
+        <div className="space-y-1">
           <Label htmlFor="jurisdiction-template">Template</Label>
           <Select value={template} onValueChange={setTemplate}>
             <SelectTrigger id="jurisdiction-template">
@@ -324,6 +403,23 @@ function JurisdictionEditor({
           />
         </div>
       </div>
+
+      {jurisdiction?.stage === "draft" && (jurisdiction.problems?.length ?? 0) > 0 && (
+        <div
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
+          aria-labelledby="jurisdiction-not-ready"
+          role="region"
+        >
+          <p id="jurisdiction-not-ready" className="font-medium">
+            Before it can be switched on for testers or everyone:
+          </p>
+          <ul className="mt-1 list-disc pl-5">
+            {jurisdiction.problems?.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <details>
         <summary className="cursor-pointer text-sm font-medium">
@@ -383,6 +479,7 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
   const [members, setMembers] = useState<AdminJurisdictionMember[]>([]);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<AdminJurisdictionMember["role"]>("judge");
+  const [tester, setTester] = useState(false);
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   // An email typed but not added yet is a change a switch would lose.
@@ -404,7 +501,7 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
     setBusy(true);
     try {
       const existing = members.find((m) => m.email === email.trim().toLowerCase());
-      const added = await addJurisdictionMember(code, email.trim(), role);
+      const added = await addJurisdictionMember(code, email.trim(), role, tester);
       toast.success(
         existing
           ? `${added.email} is now ${added.role === "admin" ? "an admin" : "a judge"} in ${code}`
@@ -413,8 +510,27 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             : `Added ${added.email} to ${code}`
       );
       setEmail("");
+      setTester(false);
       await load();
       await onChanged();
+    } catch (err) {
+      toast.error(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // DIAAT-345: in or out of the test group, keeping their role.
+  async function setTesterOf(member: AdminJurisdictionMember, value: boolean) {
+    setBusy(true);
+    try {
+      await addJurisdictionMember(code, member.email, member.role, value);
+      toast.success(
+        value
+          ? `${member.email} is now in the test group for ${code}`
+          : `${member.email} is no longer in the test group for ${code}`
+      );
+      await load();
     } catch (err) {
       toast.error(message(err));
     } finally {
@@ -476,6 +592,9 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             </SelectContent>
           </Select>
         </div>
+        <div className="flex h-9 items-center">
+          <CheckboxField id="member-tester" label="Tester" checked={tester} onChange={setTester} />
+        </div>
         <Button type="submit" disabled={busy || !email.trim()}>
           <Plus className="mr-1 h-4 w-4" />
           Add member
@@ -490,6 +609,7 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             <TableRow>
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Tester</TableHead>
               <TableHead>Signed in</TableHead>
               <TableHead className="w-40" />
             </TableRow>
@@ -499,6 +619,14 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
               <TableRow key={m.email}>
                 <TableCell className="font-medium">{m.email}</TableCell>
                 <TableCell>{m.role === "admin" ? "Admin" : "Judge"}</TableCell>
+                <TableCell>
+                  <Checkbox
+                    checked={m.tester ?? false}
+                    disabled={busy}
+                    onCheckedChange={(value) => void setTesterOf(m, value === true)}
+                    aria-label={`${m.email} is a tester`}
+                  />
+                </TableCell>
                 <TableCell>
                   {m.pending ? <Badge variant="outline">Not yet</Badge> : "Yes"}
                 </TableCell>
