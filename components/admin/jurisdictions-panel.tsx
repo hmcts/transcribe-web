@@ -393,7 +393,7 @@ function JurisdictionEditor({
             value={name}
             onChange={(e) => setName(e.target.value)}
             placeholder="Employment Tribunal"
-            readOnly={nameLocked}
+            disabled={nameLocked}
             aria-describedby={nameLocked ? "jurisdiction-locked" : undefined}
           />
         </div>

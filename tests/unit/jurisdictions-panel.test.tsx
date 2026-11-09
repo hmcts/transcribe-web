@@ -417,7 +417,7 @@ describe("JurisdictionsPanel", () => {
 
       await user.click(await screen.findByRole("button", { name: "IAC" }));
 
-      expect((screen.getByLabelText("Name") as HTMLInputElement).readOnly).toBe(true);
+      expect((screen.getByLabelText("Name") as HTMLInputElement).disabled).toBe(true);
       expect(screen.getByLabelText("Enabled").hasAttribute("disabled")).toBe(true);
       expect(screen.getByText(/Only a super administrator can rename a jurisdiction/)).toBeTruthy();
       // The settings stay theirs: template, recordings, wording.
@@ -442,7 +442,7 @@ describe("JurisdictionsPanel", () => {
 
       await user.click(await screen.findByRole("button", { name: "IAC" }));
 
-      expect((screen.getByLabelText("Name") as HTMLInputElement).readOnly).toBe(false);
+      expect((screen.getByLabelText("Name") as HTMLInputElement).disabled).toBe(false);
       expect(screen.getByLabelText("Enabled").hasAttribute("disabled")).toBe(false);
       expect(screen.queryByText(/Only a super administrator can rename/)).toBeNull();
     });

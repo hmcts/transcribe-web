@@ -32,6 +32,15 @@ export function hasTarget(picked: PickedUser): boolean {
   return picked.user !== null || typedEmail(picked) !== null;
 }
 
+/** Whether another suggestion has the same address as `user`. */
+function sharedEmail(matches: AdminUser[], user: AdminUser): boolean {
+  return matches.some(
+    (other) =>
+      other.id !== user.id &&
+      other.email.toLowerCase() === user.email.toLowerCase()
+  );
+}
+
 const SEARCH_DELAY_MS = 250;
 const MIN_SEARCH_LENGTH = 2;
 const SUGGESTIONS = 5;
@@ -127,9 +136,13 @@ export function UserPicker({
                 onClick={() => onChange({ user, email: user.email })}
               >
                 <span>{user.email}</span>
-                {user.name && (
+                {(user.name || sharedEmail(matches, user)) && (
                   <span className="text-xs text-muted-foreground">
                     {user.name}
+                    {sharedEmail(matches, user) &&
+                      // Two accounts with one address (API: 409 `ambiguous_email`
+                      // when assigned by email): tell them apart.
+                      `${user.name ? ", " : ""}account ending ${user.id.slice(-4)}`}
                   </span>
                 )}
               </button>

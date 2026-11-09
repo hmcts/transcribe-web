@@ -36,6 +36,17 @@ browser                      Next.js (server)                         transcribe
   is active is what the session remembers. If the API refuses the mint (401/403)
   the session ends, as it does today when the Entra refresh fails; a blip (API
   down) keeps a still-valid token.
+* The token carries `sess_exp`: the Entra-verified sign-in it descends from, plus
+  one lifetime. `PUT /api/me/context` and `DELETE /api/me/jurisdictions/{code}`
+  mint from the presenting token and never outlive it, so `expires_at` of their
+  answer can be shorter than a full lifetime (the web reads `expires_at`, never
+  assumes 300 s) and a chain of context changes ends at `sess_exp`. That is a
+  re-mint from Entra, not a sign-out: the session re-mints within 60 s of expiry as
+  above, and if a context change is answered 401 anyway (the chain ended while the
+  call was in flight) `/auth/context` and `/auth/jurisdictions/{code}`
+  (`callWithSessionToken` in `lib/auth/route-support.ts`) mint again from Entra
+  with the session's context and repeat the call once. The user is not sent back
+  to sign-in.
 * A change to the user's access (a role added or removed, a request approved)
   reaches them at the next re-mint, within the token lifetime. `POST /auth/session`
   mints now (the "Check again" button on the no-access page).
@@ -81,12 +92,31 @@ local dev proxy does the same, so the token cannot be fetched by hand either.
   `dictation_disabled` reads the dictation flag again, so dictation is hidden at
   once (the dictation list is also not loaded while the flag is off). Every other
   refusal (`permission_denied`, `jurisdiction_not_in_scope`, `assignment_not_allowed`,
-  ...) is shown where it happened, in the API's own words.
+  ...) is shown where it happened, in the API's own words, except the ones with
+  plain words of the web's own (next section). Every API error, the 401 and the 409
+  of a stale save included, is `{"detail": {"code", "message"}}`: `apiClient` reads
+  the message and keeps the code (a 401 too), and the dictation submission reads
+  the same shape instead of showing "[object Object]".
 * Switching (`providers/access.tsx`, `switchContext`): save the tab's work
   (the `onBeforeJurisdictionSwitch` handlers), `POST /auth/context`, save again,
   then reload at the same page if it is a list-level page the new context may use
   (`lib/access/routes.ts`), else at `/`. If the second save fails the previous
   context is put back. Leaving a jurisdiction does the same with `DELETE`.
+
+## Refusals that have their own words
+
+`describeRefusal(error, context)` (`lib/access/refusal-messages.ts`; used by
+`errorMessage` in every admin screen and by the access request form) gives these in
+plain words and falls back to the API's message for any other code:
+
+| code | where | what the user sees |
+|---|---|---|
+| `own_request` 403 | Approvals | "This is your own request. Another administrator has to decide it." The queue offers no Approve or Reject on a request whose `requester.id` is the user's own id, so the refusal is only a fallback |
+| `assignment_not_allowed` 403 | Users, Administrators of X, Super administrators | for oneself: "You cannot give yourself a role. Ask another administrator to add you." Add is off, with that note, when the person picked or the email typed is the caller, unless the caller holds `jurisdiction_super_admin.assign` (a system administrator may give themselves a stored role: *Add me* on the Super administrators screen). Otherwise the API's own message |
+| `ambiguous_email` 409 | Users, Administrators of X | "More than one person has signed in with that email address ... choose the person from the list". The picker tells two accounts with one address apart ("account ending ...") and assigns by id |
+| `jurisdiction_disabled` 409 | Users, Administrators of X, Approvals | "That jurisdiction is switched off ... A super administrator can switch it on again" |
+| `too_many_pending_requests` 409 | access request form | "... Withdraw one of them, then ask again." Each pending request has Withdraw on the same page, and the message goes when one is withdrawn |
+| `permission_denied` 403 | Jurisdictions, saving | "Only a super administrator can rename or switch off a jurisdiction" |
 
 ## How permissions drive the UI
 
@@ -156,7 +186,11 @@ A role change reaches the person at their next token re-mint, so the screens say
   not in `GET /api/admin/roles` (the API refuses both: 403 `cannot_deactivate_self`,
   `assignment_not_allowed`).
   Role history (`GET /api/admin/role-history`, 50 a page) is a second view, shown
-  only with `role_audit.read`.
+  only with `role_audit.read`. A row's `actor.id` is null when a system
+  administrator made the change with their own permissions (the API sends
+  `email: "system administrator"`, no person): it reads "System administrator"
+  (`actorLabel`); an address the API did give is shown; a row missing its actor or
+  target does not break the list.
 * **Approvals** (`approvals-panel.tsx`, `GET /api/admin/access-requests?status=pending`):
   approve or reject with an optional reason. The email link is
   `/admin?tab=approvals&request=<id>`: the Admin page opens that tab (if the
@@ -164,13 +198,20 @@ A role change reaches the person at their next token re-mint, so the screens say
   request and scrolls to it. The link carries only the id and grants nothing: the
   highlight is of a request in the queue the API returned, and an id that is not
   there (decided, withdrawn, or another jurisdiction's) gets a neutral "not
-  waiting for your decision" that confirms nothing about it.
+  waiting for your decision" that confirms nothing about it. An administrator's own
+  request in the queue shows who and what but no Approve, Reject or reason box, only
+  "This is your own request": nobody decides their own (403 `own_request`).
 * **Jurisdictions** (`jurisdictions-panel.tsx`): settings for
   `jurisdictions.manage`, *Add jurisdiction* only for `jurisdiction.create`, and,
   for `jurisdiction_admin.assign`, *Administrators of X*: the JurisdictionAdministrator
   assignments of that jurisdiction, added by email or by picking a signed-in user,
   removed by assignment id (`components/admin/role-holders.tsx`). `auto_enrol` and
-  the judge/admin member endpoints are gone. Someone who holds only
+  the judge/admin member endpoints are gone. Changing a jurisdiction's name or its
+  Enabled switch needs `jurisdiction.create` (a jurisdiction administrator changes
+  only the settings: template, hearing recordings, wording): for a holder of
+  `jurisdictions.manage` without it the editor shows name and Enabled disabled, with
+  a note, and sends the name and `enabled` the jurisdiction already has (which the
+  API accepts; anything else is 403 `permission_denied`). Someone who holds only
   `jurisdiction_admin.assign` sees the names (`GET /api/jurisdictions/public`) and
   the administrators, none of the settings.
 * **Super administrators** (`super-administrators-panel.tsx`): the holders of the
@@ -250,7 +291,9 @@ yarn dev                              # NODE_ENV=development; `yarn build && yar
 ## Running against the real API
 
 Checked end to end in a browser, as every persona, against transcribe-api branch
-`authz/p4-management-api` (head `438a03a`). Two terminals, plus Docker for Postgres.
+`authz/p5-review-fixes` (head `c30118d`, the API after its review-fix pass: new
+refusal codes, `sess_exp`, `{code,message}` 401/409). Two terminals, plus Docker for
+Postgres.
 
 **0. Postgres.** The API's `docker compose up -d postgres azurite` serves port 5432.
 On the development machine the bridge to the host does not work, and the Postgres
@@ -263,11 +306,24 @@ grep DATABASE_CONNECTION_STRING /home/oleg/code_repos/transcribe-api/.env
 # DATABASE_CONNECTION_STRING=postgresql://transcribe:transcribe@localhost:5433/transcribe
 ```
 
+*A scratch database* keeps the `transcribe` one (and `transcribe_test`, which the API's
+tests use) untouched, for instance when another checkout of the API is running its
+tests. Create it once, and in the shell that runs alembic, the seed script and the API
+export the URL **after** `. ./.env`, so it is the one in the process environment
+(the API loads dotenv files at import and does not override what is already set):
+
+```bash
+docker exec transcribe-postgres-hostnet psql -U transcribe -p 5433 -d postgres -c 'CREATE DATABASE transcribe_scratch'
+export DATABASE_CONNECTION_STRING=postgresql://transcribe:transcribe@localhost:5433/transcribe_scratch
+# drop it when done:
+docker exec transcribe-postgres-hostnet psql -U transcribe -p 5433 -d postgres -c 'DROP DATABASE transcribe_scratch WITH (FORCE)'
+```
+
 **1. API, terminal 1** (port 8000, `ENVIRONMENT=local` is in its `.env`; the token key
 `APP_JWT_SIGNING_KEY` must be set there too):
 
 ```bash
-cd /home/oleg/code_repos/transcribe-api            # branch authz/p4-management-api
+cd /home/oleg/code_repos/transcribe-api            # branch authz/p5-review-fixes
 set -a; . ./.env; set +a                          # alembic reads the environment, not .env
 .venv/bin/alembic upgrade head
 .venv/bin/python scripts-seed-personas.py          # idempotent: adds what is missing, deletes nothing
@@ -276,17 +332,23 @@ set -a; . ./.env; set +a                          # alembic reads the environmen
 #   APP_JWT_TTL_SECONDS=75 ./run-local.sh
 ```
 
+From a `git worktree` of the API (no `.venv` of its own), copy the checkout's `.env` in,
+and run the main checkout's interpreter with `PYTHONPATH=<worktree>/src` instead of
+`./run-local.sh`: `.venv/bin/python -m uvicorn transcribe_api.api.app:create_app --factory --host 127.0.0.1 --port 8000`
+(`alembic -c <worktree>/alembic.ini upgrade head` and the seed script the same way).
+
 **2. Web, terminal 2** (port 3000):
 
 ```bash
-cd /home/oleg/code_repos/transcribe-web            # branch authz/p7-web-integration
+cd /home/oleg/code_repos/transcribe-web            # branch authz/p8-web-final
 cat > .env.local <<'EOF'
 AUTH_ENABLED=false
 NEXT_PUBLIC_DEV_LOGIN=true
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
 BACKEND_INTERNAL_URL=http://127.0.0.1:8000
 EOF
-corepack yarn dev
+rm -rf .next                  # after a `yarn build`: the production .next made the dev server reload the page in a loop
+corepack yarn dev             # also writes an untracked AGENTS.md: do not commit it
 ```
 
 **3. Sign in** at `http://localhost:3000/auth/dev-login?persona=<name>` (or use the
@@ -322,6 +384,24 @@ session lives in the dev server's memory: restarting `yarn dev` signs everyone o
   `judge-et` (reload): Dictation is gone, `/record` goes to the home page. The API
   answers its dictation routes 403 `dictation_disabled`; a tab already open hides
   dictation as soon as it meets one. Switch it back on.
+* *Refusals the screens avoid.* As `jadmin-iac`: Users, type `jadmin-iac@localhost.test`
+  and tick Judge (a note says you cannot give yourself a role; Add stays off). Jurisdictions,
+  IAC: Name and Enabled are disabled, with a note; Save still works for the settings.
+  Approvals, for a request of your own (an administrator asking for another role has no
+  button for it in the app; from the browser console on any page:
+  `fetch('/api/access-requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jurisdiction:'IAC',roles:['LegalTextManager']})})`):
+  the request is listed, with "This is your own request" instead of Approve and Reject.
+  As `jsuper`, add a jurisdiction with Enabled off, then add an administrator to it:
+  "That jurisdiction is switched off". As `no-role` with five requests pending, a sixth is
+  refused with "Withdraw one of them" (withdraw one on the same page, send again).
+* *History of a system administrator's change.* As `sysadmin`: Jurisdictions, IAC, add an
+  administrator by email. As `jsuper`: Users, Role history: the row reads "Done by System
+  administrator".
+* *Token expiry.* Start the API with `APP_JWT_TTL_SECONDS=75`, sign in as `multi` and
+  choose IAC administrator. Leave the tab open and use it: about every 20 s the web mints
+  again from the persona (the stand-in for the Entra ID token) with the chosen context
+  and you stay where you are. A context change made within the first 75 s gets a token
+  that expires with the sign-in (`sess_exp`), not a full 75 s later.
 * *Stale tab.* As `multi`, choose IAC administrator in tab 1; in tab 2 switch to ET
   Judge. In tab 1 click anything that calls the API: the "changed in another tab,
   reload" banner (409 `context_changed`).
@@ -407,7 +487,12 @@ What a token may do is what it carried when minted, as in the real API, so a rol
 given or removed reaches the user at their next mint. `APP_JWT_TTL_SECONDS=75`
 makes that quick (the web re-mints 60 s before expiry). At start-up it prints the
 ids of two seeded pending requests, for `/admin?tab=approvals&request=<id>`.
-It answers 403 `context_required` to anything else when there is no context, and 409
+It also gives the API's review-fix refusals: 403 `assignment_not_allowed` for giving yourself a
+role (a system administrator excepted), 403 `own_request`, 409 `jurisdiction_disabled`, 409
+`too_many_pending_requests` (five), 403 `permission_denied` for a jurisdiction administrator
+changing a name or `enabled`, 409 `edit_conflict`, history rows with `actor.id` null for a
+system administrator's own change, and `{code, message}` 401s (`not_authenticated`,
+`invalid_token`). It does not have `sess_exp` or `ambiguous_email`. It answers 403 `context_required` to anything else when there is no context, and 409
 `context_changed` when `X-Jurisdiction` / `X-Role` differ from the token's context.
 Anything it does not know is 404 `mock_not_implemented`.
 
@@ -439,3 +524,16 @@ fallback), `recording-history.test.tsx` and the history route test under
 `tests/recording/unit`, `user-settings-access.test.tsx`, `no-role-strings.test.ts`,
 `dev-mock-api.test.ts`. `tests/access-helpers.ts` has a `MeResponse` for each
 persona shape; its role names and role map are test data copied from the contract.
+
+The API's review-fix changes (DIAAT-373, final web pass) are covered in
+`refusal-messages.test.ts` (the codes in plain words, `actorLabel`, the dictation
+submission's `{code, message}` body), `admin-users-panel.test.tsx` (null history actor,
+no self-assignment, ambiguous email, disabled jurisdiction, the picker telling twins
+apart), `admin-approvals-panel.test.tsx` (no Approve or Reject on one's own request),
+`jurisdictions-panel.test.tsx` (name and Enabled need `jurisdiction.create`),
+`access-provider.test.tsx` (too many pending requests), `lib-api-client.test.ts` (a 401
+keeps its code, a 409 `edit_conflict` reads as text), `auth-app-token.test.ts` (a context
+change whose token chain ended re-mints and repeats once) and `dev-mock-api.test.ts`.
+`tests/unit/dictation-form-data.test.ts` ("sets hearingDate to today's date") compares
+the local date with the UTC date and fails between 00:00 and 01:00 in CET/CEST; it is
+not related to this work.

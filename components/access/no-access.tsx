@@ -108,6 +108,8 @@ export function NoAccess({
   const withdraw = async (id: string) => {
     try {
       await withdrawAccessRequest(id);
+      // Room for another request: an earlier "too many waiting" no longer stands.
+      setFailed(null);
       await loadRequests();
     } catch (error) {
       toast.error(message(error, "The request could not be withdrawn."));

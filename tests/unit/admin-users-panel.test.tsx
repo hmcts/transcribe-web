@@ -540,6 +540,29 @@ describe("refusals about who a role goes to", () => {
     expect(within(form).getByLabelText("Judge").getAttribute("aria-checked")).toBe("true");
   });
 
+  it("tells two accounts with the same address apart in the picker, so one can be chosen by id", async () => {
+    const TWIN_A = person({ id: "aaaa-1111", email: "twin@example.test" });
+    const TWIN_B = person({ id: "bbbb-2222", email: "twin@example.test" });
+    serve({ users: [TWIN_A, TWIN_B, ANNA] });
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
+
+    await user.type(within(form).getByLabelText("Sign-in email"), "twin@");
+
+    expect(await within(form).findByText("account ending 1111")).toBeTruthy();
+    expect(within(form).getByText("account ending 2222")).toBeTruthy();
+    await user.click(within(form).getByRole("button", { name: /account ending 2222/ }));
+    await user.click(await within(form).findByLabelText("Judge"));
+    await user.click(within(form).getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(calls("POST", "/admin/assignments")).toHaveLength(1));
+    expect(JSON.parse(String(calls("POST", "/admin/assignments")[0][1]?.body))).toMatchObject({
+      user_id: "bbbb-2222",
+      email: null,
+    });
+  });
+
   it("explains a disabled jurisdiction (409)", async () => {
     serve({
       refuse: {
