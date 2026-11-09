@@ -128,7 +128,7 @@
     "unified": "^11.0.5",
     "unist-util-visit": "^5.1.0",
     "uuid": "^13.0.0",
-    "vitest": "^4.1.4",
+    "vitest": "^4.1.12",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -150,7 +150,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "@vitest/coverage-v8": "^4.1.4",
+    "@vitest/coverage-v8": "^4.1.12",
     "jsdom": "^29.1.1",
     "lint-staged": "^17.0.3",
     "openapi-typescript-codegen": "^0.30.0",
@@ -158,8 +158,8 @@
     "tailwindcss": "4.2.4",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3",
-    "vite": "^8.3.1",
-    "vitest": "^4.1.4",
+    "vite": "^8.3.3",
+    "vitest": "^4.1.12",
     "wait-on": "^9.0.10"
   },
   "engines": {
@@ -175,5 +175,8 @@
     "sharp": {
       "built": true
     }
+  },
+  "resolutions": {
+    "postcss-selector-parser@npm:6.0.10": "npm:6.1.5"
   }
 }
