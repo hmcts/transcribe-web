@@ -18,10 +18,15 @@ import {
   Users,
   X,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { ApprovalsPanel } from "@/components/admin/approvals-panel";
+import { FeatureFlagsPanel } from "@/components/admin/feature-flags-panel";
 import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
 import { TemplatesEditor } from "@/components/admin/templates-editor";
+import { SuperAdministratorsPanel } from "@/components/admin/super-administrators-panel";
+import { UsersPanel } from "@/components/admin/users-panel";
 import { AppSidebar, type Selection } from "@/components/app-sidebar";
 import { AdminEditor } from "@/components/editor/admin-editor";
 import {
@@ -106,7 +111,11 @@ const ADMIN_TABS: AdminTab[] = [
     value: "jurisdictions",
     label: "Jurisdictions",
     icon: Building2,
-    anyOf: ["jurisdictions.manage", "jurisdiction.create"],
+    anyOf: [
+      "jurisdictions.manage",
+      "jurisdiction.create",
+      "jurisdiction_admin.assign",
+    ],
   },
   {
     value: "super-admins",
@@ -120,30 +129,35 @@ const ADMIN_TABS: AdminTab[] = [
 const TAB_TRIGGER_CLASS =
   "rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium";
 
-/** What a tab not yet built shows. The tabs themselves are Phase 6 (DIAAT-385, 391, 394, 396). */
-const PLACEHOLDERS: Record<string, { title: string; text: string }> = {
-  users: {
-    title: "Users",
-    text: "Adding users and managing their roles is not available in this screen yet.",
-  },
-  approvals: {
-    title: "Approvals",
-    text: "Deciding requests for access is not available in this screen yet.",
-  },
-  "super-admins": {
-    title: "Super administrators",
-    text: "Assigning super administrators is not available in this screen yet.",
-  },
-  "feature-flags": {
-    title: "Feature flags",
-    text: "Managing feature flags is not available in this screen yet.",
-  },
-};
 
 export default function AdminPage() {
+  // useSearchParams needs a Suspense boundary for the page to build.
+  return (
+    <Suspense fallback={<LoadingState />}>
+      <AdminTabs />
+    </Suspense>
+  );
+}
+
+/**
+ * `/admin?tab=approvals&request=<id>` (the link in the approvers' email,
+ * DIAAT-398) opens that tab, and the approvals queue highlights that request. The
+ * link carries only the id: what the person may see is decided by the API.
+ */
+function AdminTabs() {
   const { current, resolved } = useJurisdiction();
   const { can } = useAccess();
+  const params = useSearchParams();
   const tabs = ADMIN_TABS.filter((tab) => tab.anyOf.some(can));
+  const wanted = params?.get("tab") ?? null;
+  const requestId = params?.get("request") ?? null;
+  const initial = tabs.find((tab) => tab.value === wanted) ?? tabs[0];
+  const [active, setActive] = useState(initial?.value);
+  // A link followed while the page is open (same page, new query) moves the tab.
+  const wantedIsAvailable = tabs.some((tab) => tab.value === wanted);
+  useEffect(() => {
+    if (wanted && wantedIsAvailable) setActive(wanted);
+  }, [wanted, wantedIsAvailable]);
 
   if (tabs.length === 0) {
     return (
@@ -157,7 +171,11 @@ export default function AdminPage() {
 
   return (
     <div className="fixed inset-0 top-14 flex flex-col bg-background">
-      <Tabs defaultValue={tabs[0].value} className="flex flex-col h-full min-h-0">
+      <Tabs
+        value={tabs.some((tab) => tab.value === active) ? active : tabs[0].value}
+        onValueChange={setActive}
+        className="flex flex-col h-full min-h-0"
+      >
         <div className="shrink-0 border-b px-4">
           <TabsList className="h-10 rounded-none bg-transparent p-0 gap-4">
             {tabs.map((tab) => (
@@ -200,29 +218,56 @@ export default function AdminPage() {
               forceMount={tab.value === "jurisdictions" ? true : undefined}
               className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden"
             >
-              {tab.value === "jurisdictions" ? (
-                // DIAAT-356: jurisdictions and their members, without a server command.
-                <JurisdictionsPanel />
-              ) : tab.value === "templates" ? (
-                // DIAAT-344: the Word templates of the jurisdiction this tab works in.
-                resolved && current ? (
-                  <TemplatesEditor key={`templates:${current.code}`} code={current.code} />
-                ) : resolved ? (
-                  <p role="status" className="text-muted-foreground">
-                    Choose a jurisdiction to manage its templates.
-                  </p>
-                ) : (
-                  <LoadingState />
-                )
-              ) : (
-                <AdminPlaceholder {...PLACEHOLDERS[tab.value]} />
-              )}
+              <AdminTabContent
+                tab={tab.value}
+                requestId={requestId}
+                currentCode={resolved ? (current?.code ?? null) : undefined}
+              />
             </TabsContent>
           );
         })}
       </Tabs>
     </div>
   );
+}
+
+function AdminTabContent({
+  tab,
+  requestId,
+  currentCode,
+}: {
+  tab: string;
+  requestId: string | null;
+  /** The jurisdiction this tab works in: null, none; undefined, not loaded yet. */
+  currentCode: string | null | undefined;
+}) {
+  switch (tab) {
+    case "templates":
+      // DIAAT-344: the Word templates of the jurisdiction this tab works in. Someone
+      // acting globally (a super administrator) picks a jurisdiction under Jurisdictions.
+      if (currentCode === undefined) return <LoadingState />;
+      return currentCode ? (
+        <TemplatesEditor key={`templates:${currentCode}`} code={currentCode} />
+      ) : (
+        <AdminPlaceholder
+          title="Templates"
+          text="Open a jurisdiction under Jurisdictions to manage its templates."
+        />
+      );
+    case "users":
+      return <UsersPanel />;
+    case "approvals":
+      return <ApprovalsPanel highlightRequestId={requestId} />;
+    case "jurisdictions":
+      // DIAAT-356, DIAAT-394: jurisdictions, and who administers each.
+      return <JurisdictionsPanel />;
+    case "super-admins":
+      return <SuperAdministratorsPanel />;
+    case "feature-flags":
+      return <FeatureFlagsPanel />;
+    default:
+      return null;
+  }
 }
 
 function AdminPlaceholder({ title, text }: { title: string; text: string }) {

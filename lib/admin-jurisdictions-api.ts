@@ -1,7 +1,12 @@
 import { apiClient } from "@/lib/api-client";
 import type { JurisdictionStage } from "@/lib/jurisdiction-api";
 
-/** /api/admin/jurisdictions (transcribe-api, DIAAT-356): behind `jurisdictions.manage` (and `jurisdiction.create` to add one). */
+/**
+ * /api/admin/jurisdictions (transcribe-api, DIAAT-356): behind `jurisdictions.manage`
+ * (and `jurisdiction.create` to add one). Who administers a jurisdiction is not
+ * here: that is a role assignment (lib/admin-users-api.ts). The auto-enrol flag and
+ * the old judge/admin member endpoints are gone (DIAAT-373).
+ */
 
 export interface JurisdictionSettingsData {
   wording?: Record<string, string>;
@@ -20,29 +25,17 @@ export interface AdminJurisdiction {
   /** What stops it being switched on (out of draft), in plain words. */
   problems?: string[];
   enabled: boolean;
-  auto_enrol: boolean;
   settings: JurisdictionSettingsData;
   member_count: number;
   /** Sent back with a save: a change made meanwhile is refused (409), not undone. */
   version: string;
 }
 
-export interface AdminJurisdictionMember {
-  email: string;
-  role: "judge" | "admin";
-  /** In the test group: sees the jurisdiction while it is in test (DIAAT-345). */
-  tester?: boolean;
-  /** Added by email; joins when they first sign in. */
-  pending: boolean;
-}
-
 export const STAGES: { value: JurisdictionStage; label: string }[] = [
-  { value: "draft", label: "Draft: only its admins see it" },
-  { value: "test", label: "Test: its admins and testers see it" },
-  { value: "live", label: "Live: every member sees it" },
+  { value: "draft", label: "Draft: only its administrators see it" },
+  { value: "test", label: "Test: its administrators and test group see it" },
+  { value: "live", label: "Live: everyone with a role there sees it" },
 ];
-
-export const MEMBER_ROLES = ["judge", "admin"] as const;
 
 /** apiClient returns a refusal as `error` (the API's reason); throw it, for the
  * panel to show as it is. */
@@ -78,33 +71,9 @@ export function saveJurisdiction(
     service?: string;
     settings: JurisdictionSettingsData;
     enabled?: boolean;
-    auto_enrol?: boolean;
     stage?: JurisdictionStage;
     version: string;
   }
 ): Promise<AdminJurisdiction> {
   return request(`/admin/jurisdictions/${encodeURIComponent(code)}`, json("PUT", body));
-}
-
-export function fetchJurisdictionMembers(code: string): Promise<AdminJurisdictionMember[]> {
-  return request(`/admin/jurisdictions/${encodeURIComponent(code)}/members`, { cache: "no-store" });
-}
-
-/** Add someone, or change their role or whether they test it (`tester` undefined:
- * unchanged). */
-export function addJurisdictionMember(
-  code: string,
-  email: string,
-  role: AdminJurisdictionMember["role"],
-  tester?: boolean
-): Promise<AdminJurisdictionMember> {
-  return request(
-    `/admin/jurisdictions/${encodeURIComponent(code)}/members`,
-    json("POST", { email, role, tester })
-  );
-}
-
-export async function removeJurisdictionMember(code: string, email: string): Promise<void> {
-  const params = new URLSearchParams({ email });
-  await request(`/admin/jurisdictions/${encodeURIComponent(code)}/members?${params}`, { method: "DELETE" });
 }

@@ -316,7 +316,10 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       "Approvals",
       "Jurisdictions",
     ]);
+    // Assigning administrators (jurisdiction_admin.assign) opens Jurisdictions
+    // for them too; the settings in it are for jurisdictions.manage.
     expect(await tabsFor(ME.sysadminOnly)).toEqual([
+      "Jurisdictions",
       "Super administrators",
       "Feature flags",
     ]);
@@ -333,18 +336,18 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
     );
   });
 
-  it("shows a placeholder, with no role list or change-role control, in the Users tab (DIAAT-375)", async () => {
+  it("opens the working Users panel, which asks the API for the roles and the users (DIAAT-385)", async () => {
     mockPersona = ME.jurisdictionAdministrator;
     const user = userEvent.setup();
     render(<AdminPage />);
     await user.click(await screen.findByRole("tab", { name: /Users/ }));
 
-    expect(
-      await screen.findByText(/not available in this screen yet/)
-    ).toBeTruthy();
-    expect(screen.queryByRole("combobox")).toBeNull();
-    expect(request).not.toHaveBeenCalledWith("/admin/roles", expect.anything());
-    expect(request).not.toHaveBeenCalledWith(
+    expect(await screen.findByRole("heading", { name: "Users" })).toBeTruthy();
+    expect(screen.queryByText(/not available in this screen yet/)).toBeNull();
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith("/admin/roles", expect.anything())
+    );
+    expect(request).toHaveBeenCalledWith(
       expect.stringContaining("/admin/users"),
       expect.anything()
     );
