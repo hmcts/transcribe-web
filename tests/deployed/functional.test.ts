@@ -22,4 +22,19 @@ describe(`functional: ${TEST_URL}`, () => {
       expect((await get("/api/jobs")).status).toBe(401);
     }
   );
+
+  // A preview runs its own transcribe-api in the same release, which treats
+  // token-less calls as its preview user (charts/transcribe-web/values.preview.template.yaml).
+  // Caddy -> the api's in-release Service -> its Postgres, end to end.
+  it.runIf(isPreview)(
+    "serves the preview user from the preview's own API",
+    async () => {
+      const response = await get("/api/users/me");
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        azure_user_id: "preview-user",
+        email: "preview-user@preview.platform.hmcts.net",
+      });
+    }
+  );
 });
