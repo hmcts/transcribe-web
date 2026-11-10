@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { JurisdictionSummary } from "@/lib/jurisdiction-api";
+import { type JurisdictionSummary, stageNote } from "@/lib/jurisdiction-api";
 
 /**
  * After sign-in, for a judge who sits in more than one jurisdiction and has not
@@ -54,10 +54,27 @@ export default function ChooseJurisdiction({
               onClick={() => choose(jurisdiction.code)}
             >
               {jurisdiction.name}
+              <StageNote stage={jurisdiction.stage} />
             </Button>
           </li>
         ))}
       </ul>
     </main>
+  );
+}
+
+/** DIAAT-345: a jurisdiction its admins or testers see before it is live. */
+export function StageNote({ stage }: { stage: JurisdictionSummary["stage"] }) {
+  const note = stageNote(stage);
+  if (!note) return null;
+  return (
+    <>
+      {" "}
+      <span className="ml-2 rounded border px-1.5 text-xs font-normal text-muted-foreground">
+        <span className="sr-only">(</span>
+        {note}
+        <span className="sr-only">: not live yet)</span>
+      </span>
+    </>
   );
 }
