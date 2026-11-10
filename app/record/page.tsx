@@ -79,6 +79,7 @@ import {
   SPEECH_NO_CONTENT_EARLIER_ALERT,
 } from "@/lib/speech-alerts";
 import cn from "@/lib/utils";
+import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import { TemplateForm } from "@/components/audio/dictation/template-form";
 import {
   type AvailableTemplate,
@@ -91,6 +92,8 @@ import {
 } from "@/lib/templates-api";
 
 const TEMPLATES_FAILED_TOAST = "templates-failed";
+const LEAVE_WITH_ANSWERS =
+  "Leave this page? Your hearing details answers will be lost: they are only kept when you submit the hearing.";
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -614,6 +617,10 @@ export default function RecordPage() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [sectionedTranscript, templateValues]);
 
+  // DIAAT-344: nothing restores a template's answers, so leaving the page in the
+  // app (a link, Back or Forward) asks first, as closing the tab does (above).
+  useLeaveGuard(hasAnswers(templateValues), LEAVE_WITH_ANSWERS);
+
   const handleCitationClick = useCallback((citationIndex: number) => {
     void citationIndex;
   }, []);
@@ -1112,6 +1119,14 @@ export default function RecordPage() {
       templates={templates}
       templateId={chosenTemplate.id}
       onTemplateChange={(id) => {
+        // Another template's fields differ: its answers start empty.
+        if (
+          hasAnswers(templateValues) &&
+          !window.confirm(
+            "Choose another template? Your answers to this one will be cleared."
+          )
+        )
+          return;
         setTemplateId(id);
         setTemplateValues({});
         setTemplateErrors({});

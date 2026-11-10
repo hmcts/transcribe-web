@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
+import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import {
   type AdminTemplate,
   BENCHNOTES_SOURCES,
@@ -66,18 +67,27 @@ function statusOf(template: AdminTemplate): string {
   return template.enabled ? "Available to judges" : "Off";
 }
 
-/** What the open field list reports: a change under way, or edits not saved. */
-interface EditorState {
+/** A change under way, or edits not saved: what the open field list reports to the
+ * list, and the list to the jurisdictions panel. */
+export interface EditorState {
   busy: boolean;
   unsaved: boolean;
 }
 
-const IDLE: EditorState = { busy: false, unsaved: false };
+export const IDLE: EditorState = { busy: false, unsaved: false };
 
 const byName = (a: AdminTemplate, b: AdminTemplate) =>
   a.name.localeCompare(b.name);
 
-export function TemplatesEditor({ code }: { code: string }) {
+export function TemplatesEditor({
+  code,
+  onStateChange,
+}: {
+  code: string;
+  /** For the jurisdictions panel: it stops leaving this jurisdiction while busy,
+   * and asks before dropping unsaved edits. */
+  onStateChange?: (state: EditorState) => void;
+}) {
   const [templates, setTemplates] = useState<AdminTemplate[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState>(IDLE);
@@ -86,6 +96,11 @@ export function TemplatesEditor({ code }: { code: string }) {
   const [uploading, setUploading] = useState(false);
   useJurisdictionSwitchGuard({ busy: uploading, unsaved: false });
   const fileInput = useRef<HTMLInputElement>(null);
+  const busy = uploading || editor.busy;
+  useEffect(() => {
+    onStateChange?.({ busy, unsaved: editor.unsaved });
+  }, [busy, editor.unsaved, onStateChange]);
+  useEffect(() => () => onStateChange?.(IDLE), [onStateChange]);
 
   const load = useCallback(async () => {
     try {
@@ -172,7 +187,8 @@ export function TemplatesEditor({ code }: { code: string }) {
           />
           <Button
             size="sm"
-            disabled={uploading || editor.busy}
+            // Not before the list has loaded: its answer would replace the upload's.
+            disabled={loading || busy}
             onClick={() => {
               if (mayLeaveEditor()) fileInput.current?.click();
             }}
@@ -219,7 +235,7 @@ export function TemplatesEditor({ code }: { code: string }) {
                     type="button"
                     aria-current={t.id === selected ? "true" : undefined}
                     className="underline-offset-2 hover:underline disabled:no-underline disabled:opacity-60"
-                    disabled={uploading || editor.busy}
+                    disabled={busy}
                     onClick={() => choose(t.id)}
                   >
                     {t.name}
@@ -253,6 +269,7 @@ export function TemplatesEditor({ code }: { code: string }) {
           key={`${current.id}:${current.version}`}
           code={code}
           template={current}
+          locked={uploading}
           onStateChange={setEditor}
           onSaved={applySaved}
           onDeleted={(id) => {
@@ -268,12 +285,16 @@ export function TemplatesEditor({ code }: { code: string }) {
 function TemplateFieldsEditor({
   code,
   template,
+  locked,
   onStateChange,
   onSaved,
   onDeleted,
 }: {
   code: string;
   template: AdminTemplate;
+  /** Another template is being uploaded: it opens when done, so nothing here can
+   * be changed meanwhile. */
+  locked: boolean;
   /** Busy or unsaved: the list stops other changes while busy, and asks before
    * dropping unsaved edits. */
   onStateChange: (state: EditorState) => void;
@@ -302,6 +323,12 @@ function TemplateFieldsEditor({
   const [savedForm] = useState(form);
   const unsaved = form !== savedForm;
   useJurisdictionSwitchGuard({ busy, unsaved });
+  // Leaving the admin area (a link, Back, closing the tab) would drop the edits.
+  useLeaveGuard(
+    unsaved || busy,
+    `Leave this page? Your unsaved changes to ${template.name} will be lost.`,
+    { beforeUnload: true }
+  );
   useEffect(() => {
     onStateChange({ busy, unsaved });
   }, [busy, unsaved, onStateChange]);
@@ -423,11 +450,12 @@ function TemplateFieldsEditor({
       <h4 id="template-fields-heading" className="font-semibold">
         Fields of {template.name}
       </h4>
-      {/* Nothing can be edited while a save, a new file or a delete is under way:
-          the editor then reopens from the server's copy, which would drop it. */}
+      {/* Nothing can be edited while a save, a new file or a delete is under way
+          (the editor then reopens from the server's copy, which would drop it), or
+          while another template is uploaded (it opens instead). */}
       <fieldset
-        disabled={busy}
-        aria-busy={busy}
+        disabled={busy || locked}
+        aria-busy={busy || locked}
         className="m-0 min-w-0 space-y-4 border-0 p-0"
       >
         <div className="grid gap-4 sm:grid-cols-2">
@@ -629,7 +657,18 @@ function TemplateFieldsEditor({
           <Button
             variant="outline"
             disabled={busy}
-            onClick={() => fileInput.current?.click()}
+            onClick={() => {
+              // The new file reopens the editor from the server: edits not saved
+              // would be dropped.
+              if (
+                unsaved &&
+                !window.confirm(
+                  `Uploading a new file discards your unsaved changes to ${template.name}. Continue?`
+                )
+              )
+                return;
+              fileInput.current?.click();
+            }}
           >
             <Upload className="mr-1 h-4 w-4" aria-hidden />
             Upload a new file

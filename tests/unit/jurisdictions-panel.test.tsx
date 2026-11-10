@@ -594,6 +594,44 @@ describe("JurisdictionsPanel", () => {
     expect(Object.keys(body)).not.toContain("display_name");
   });
 
+  it("asks before leaving a jurisdiction with unsaved template edits (DIAAT-344)", async () => {
+    serve({ jurisdictions: [IAC, ET] });
+    const fake = request.getMockImplementation();
+    const template = {
+      id: "t1",
+      name: "Judgment",
+      service: null,
+      file_name: "Judgment.docx",
+      enabled: false,
+      boxes: [{ key: "Reference", label: "Reference", kind: "text", options: [], count: 1 }],
+      fields: [{ tag: "Reference", label: "Reference", type: "text", required: true, options: [], source: null }],
+      problems: [],
+      version: "v1",
+    };
+    request.mockImplementation(async (endpoint: string, options?: RequestInit) =>
+      endpoint.endsWith("/templates")
+        ? { data: endpoint.includes("/ET/") ? [template] : [] }
+        : (fake?.(endpoint, options) as ReturnType<typeof apiClient.request>)
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await user.click(await screen.findByRole("button", { name: "Judgment" }));
+    await user.type(await screen.findByLabelText("Label of box Reference"), "!");
+    await user.click(screen.getByRole("button", { name: "IAC" }));
+
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved changes to this jurisdiction's template?");
+    expect(screen.getByRole("heading", { name: "Templates of ET" })).toBeTruthy();
+    expect((screen.getByLabelText("Label of box Reference") as HTMLInputElement).value).toBe("Reference!");
+
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "IAC" }));
+    expect(await screen.findByRole("heading", { name: "Templates of IAC" })).toBeTruthy();
+    confirm.mockRestore();
+  });
+
   it("offers a retry when the list cannot be loaded", async () => {
     serve();
     // The first load's two requests are both refused.

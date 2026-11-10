@@ -524,6 +524,119 @@ describe("TemplatesEditor", () => {
     );
   });
 
+  it("allows no upload until the list has loaded, which would replace it", async () => {
+    serve([UPLOADED]);
+    const fake = request.getMockImplementation();
+    let loaded: () => void = () => undefined;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if ((options?.method ?? "GET") === "GET")
+          await new Promise<void>((resolve) => (loaded = resolve));
+        return fake?.(endpoint, options) as ReturnType<
+          typeof apiClient.request
+        >;
+      }
+    );
+    render(<TemplatesEditor code="ET" />);
+    const upload = screen.getByRole("button", {
+      name: /Upload a Word template/,
+    });
+    expect(upload.matches(":disabled")).toBe(true);
+    loaded();
+    await waitFor(() => expect(upload.matches(":disabled")).toBe(false));
+  });
+
+  it("locks the open field list while another template is uploaded", async () => {
+    serve([UPLOADED]);
+    const fake = request.getMockImplementation();
+    let uploaded: () => void = () => undefined;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if (options?.method === "POST")
+          await new Promise<void>((resolve) => (uploaded = resolve));
+        return fake?.(endpoint, options) as ReturnType<
+          typeof apiClient.request
+        >;
+      }
+    );
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const label = within(fields).getByLabelText("Label of box Reference");
+
+    fireEvent.change(screen.getByLabelText("Word template to upload"), {
+      target: { files: [new File(["x"], "Other.docx")] },
+    });
+    await waitFor(() => expect(label.matches(":disabled")).toBe(true));
+    uploaded();
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+  });
+
+  it("asks before a new file drops unsaved edits", async () => {
+    serve([UPLOADED]);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const pick = vi
+      .spyOn(HTMLInputElement.prototype, "click")
+      .mockImplementation(() => undefined);
+    try {
+      const user = userEvent.setup();
+      const fields = await open(user);
+      await user.click(
+        within(fields).getByRole("button", { name: "Upload a new file" })
+      );
+      expect(confirm).not.toHaveBeenCalled(); // nothing unsaved
+      expect(pick).toHaveBeenCalledTimes(1);
+
+      await user.type(
+        within(fields).getByLabelText("Label of box Reference"),
+        "!"
+      );
+      await user.click(
+        within(fields).getByRole("button", { name: "Upload a new file" })
+      );
+      expect(confirm).toHaveBeenCalledWith(
+        "Uploading a new file discards your unsaved changes to ET judgment. Continue?"
+      );
+      expect(pick).toHaveBeenCalledTimes(1); // not opened
+      confirm.mockReturnValue(true);
+      await user.click(
+        within(fields).getByRole("button", { name: "Upload a new file" })
+      );
+      expect(pick).toHaveBeenCalledTimes(2);
+    } finally {
+      confirm.mockRestore();
+      pick.mockRestore();
+    }
+  });
+
+  it("tells the jurisdictions panel about unsaved edits, and warns before the tab closes", async () => {
+    serve([UPLOADED]);
+    const onStateChange = vi.fn();
+    const user = userEvent.setup();
+    render(<TemplatesEditor code="ET" onStateChange={onStateChange} />);
+    await user.click(
+      await screen.findByRole("button", { name: "ET judgment" })
+    );
+    const fields = await screen.findByRole("region", {
+      name: "Fields of ET judgment",
+    });
+    const leave = () => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(leave()).toBe(false);
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    expect(onStateChange).toHaveBeenLastCalledWith({
+      busy: false,
+      unsaved: true,
+    });
+    expect(leave()).toBe(true);
+  });
+
   it("deletes a template only once confirmed", async () => {
     serve([UPLOADED]);
     const user = userEvent.setup();

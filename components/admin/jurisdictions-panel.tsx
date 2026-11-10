@@ -3,7 +3,11 @@
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
-import { TemplatesEditor } from "@/components/admin/templates-editor";
+import {
+  type EditorState,
+  IDLE,
+  TemplatesEditor,
+} from "@/components/admin/templates-editor";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -65,6 +69,13 @@ export function JurisdictionsPanel() {
   // Bumped to reopen the editor from the server's copy, dropping unsaved edits.
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [creating, setCreating] = useState(false);
+  // DIAAT-344: the open jurisdiction's templates. Leaving it (another row, or Add
+  // jurisdiction) closes them: not while a change is under way, and only once the
+  // admin agrees to drop unsaved edits.
+  const [templatesState, setTemplatesState] = useState<EditorState>(IDLE);
+  const mayLeaveTemplates = () =>
+    !templatesState.unsaved ||
+    window.confirm("Discard your unsaved changes to this jurisdiction's template?");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -131,7 +142,9 @@ export function JurisdictionsPanel() {
         </div>
         <Button
           size="sm"
+          disabled={templatesState.busy}
           onClick={() => {
+            if (!mayLeaveTemplates()) return;
             setCreating(true);
             setSelected(null);
           }}
@@ -161,8 +174,10 @@ export function JurisdictionsPanel() {
                   <button
                     type="button"
                     aria-current={j.code === selected ? "true" : undefined}
-                    className="underline-offset-2 hover:underline"
+                    className="underline-offset-2 hover:underline disabled:no-underline disabled:opacity-60"
+                    disabled={templatesState.busy && j.code !== selected}
                     onClick={() => {
+                      if (j.code !== selected && !mayLeaveTemplates()) return;
                       setSelected(j.code);
                       setCreating(false);
                     }}
@@ -215,7 +230,13 @@ export function JurisdictionsPanel() {
           stagesSupported={stagesSupported}
         />
       )}
-      {current && !creating && <TemplatesEditor key={`templates:${current.code}`} code={current.code} />}
+      {current && !creating && (
+        <TemplatesEditor
+          key={`templates:${current.code}`}
+          code={current.code}
+          onStateChange={setTemplatesState}
+        />
+      )}
     </div>
   );
 }

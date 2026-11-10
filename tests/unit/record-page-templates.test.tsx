@@ -270,6 +270,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
   });
 
   it("clears the answers when the judge chooses another template", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true); // agrees
     const user = userEvent.setup();
     await renderPage([JUDGMENT, REASONS]);
     await screen.findByText("Hearing details");
@@ -284,6 +285,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       (screen.getByLabelText(/Case number/) as HTMLInputElement).value
     ).toBe("");
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    confirm.mockRestore();
   });
 
   it("lets the judge clear answers that cannot be unanswered, and then switch", async () => {
@@ -435,6 +437,84 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(document.getElementById(ids[0])?.textContent).toBe(
       "Case number is required"
     );
+  });
+
+  it("asks before an in-app link or Back leaves answers behind", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm");
+    await renderPage([JUDGMENT]);
+    await screen.findByText("Hearing details");
+    const help = document.createElement("a");
+    help.href = "/help";
+    help.textContent = "Help";
+    document.body.appendChild(help);
+    // Whether the click got through to the link (the guard stops it before);
+    // jsdom cannot navigate, so the link itself goes nowhere.
+    let reached = false;
+    help.addEventListener("click", (event) => {
+      reached = true;
+      event.preventDefault();
+    });
+    const blocked = () => {
+      reached = false;
+      help.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })
+      );
+      return !reached;
+    };
+    try {
+      confirm.mockReturnValue(false);
+      expect(blocked()).toBe(false); // nothing to lose: the link is followed
+      expect(confirm).not.toHaveBeenCalled();
+
+      await user.type(screen.getByLabelText(/Case number/), "1");
+      expect(blocked()).toBe(true); // stayed
+      expect(confirm).toHaveBeenLastCalledWith(
+        expect.stringMatching(/answers will be lost/)
+      );
+      confirm.mockReturnValue(true);
+      expect(blocked()).toBe(false); // left
+
+      const push = vi.spyOn(window.history, "pushState");
+      const back = vi
+        .spyOn(window.history, "back")
+        .mockImplementation(() => undefined);
+      confirm.mockReturnValue(false);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      expect(push).toHaveBeenCalled(); // stays on the page
+      expect(back).not.toHaveBeenCalled();
+      confirm.mockReturnValue(true);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+      expect(back).toHaveBeenCalledTimes(1); // past the guard entry
+      push.mockRestore();
+      back.mockRestore();
+    } finally {
+      help.remove();
+      confirm.mockRestore();
+    }
+  });
+
+  it("asks before another template clears the answers", async () => {
+    const user = userEvent.setup();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await renderPage([JUDGMENT, REASONS]);
+    await screen.findByText("Hearing details");
+    await user.type(screen.getByLabelText(/Case number/), "1234");
+
+    await user.click(screen.getByRole("combobox", { name: "Template" }));
+    await user.click(await screen.findByRole("option", { name: "Reasons" }));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringMatching(/answers to this one will be cleared/)
+    );
+    expect(
+      (screen.getByLabelText(/Case number/) as HTMLInputElement).value
+    ).toBe("1234");
+
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole("combobox", { name: "Template" }));
+    await user.click(await screen.findByRole("option", { name: "Reasons" }));
+    expect(screen.queryByLabelText(/Case number/)).toBeNull();
+    confirm.mockRestore();
   });
 
   it("shows the server's reason when the values are refused", async () => {
