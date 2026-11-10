@@ -23,8 +23,10 @@
  *   browser's 64 KiB keepalive budget, shared with every request still in
  *   flight. Events that cannot be sent (signed out, budget exhausted, a
  *   send failing while the page is hidden) are kept in localStorage and sent when
- *   the page is visible again or by the next dictation page. They carry no user
- *   identity, so on a shared computer the next user's page may send them.
+ *   the page is visible again or by the next dictation page. They are kept per
+ *   signed-in account (setAccount) and only that account's pages send them, so on a
+ *   shared computer another user's page never sends them under its session. Until
+ *   the account is known nothing is kept or restored.
  * - Never throws and never blocks the UI.
  */
 
@@ -55,7 +57,13 @@ const MAX_RETRY_DELAY_MS = 60_000;
 const KEEPALIVE_BUDGET_BYTES = 60_000;
 /** The relay's upper bound for duration_ms (24 h): above it the batch is refused. */
 const MAX_DURATION_MS = 86_400_000;
+/** Before events were kept per account: whose they are is unknown, so dropped. */
 export const UNSENT_STORAGE_KEY = "hmcts-telemetry-unsent";
+
+/** Where an account's unsent events are kept. */
+export function unsentStorageKey(account: string): string {
+  return `${UNSENT_STORAGE_KEY}:${account}`;
+}
 
 /**
  * The relay rejects a whole batch for one bad value (pydantic), so values are
@@ -128,6 +136,8 @@ export class TelemetryRelay {
   private signedOut = false;
   /** Bytes of keepalive requests not yet settled (the browser's budget is shared). */
   private keepaliveInFlight = 0;
+  /** The signed-in account: events kept on page hide are its own (null: unknown). */
+  private account: string | null = null;
   private readonly fetchImpl: () => typeof fetch;
   private readonly flushDelayMs: number;
   private readonly now: () => number;
@@ -347,15 +357,24 @@ export class TelemetryRelay {
     }
   }
 
-  /** Keep events that could not be sent, for the next visible page. */
+  /** The signed-in account (null when unknown or signed out); once known, its kept
+   * events are restored. */
+  setAccount(account: string | null): void {
+    const changed = account !== this.account;
+    this.account = account;
+    if (account && changed) this.restoreUnsent();
+  }
+
+  /** Keep events that could not be sent, for the account's next visible page. */
   private persist(events: WireEvent[]): void {
-    if (events.length === 0) return;
+    if (events.length === 0 || !this.account) return;
     try {
       const storage = this.storage();
       if (!storage) return;
-      const stored = this.readStored(storage);
+      const key = unsentStorageKey(this.account);
+      const stored = this.readStored(storage, key);
       storage.setItem(
-        UNSENT_STORAGE_KEY,
+        key,
         JSON.stringify([...stored, ...events].slice(-MAX_QUEUE))
       );
     } catch {
@@ -363,25 +382,27 @@ export class TelemetryRelay {
     }
   }
 
-  private readStored(storage: Storage): WireEvent[] {
+  private readStored(storage: Storage, key: string): WireEvent[] {
     try {
-      const parsed: unknown = JSON.parse(
-        storage.getItem(UNSENT_STORAGE_KEY) ?? "[]"
-      );
+      const parsed: unknown = JSON.parse(storage.getItem(key) ?? "[]");
       return Array.isArray(parsed) ? parsed.filter(isWireEvent) : [];
     } catch {
       return [];
     }
   }
 
-  /** Queue events kept by an earlier page hide (this or a previous visit). */
+  /** Queue the account's events kept by an earlier page hide (this or a previous
+   * visit). Not another account's: they would be sent under this session. */
   restoreUnsent(): void {
     try {
       // Restored events still respect retryAt in flush().
       const storage = this.storage();
       if (!storage) return;
-      const stored = this.readStored(storage);
-      storage.removeItem(UNSENT_STORAGE_KEY);
+      storage.removeItem(UNSENT_STORAGE_KEY); // kept before accounts: whose is unknown
+      if (!this.account) return;
+      const key = unsentStorageKey(this.account);
+      const stored = this.readStored(storage, key);
+      storage.removeItem(key);
       if (stored.length === 0) return;
       this.enqueue(stored, true);
       this.schedule(0);

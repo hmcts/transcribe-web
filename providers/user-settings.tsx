@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { getCurrentUser, updateCurrentUser } from "@/lib/database";
+import { telemetryRelay } from "@/lib/telemetry-relay";
 import type { User } from "@/src/api/generated"; // Adjust if needed
 
 interface UserSettingsContextType {
@@ -36,6 +37,12 @@ export function UserSettingsProvider({
       .then((u) => setUser(u))
       .finally(() => setLoading(false));
   }, []);
+
+  // Unsent telemetry is kept per account, so another user's is never sent under
+  // this session (lib/telemetry-relay.ts).
+  useEffect(() => {
+    telemetryRelay.setAccount(user?.id ? String(user.id) : null);
+  }, [user?.id]);
 
   const updateUserSettings = useCallback(async (updates: Partial<User>) => {
     setLoading(true);
