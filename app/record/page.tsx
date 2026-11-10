@@ -682,10 +682,11 @@ export default function RecordPage() {
       let failedStatus: number | undefined;
       let failureCode: string | undefined;
       let submissionReported = false;
+      let dictationSessionId: string | null = null;
       try {
         setIsSubmitting(true);
         const authToken = await getAuthToken();
-        const dictationSessionId = dictationSessionTelemetry.currentSessionId();
+        dictationSessionId = dictationSessionTelemetry.currentSessionId();
 
         const body = JSON.stringify(
           (asksLegalIssues
@@ -748,6 +749,7 @@ export default function RecordPage() {
           ok: true,
           mode,
           durationMs: Date.now() - submittedAt,
+          sessionId: dictationSessionId,
         });
         submissionReported = true;
         dictationSessionTelemetry.sessionEnded("submitted");
@@ -768,6 +770,7 @@ export default function RecordPage() {
             errorCode: failureCode,
             mode,
             durationMs: Date.now() - submittedAt,
+            sessionId: dictationSessionId,
           });
         }
         throw error;

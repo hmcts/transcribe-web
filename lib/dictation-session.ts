@@ -163,6 +163,9 @@ export interface DictationSessionTelemetry {
     errorCode?: string;
     mode: string;
     durationMs: number;
+    /** The journey ID the request carried (`X-Dictation-Session-Id`): the outcome
+     * is reported under it even if the journey was renewed while in flight. */
+    sessionId?: string | null;
   }): void;
   sessionEnded(reason: DictationEndReason): void;
   /** The hook unmounted (`key`: its Speech session, if one was up): stop that
@@ -317,17 +320,16 @@ export function createDictationSessionTelemetry(
   const emit = (
     name: string,
     attributes?: RelayEvent["attributes"],
-    durationMs?: number
+    durationMs?: number,
+    journeyId?: string | null
   ) => {
     reconcile();
-    const state = session;
+    const id = journeyId ?? session?.id;
     relay.emit({
       name,
       attributes,
       durationMs,
-      journey: state
-        ? { type: JOURNEY_DICTATION_SESSION, id: state.id }
-        : undefined,
+      journey: id ? { type: JOURNEY_DICTATION_SESSION, id } : undefined,
     });
   };
 
@@ -519,7 +521,7 @@ export function createDictationSessionTelemetry(
       );
     },
 
-    submissionFinished({ ok, status, errorCode, mode, durationMs }) {
+    submissionFinished({ ok, status, errorCode, mode, durationMs, sessionId }) {
       const state = session;
       if (state) state.submissionFailed = !ok;
       emit(
@@ -540,7 +542,8 @@ export function createDictationSessionTelemetry(
               "dictation.mode": mode,
               "http.response.status_code": status,
             },
-        durationMs
+        durationMs,
+        sessionId
       );
     },
 
