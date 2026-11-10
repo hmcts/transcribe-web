@@ -73,6 +73,7 @@ export function TemplatesEditor({ code }: { code: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  useJurisdictionSwitchGuard({ busy: uploading, unsaved: false });
   const fileInput = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
