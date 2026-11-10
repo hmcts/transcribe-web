@@ -1084,6 +1084,7 @@ export default function RecordPage() {
       templateId={chosenTemplate.id}
       onTemplateChange={(id) => {
         setTemplateId(id);
+        setTemplateValues({});
         setTemplateErrors({});
       }}
       values={templateValues}
