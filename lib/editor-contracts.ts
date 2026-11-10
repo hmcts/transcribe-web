@@ -60,17 +60,38 @@ export const liveTranscriptionFormDataSchema = z
   })
   .strict();
 
-export const liveTranscriptionSubmissionPayloadSchema = z
-  .object({
-    form_data: liveTranscriptionFormDataSchema,
-    messages: sectionedTranscriptSchema,
-    notes: z.string().max(MAX_EDITOR_TEXT_LENGTH).nullable().optional(),
-  })
-  .strict()
-  .transform((payload) => ({
-    ...payload,
-    notes: normalizeOptionalEditorText(payload.notes),
-  }));
+/**
+ * The same where the jurisdiction has no legal wording (DIAAT-342): the form has
+ * no legal issues field, so none are required, and none are submitted.
+ */
+export const liveTranscriptionFormDataWithoutLegalIssuesSchema =
+  liveTranscriptionFormDataSchema.extend({
+    legalIssues: z.array(NON_EMPTY_TEXT).max(0),
+  });
+
+const submissionPayloadSchema = (
+  formData:
+    | typeof liveTranscriptionFormDataSchema
+    | typeof liveTranscriptionFormDataWithoutLegalIssuesSchema
+) =>
+  z
+    .object({
+      form_data: formData,
+      messages: sectionedTranscriptSchema,
+      notes: z.string().max(MAX_EDITOR_TEXT_LENGTH).nullable().optional(),
+    })
+    .strict()
+    .transform((payload) => ({
+      ...payload,
+      notes: normalizeOptionalEditorText(payload.notes),
+    }));
+
+export const liveTranscriptionSubmissionPayloadSchema = submissionPayloadSchema(
+  liveTranscriptionFormDataSchema
+);
+
+export const liveTranscriptionSubmissionPayloadWithoutLegalIssuesSchema =
+  submissionPayloadSchema(liveTranscriptionFormDataWithoutLegalIssuesSchema);
 
 export type LiveTranscriptionSubmissionPayload = z.infer<
   typeof liveTranscriptionSubmissionPayloadSchema
@@ -138,6 +159,15 @@ export const anonymityStatusSchema = z.object({
 export type AnonymityStatus = z.infer<typeof anonymityStatusSchema>;
 
 export const documentContentSchema = z.object({
+  // DIAAT-342: which jurisdiction's wording this is, and whether it has legal
+  // wording at all. Both are read leniently, so a web build running against an
+  // API that does not send them yet keeps working: missing means the IAC's
+  // behaviour before (legal wording present).
+  jurisdiction: z
+    .object({ code: NON_EMPTY_TEXT, name: z.string() })
+    .optional()
+    .catch(undefined),
+  has_legal_wording: z.boolean().optional().catch(undefined),
   hearing_types: z.array(hearingTypeSchema),
   legal_frameworks: z.array(legalFrameworkSchema),
   anonymity: z.object({
@@ -146,3 +176,25 @@ export const documentContentSchema = z.object({
 });
 
 export type DocumentContent = z.infer<typeof documentContentSchema>;
+
+/** Whether the jurisdiction has legal wording (legal frameworks) to ask about. */
+export function hasLegalWording(content: DocumentContent): boolean {
+  return content.has_legal_wording ?? true;
+}
+
+/**
+ * `content` if it is the wording of the jurisdiction `code` the tab works in,
+ * else undefined: content fetched for another jurisdiction is never used
+ * (DIAAT-342). Content that does not say which jurisdiction it is for (an older
+ * API) is taken as the active one's.
+ */
+export function contentForJurisdiction(
+  content: DocumentContent | undefined,
+  code: string | undefined
+): DocumentContent | undefined {
+  if (!content) return undefined;
+  if (content.jurisdiction && content.jurisdiction.code !== code) {
+    return undefined;
+  }
+  return content;
+}

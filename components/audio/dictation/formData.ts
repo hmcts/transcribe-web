@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { DocumentContent } from "@/lib/editor-contracts";
+import { type DocumentContent, hasLegalWording } from "@/lib/editor-contracts";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
 
 type VisibilityRule = {
@@ -89,6 +89,8 @@ const FALLBACK_ANONYMITY_ORDER_OPTIONS: FormFieldOption[] = [
   { label: "No", value: "not_sought" },
 ];
 
+// The IAC's legal issues, shown until its wording has loaded. Never used for
+// another jurisdiction (DIAAT-342): they have their own legal frameworks, or none.
 const FALLBACK_LEGAL_ISSUE_OPTIONS: FormFieldOption[] = [
   {
     label: "Revocation of Protection for Danger - Section 72",
@@ -216,6 +218,27 @@ export const dictationFormSchema = z
 
 export type DictationFormValues = z.infer<typeof dictationFormSchema>;
 
+/** The same where the form has no legal issues field: none are required (DIAAT-342). */
+export const dictationFormWithoutLegalIssuesSchema =
+  dictationFormSchema.safeExtend({ legalIssues: z.array(z.string()) });
+
+export const getDictationFormSchema = (requireLegalIssues: boolean) =>
+  requireLegalIssues
+    ? dictationFormSchema
+    : dictationFormWithoutLegalIssuesSchema;
+
+/**
+ * Whether the form asks for legal issues (DIAAT-342): where the jurisdiction's
+ * wording has legal frameworks. Until that wording has loaded only the IAC asks,
+ * from its shipped list (`legalIssuesFallback`); another jurisdiction's legal
+ * issues are never guessed.
+ */
+export const asksForLegalIssues = (
+  documentContent?: DocumentContent,
+  legalIssuesFallback = false
+): boolean =>
+  documentContent ? hasLegalWording(documentContent) : legalIssuesFallback;
+
 export type FieldType = "text" | "select" | "date" | "multiselect";
 
 export type FormField = {
@@ -262,7 +285,8 @@ const getLegalIssueOptions = (
     : FALLBACK_LEGAL_ISSUE_OPTIONS;
 
 export const getFormFields = (
-  documentContent?: DocumentContent
+  documentContent?: DocumentContent,
+  legalIssuesFallback = false
 ): FormField[] => [
   // 1. Case number
   {
@@ -461,18 +485,22 @@ export const getFormFields = (
     fieldType: "date",
     options: [],
   },
-  // 12. Legal issues
-  {
-    id: 12,
-    name: "legalIssues",
-    label: "Legal issues",
-    conditional: false,
-    conditions:
-      "Choice determines which blocks of text to pull from the legal framework table.",
-    required: true,
-    fieldType: "multiselect",
-    options: getLegalIssueOptions(documentContent),
-  },
+  // 12. Legal issues (only where the jurisdiction has legal wording)
+  ...(asksForLegalIssues(documentContent, legalIssuesFallback)
+    ? [
+        {
+          id: 12,
+          name: "legalIssues" as const,
+          label: "Legal issues",
+          conditional: false,
+          conditions:
+            "Choice determines which blocks of text to pull from the legal framework table.",
+          required: true,
+          fieldType: "multiselect" as const,
+          options: getLegalIssueOptions(documentContent),
+        },
+      ]
+    : []),
 ];
 
 export const visibilityRules: Partial<
@@ -526,9 +554,9 @@ export const sanitizeFormValues = (
     anonymityOrder: validAnonymityOrders.has(values.anonymityOrder)
       ? values.anonymityOrder
       : "",
-    legalIssues: values.legalIssues.filter((value) =>
-      validLegalIssues.has(value)
-    ),
+    legalIssues: hasLegalWording(documentContent)
+      ? values.legalIssues.filter((value) => validLegalIssues.has(value))
+      : [],
   };
 };
 

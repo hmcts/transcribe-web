@@ -26,7 +26,7 @@ function respond(body: MyJurisdictions) {
 }
 
 function Probe() {
-  const { current, hasDecisionTemplate, hasHearingRecordings } =
+  const { current, hasDecisionTemplate, hasHearingRecordings, resolved } =
     useJurisdiction();
   const wording = useWording();
   return (
@@ -35,6 +35,7 @@ function Probe() {
       <p>{wording("records.column_title")}</p>
       <p>template: {String(hasDecisionTemplate)}</p>
       <p>recordings: {String(hasHearingRecordings)}</p>
+      <p>resolved: {String(resolved)}</p>
     </div>
   );
 }
@@ -64,6 +65,30 @@ describe("JurisdictionProvider", () => {
     renderProvider();
     expect(screen.getByText("Loading your jurisdiction...")).toBeTruthy();
     expect(screen.queryByText(/material for/)).toBeNull();
+  });
+
+  it("tells the admin area when the jurisdiction has settled, even if there is none (DIAAT-342)", async () => {
+    pathname = "/admin"; // opens without a jurisdiction
+    let answer: (value: { data: MyJurisdictions }) => void = () => undefined;
+    vi.mocked(apiClient.request).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+    renderProvider();
+    expect(screen.getByText("resolved: false")).toBeTruthy();
+
+    answer({ data: { status: "no_jurisdiction", current: null, jurisdictions: [] } });
+    expect(await screen.findByText("resolved: true")).toBeTruthy();
+    expect(screen.getByText("material for")).toBeTruthy();
+  });
+
+  it("tells the admin area when the jurisdiction could not be loaded", async () => {
+    pathname = "/admin";
+    vi.mocked(apiClient.request).mockResolvedValue({ error: "down" });
+    renderProvider();
+
+    expect(await screen.findByText("resolved: true")).toBeTruthy();
   });
 
   it("gives the material the jurisdiction's wording and what it uses", async () => {

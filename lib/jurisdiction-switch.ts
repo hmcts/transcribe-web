@@ -83,6 +83,19 @@ export function onBeforeJurisdictionSwitch(handler: BeforeSwitch): () => void {
   };
 }
 
+/** Stop any switch until `work` settles. Unlike a component's guard, this
+ * outlives the component that started the request, which may unmount first. */
+export async function holdJurisdictionSwitch<T>(work: Promise<T>): Promise<T> {
+  const release = onBeforeJurisdictionSwitch(async () => {
+    throw new JurisdictionSwitchError("busy");
+  });
+  try {
+    return await work;
+  } finally {
+    release();
+  }
+}
+
 /** Run every handler; rejects with the first failure. */
 export async function prepareForJurisdictionSwitch(): Promise<void> {
   for (const handler of [...handlers]) {

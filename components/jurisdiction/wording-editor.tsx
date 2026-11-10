@@ -1,6 +1,7 @@
 "use client";
 
 import { Loader2, Save } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
@@ -12,6 +13,7 @@ import {
   type JurisdictionWording,
   saveJurisdictionWording,
 } from "@/lib/jurisdiction-api";
+import { canEditLegalWording } from "@/lib/jurisdiction-context";
 import { type WordingKey, wordingFor } from "@/lib/jurisdiction-wording";
 import { useJurisdiction } from "@/providers/jurisdiction";
 
@@ -108,6 +110,16 @@ export function JurisdictionWordingEditor() {
             void save();
           }}
         >
+          {canEditLegalWording(current) && (
+            <p>
+              The hearing types, legal frameworks and anonymity text of the
+              decision document are edited under{" "}
+              <Link href="/admin" className="underline">
+                legal wording
+              </Link>
+              .
+            </p>
+          )}
           <p className="text-muted-foreground">
             What judges in {loaded.code} see. Leave a line blank to use the
             standard text, shown in grey.

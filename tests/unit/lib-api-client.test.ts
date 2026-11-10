@@ -162,6 +162,41 @@ describe("apiClient.request — HTTP errors", () => {
     expect(result.error).toBe(expected);
   });
 
+  it("returns the refusal's code, status and message (DIAAT-342)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockResolvedValue({
+        detail: { code: "jurisdiction_choice_required", message: "Choose one" },
+      }),
+    });
+
+    const result = await apiClient.request("/admin/document-content");
+
+    expect(result).toMatchObject({
+      error: "Choose one",
+      status: 409,
+      code: "jurisdiction_choice_required",
+    });
+  });
+
+  it("has no code for a refusal that gives none", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockResolvedValue({ detail: "Not available in this jurisdiction" }),
+    });
+
+    const result = await apiClient.request("/admin/document-content");
+
+    expect(result.code).toBeUndefined();
+    expect(result.status).toBe(404);
+  });
+
   it("uses the message field when there is no detail field", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
