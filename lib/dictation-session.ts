@@ -829,6 +829,7 @@ export function trackDictationPage(
    * before anything else is sent, so no event or Speech stop repeats the old one. */
   const reconcile = () => {
     if (!storedPending || get(endKey) !== null) return;
+    set(aliveKey, String(now()));
     telemetry.continueAsNewSession();
     storedPending = storePending();
   };
