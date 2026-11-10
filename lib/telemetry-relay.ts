@@ -27,6 +27,11 @@
  *   signed-in account (setAccount) and only that account's pages send them, so on a
  *   shared computer another user's page never sends them under its session. Until
  *   the account is known nothing is kept or restored.
+ * - Accounts: events belong to the account they were made under. When it changes,
+ *   its events still waiting (and a batch in flight, if it fails) are kept for it,
+ *   not sent under the new one. The app's relay (confirmAccount) holds delivery and
+ *   restoring until the account is confirmed, and again whenever the page is shown,
+ *   since another tab may have signed someone else in on the shared session.
  * - Never throws and never blocks the UI.
  */
 
@@ -114,6 +119,9 @@ export interface TelemetryRelayOptions {
   flushDelayMs?: number;
   now?: () => number;
   storage?: () => Storage | null;
+  /** Send nothing until setAccount confirms who is signed in, and again after
+   * suspendUntilAccountConfirmed (the page shown again). */
+  confirmAccount?: boolean;
 }
 
 function defaultStorage(): Storage | null {
@@ -138,6 +146,9 @@ export class TelemetryRelay {
   private keepaliveInFlight = 0;
   /** The signed-in account: events kept on page hide are its own (null: unknown). */
   private account: string | null = null;
+  /** Whether events may be sent under the session: the account is the one signed in. */
+  private accountConfirmed: boolean;
+  private readonly confirmAccount: boolean;
   private readonly fetchImpl: () => typeof fetch;
   private readonly flushDelayMs: number;
   private readonly now: () => number;
@@ -149,6 +160,8 @@ export class TelemetryRelay {
     this.flushDelayMs = options.flushDelayMs ?? FLUSH_DELAY_MS;
     this.now = options.now ?? Date.now;
     this.storage = options.storage ?? defaultStorage;
+    this.confirmAccount = options.confirmAccount ?? false;
+    this.accountConfirmed = !this.confirmAccount;
   }
 
   emit(event: RelayEvent): void {
@@ -226,8 +239,17 @@ export class TelemetryRelay {
     this.schedule(0);
   }
 
-  /** A page-hide send failed: if the page is still hidden it may be unloading. */
-  private keepAfterHide(batch: WireEvent[], status?: number): void {
+  /** A page-hide send failed: if the page is still hidden it may be unloading. A
+   * batch made under another account than now is kept for that account. */
+  private keepAfterHide(
+    batch: WireEvent[],
+    status?: number,
+    owner = this.account
+  ): void {
+    if (owner !== this.account) {
+      this.persistFor(owner, batch);
+      return;
+    }
     const hidden =
       typeof document !== "undefined" && document.visibilityState === "hidden";
     if (status === 401) this.signedOut = true;
@@ -243,6 +265,8 @@ export class TelemetryRelay {
 
   async flush(): Promise<void> {
     if (this.inFlight || this.queue.length === 0) return;
+    if (!this.accountConfirmed) return; // setAccount schedules a flush
+    const owner = this.account;
     if (this.now() < this.retryAt) {
       this.schedule(0);
       return;
@@ -282,6 +306,13 @@ export class TelemetryRelay {
       if (keepalive) this.keepaliveInFlight -= payload.length;
     }
 
+    if (owner !== this.account) {
+      // The account changed while it was in flight: never queued for the new one.
+      if (outcome === "retry" || outcome === "unauthorised")
+        this.persistFor(owner, batch);
+      if (this.queue.length > 0) this.schedule(0);
+      return;
+    }
     if (outcome === "sent") {
       const wasSignedOut = this.signedOut;
       this.signedOut = false;
@@ -306,11 +337,13 @@ export class TelemetryRelay {
         this.timer = null;
       }
       if (this.queue.length === 0) return;
-      if (this.signedOut) {
-        // It would be refused: keep it for when the user has signed in again.
+      if (this.signedOut || !this.accountConfirmed) {
+        // Signed out, it would be refused; not confirmed, it might be sent under
+        // someone else's session. Kept for this page's account instead.
         this.persist(this.queue.splice(0));
         return;
       }
+      const owner = this.account;
       while (this.queue.length > 0) {
         const batch = this.takeBatch();
         if (batch.length === 0) break;
@@ -344,10 +377,10 @@ export class TelemetryRelay {
               return;
             }
             if (response.status === 401 || retryable(response.status)) {
-              this.keepAfterHide(batch, response.status);
+              this.keepAfterHide(batch, response.status, owner);
             }
           })
-          .catch(() => this.keepAfterHide(batch))
+          .catch(() => this.keepAfterHide(batch, undefined, owner))
           .finally(() => {
             this.keepaliveInFlight -= payload.length;
           });
@@ -357,21 +390,37 @@ export class TelemetryRelay {
     }
   }
 
-  /** The signed-in account (null when unknown or signed out); once known, its kept
-   * events are restored. */
+  /** The signed-in account (null when unknown or signed out), confirmed: delivery
+   * resumes. A change keeps the previous account's waiting events for it (they are
+   * never sent under the new one); the account's own kept events are restored. */
   setAccount(account: string | null): void {
-    const changed = account !== this.account;
+    const previous = this.account;
+    if (previous && previous !== account)
+      this.persistFor(previous, this.queue.splice(0));
     this.account = account;
-    if (account && changed) this.restoreUnsent();
+    this.accountConfirmed = true;
+    if (account) this.restoreUnsent();
+    if (this.queue.length > 0) this.schedule(0);
+  }
+
+  /** The page is shown again: hold delivery and restoring until setAccount confirms
+   * who is signed in (another tab may have signed someone else in). Only for a
+   * relay made with confirmAccount. */
+  suspendUntilAccountConfirmed(): void {
+    if (this.confirmAccount) this.accountConfirmed = false;
   }
 
   /** Keep events that could not be sent, for the account's next visible page. */
   private persist(events: WireEvent[]): void {
-    if (events.length === 0 || !this.account) return;
+    this.persistFor(this.account, events);
+  }
+
+  private persistFor(owner: string | null, events: WireEvent[]): void {
+    if (events.length === 0 || !owner) return;
     try {
       const storage = this.storage();
       if (!storage) return;
-      const key = unsentStorageKey(this.account);
+      const key = unsentStorageKey(owner);
       const stored = this.readStored(storage, key);
       storage.setItem(
         key,
@@ -399,7 +448,7 @@ export class TelemetryRelay {
       const storage = this.storage();
       if (!storage) return;
       storage.removeItem(UNSENT_STORAGE_KEY); // kept before accounts: whose is unknown
-      if (!this.account) return;
+      if (!this.account || !this.accountConfirmed) return;
       const key = unsentStorageKey(this.account);
       const stored = this.readStored(storage, key);
       storage.removeItem(key);
@@ -412,7 +461,8 @@ export class TelemetryRelay {
   }
 }
 
-export const telemetryRelay = new TelemetryRelay();
+// The app's relay: the user-settings provider confirms the account.
+export const telemetryRelay = new TelemetryRelay({ confirmAccount: true });
 
 let lifecycleInstalled = false;
 
@@ -426,6 +476,11 @@ export function installRelayLifecycle(
   window.addEventListener("pagehide", () => relay.flushOnHide());
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") relay.flushOnHide();
-    else relay.restoreUnsent();
+    else {
+      // Another tab may have signed someone else in meanwhile: the provider
+      // confirms the account before anything is sent or restored.
+      relay.suspendUntilAccountConfirmed();
+      relay.restoreUnsent();
+    }
   });
 }

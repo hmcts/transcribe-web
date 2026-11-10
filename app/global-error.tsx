@@ -3,6 +3,7 @@
 import NextError from "next/error";
 import { useEffect } from "react";
 import { browserFailures } from "@/lib/browser-failures";
+import { confirmTelemetryAccount } from "@/lib/telemetry-account";
 import { installRelayLifecycle, telemetryRelay } from "@/lib/telemetry-relay";
 
 export default function GlobalError({
@@ -23,6 +24,9 @@ export default function GlobalError({
     installRelayLifecycle(telemetryRelay);
     browserFailures.clientError(error, "render", error.digest);
     void telemetryRelay.flush();
+    // The relay sends nothing until it knows who is signed in (lib/telemetry-relay),
+    // and the user-settings provider that tells it may never have mounted: ask here.
+    void confirmTelemetryAccount().then(() => telemetryRelay.flush());
   }, [error]);
 
   return (

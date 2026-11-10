@@ -10,6 +10,7 @@ import {
   useState,
 } from "react";
 import { getCurrentUser, updateCurrentUser } from "@/lib/database";
+import { confirmTelemetryAccount } from "@/lib/telemetry-account";
 import { telemetryRelay } from "@/lib/telemetry-relay";
 import type { User } from "@/src/api/generated"; // Adjust if needed
 
@@ -43,6 +44,15 @@ export function UserSettingsProvider({
   useEffect(() => {
     telemetryRelay.setAccount(user?.id ? String(user.id) : null);
   }, [user?.id]);
+  // Shown again: someone else may have signed in from another tab meanwhile. The
+  // relay holds its telemetry (installRelayLifecycle) until this says who it is.
+  useEffect(() => {
+    const onShown = () => {
+      if (document.visibilityState === "visible") void confirmTelemetryAccount();
+    };
+    document.addEventListener("visibilitychange", onShown);
+    return () => document.removeEventListener("visibilitychange", onShown);
+  }, []);
 
   const updateUserSettings = useCallback(async (updates: Partial<User>) => {
     setLoading(true);

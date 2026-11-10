@@ -397,3 +397,123 @@ describe("unsent events on a shared computer", () => {
     expect(data.has(UNSENT_STORAGE_KEY)).toBe(false);
   });
 });
+
+describe("events of one account never go under another's session", () => {
+  function memory() {
+    const data = new Map<string, string>();
+    return {
+      data,
+      storage: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      } as Storage,
+    };
+  }
+  const kept = (data: Map<string, string>, account: string) =>
+    JSON.parse(data.get(unsentStorageKey(account)) ?? "[]").map(
+      (e: { name: string }) => e.name
+    );
+
+  it("keeps the previous account's waiting events for it when the account changes", () => {
+    const { data, storage } = memory();
+    const fetchImpl = vi.fn();
+    const relay = new TelemetryRelay({
+      fetchImpl,
+      flushDelayMs: 60_000,
+      storage: () => storage,
+    });
+    relay.setAccount("judge-a");
+    relay.emit({ name: "dictation.paused" });
+
+    relay.setAccount("judge-b");
+
+    expect(relay.pending).toBe(0);
+    expect(kept(data, "judge-a")).toEqual(["dictation.paused"]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps a batch in flight when the account changes for its own account if it fails", async () => {
+    const { data, storage } = memory();
+    let answer: (response: Response) => void = () => undefined;
+    const fetchImpl = vi.fn(
+      () => new Promise<Response>((resolve) => (answer = resolve))
+    );
+    const relay = new TelemetryRelay({
+      fetchImpl,
+      flushDelayMs: 60_000,
+      storage: () => storage,
+    });
+    relay.setAccount("judge-a");
+    relay.emit({ name: "dictation.paused" });
+    const flushing = relay.flush();
+
+    relay.setAccount("judge-b");
+    answer({ ok: false, status: 503 } as Response);
+    await flushing;
+
+    expect(relay.pending).toBe(0); // not queued under judge-b
+    expect(kept(data, "judge-a")).toEqual(["dictation.paused"]);
+  });
+
+  it("holds delivery and restoring until the account is confirmed, again after the page is shown", async () => {
+    vi.useFakeTimers();
+    try {
+      const { data, storage } = memory();
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+      const relay = new TelemetryRelay({
+        fetchImpl,
+        flushDelayMs: 10,
+        storage: () => storage,
+        confirmAccount: true,
+      });
+      relay.emit({ name: "dictation.paused" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).not.toHaveBeenCalled(); // who is signed in is not known yet
+
+      relay.setAccount("judge-a");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      // Shown again: judge-a's kept events wait, and so do new ones.
+      data.set(
+        unsentStorageKey("judge-a"),
+        JSON.stringify([{ name: "dictation.resumed" }])
+      );
+      relay.suspendUntilAccountConfirmed();
+      relay.restoreUnsent();
+      relay.emit({ name: "speech.first_result" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(data.has(unsentStorageKey("judge-a"))).toBe(true);
+
+      relay.setAccount("judge-b"); // someone else signed in from another tab
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1); // judge-a's never sent as judge-b
+      expect(kept(data, "judge-a")).toEqual([
+        "dictation.resumed",
+        "speech.first_result",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps, rather than sends, events hidden away before the account is confirmed", () => {
+    const { data, storage } = memory();
+    const fetchImpl = vi.fn();
+    const relay = new TelemetryRelay({
+      fetchImpl,
+      storage: () => storage,
+      confirmAccount: true,
+    });
+    relay.setAccount("judge-a");
+    relay.suspendUntilAccountConfirmed();
+    relay.emit({ name: "dictation.paused" });
+
+    relay.flushOnHide();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(kept(data, "judge-a")).toEqual(["dictation.paused"]);
+  });
+});
