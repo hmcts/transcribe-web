@@ -104,6 +104,11 @@ function serve({ jurisdictions = [IAC], members = [] as api.AdminJurisdictionMem
     throw new Error(`Unexpected ${method} ${endpoint}`);
   });
   return {
+    /** Someone else changes a member's role meanwhile. */
+    changeRoleElsewhere(email: string, role: api.AdminJurisdictionMember["role"]) {
+      const index = memberList.findIndex((m) => m.email === email);
+      memberList[index] = { ...memberList[index], role };
+    },
     /** Someone else changes `code` meanwhile. */
     changeElsewhere(code: string, name: string) {
       list = list.map((j) => (j.code === code ? { ...j, name, version: `${j.version}+` } : j));
@@ -515,6 +520,45 @@ describe("JurisdictionsPanel", () => {
         "aria-checked"
       )
     ).toBe("true");
+  });
+
+  it("keeps the role another admin set when only the tester box is changed", async () => {
+    const fake = serve({
+      jurisdictions: [ET],
+      members: [{ email: "lead@example.test", role: "admin", tester: true, pending: false }],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await screen.findByText("lead@example.test");
+    fake.changeRoleElsewhere("lead@example.test", "judge");
+    await user.click(screen.getByRole("checkbox", { name: "lead@example.test is a tester" }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("lead@example.test is no longer in the test group for ET")
+    );
+    const posts = request.mock.calls.filter(([, o]) => o?.method === "POST").map(([, o]) => JSON.parse(String(o?.body)));
+    expect(posts.at(-1)).toEqual({ email: "lead@example.test", role: "judge", tester: false });
+  });
+
+  it("leaves the test group alone when a role is changed before the members list loads", async () => {
+    serve({ jurisdictions: [ET] });
+    const served = request.getMockImplementation();
+    if (!served) throw new Error("serve() installs the fake API");
+    request.mockImplementation(async (endpoint: string, options?: RequestInit) =>
+      endpoint.endsWith("/members") && (options?.method ?? "GET") === "GET"
+        ? { error: "Unavailable", status: 503 }
+        : served(endpoint, options)
+    );
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await user.type(screen.getByLabelText("Sign-in email"), "lead@example.test");
+    await user.click(screen.getByRole("button", { name: /Add member/ }));
+    await waitFor(() => expect(request.mock.calls.some(([, o]) => o?.method === "POST")).toBe(true));
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ email: "lead@example.test", role: "judge" });
   });
 
   it("offers no stages, display name or testers while the API cannot enforce them", async () => {

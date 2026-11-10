@@ -541,9 +541,10 @@ function MembersEditor({
         code,
         email.trim(),
         role,
-        // Changing an existing member's role keeps them in or out of the test group
-        // unless Tester is ticked (the members list takes someone out of it).
-        stagesSupported && (tester || !existing) ? tester : undefined
+        // Unticked sends nothing: the members list may not have loaded, so an existing
+        // tester could look new. The API keeps a member's group and makes a new one a
+        // non-tester; only the members list takes someone out of the test group.
+        stagesSupported && tester ? true : undefined
       );
       toast.success(
         existing
@@ -567,7 +568,15 @@ function MembersEditor({
   async function setTesterOf(member: AdminJurisdictionMember, value: boolean) {
     setBusy(true);
     try {
-      await addJurisdictionMember(code, member.email, member.role, value);
+      // The role is sent with the change, so use the current one: another admin may
+      // have changed it since this list was loaded.
+      const current = (await fetchJurisdictionMembers(code)).find((m) => m.email === member.email);
+      if (!current) {
+        toast.error(`${member.email} is no longer a member of ${code}`);
+        await load();
+        return;
+      }
+      await addJurisdictionMember(code, member.email, current.role, value);
       toast.success(
         value
           ? `${member.email} is now in the test group for ${code}`
