@@ -26,6 +26,7 @@ const request = vi.mocked(apiClient.request);
 Element.prototype.scrollIntoView ??= vi.fn();
 Element.prototype.hasPointerCapture ??= vi.fn(() => false);
 Element.prototype.releasePointerCapture ??= vi.fn();
+Element.prototype.setPointerCapture ??= vi.fn();
 vi.stubGlobal(
   "ResizeObserver",
   class {
@@ -216,19 +217,18 @@ describe("TemplatesEditor", () => {
     const user = userEvent.setup();
     const fields = await open(user);
 
+    // Pasted, not typed key by key: each key re-renders the whole field list,
+    // which can outlast the test timeout on a busy CI agent.
     const label = within(fields).getByLabelText("Label of box Reference");
     await user.clear(label);
-    await user.type(label, "Case number");
+    await user.paste("Case number");
     await user.click(
       within(fields).getByRole("combobox", { name: "Is Case number required" })
     );
     await user.click(await screen.findByRole("option", { name: "Optional" }));
     const options = within(fields).getByLabelText("Options for Party1Title");
     await user.clear(options);
-    await user.type(
-      options,
-      "Claimant{Enter}  {Enter}Respondent{Enter}Intervenor"
-    );
+    await user.paste("Claimant\n  \nRespondent\nIntervenor");
     await user.click(
       within(fields).getByRole("button", { name: "Move Case number down" })
     );
