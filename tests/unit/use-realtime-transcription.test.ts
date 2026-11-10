@@ -151,9 +151,40 @@ describe("useRealtimeTranscription session health", () => {
 
     expect(result.current.session.health).toBe("healthy");
     expect(telemetry.sessionStarted).toHaveBeenCalledWith({
+      key: expect.any(Symbol),
       sessionIndex: 1,
       reconnectAttempt: 0,
     });
+  });
+
+  it("stops a Speech session by the key it started it with, once", async () => {
+    const { result } = renderHook(() => useRealtimeTranscription());
+    await startRecording(result.current.connect);
+    const { key } = telemetry.sessionStarted.mock.calls.at(-1)?.[0] ?? {};
+
+    await act(async () => {
+      collapseWithError(latest());
+    });
+    await act(async () => {
+      result.current.disconnect();
+    });
+
+    expect(telemetry.sessionStopped.mock.calls).toEqual([
+      [{ key, reason: "collapsed" }],
+    ]);
+  });
+
+  it("on unmount while recording, stops its Speech session with no pause", async () => {
+    const { result, unmount } = renderHook(() => useRealtimeTranscription());
+    await startRecording(result.current.connect);
+    const { key } = telemetry.sessionStarted.mock.calls.at(-1)?.[0] ?? {};
+    telemetry.paused.mockClear();
+
+    unmount();
+
+    expect(telemetry.tornDown).toHaveBeenCalledWith({ key });
+    expect(telemetry.paused).not.toHaveBeenCalled();
+    expect(telemetry.sessionStopped).not.toHaveBeenCalled();
   });
 
   it("reports a cancellation with its reason and error code", async () => {

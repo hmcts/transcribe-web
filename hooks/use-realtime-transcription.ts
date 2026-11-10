@@ -3,6 +3,7 @@
 import * as sdk from "microsoft-cognitiveservices-speech-sdk";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
+import type { SpeechSessionKey } from "@/lib/dictation-session";
 import {
   deriveSpeechHealth,
   getCollapseThreshold,
@@ -127,8 +128,9 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
   const unhealthyReportedRef = useRef(false);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIndexRef = useRef(0);
-  const sessionStartedAtRef = useRef(0);
-  const sessionSegmentCountRef = useRef(0);
+  /** The running Speech session (from the SDK's sessionStarted until it is
+   * stopped), as telemetry knows it: its length and segments are counted there. */
+  const speechKeyRef = useRef<SpeechSessionKey | null>(null);
   const pendingReconnectAttemptRef = useRef(0);
   /** Speech SDK session ID of the current session, for telemetry (OBS-4). */
   const speechSessionIdRef = useRef<string | undefined>(undefined);
@@ -220,20 +222,19 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
     sdkConnectedRef.current = false;
   }, []);
 
+  /** Report the running Speech session as stopped, if one is up. */
+  const stopSpeechSession = useCallback((reason: "paused" | "collapsed") => {
+    const key = speechKeyRef.current;
+    speechKeyRef.current = null;
+    if (key) speechSessionTelemetry.sessionStopped({ key, reason });
+  }, []);
+
   const disconnect = useCallback(() => {
     // A user stop is a pause even when no session is connected (e.g. while a
     // reconnect is pending after a collapse).
-    if (recordingIntendedRef.current) speechSessionTelemetry.paused();
-    if (recordingIntendedRef.current && sessionStartedAtRef.current !== 0) {
-      speechSessionTelemetry.sessionStopped({
-        sessionId: speechSessionIdRef.current,
-        sessionIndex: sessionIndexRef.current,
-        durationMs: sessionStartedAtRef.current
-          ? Date.now() - sessionStartedAtRef.current
-          : 0,
-        segmentsCaptured: sessionSegmentCountRef.current,
-        userInitiated: true,
-      });
+    if (recordingIntendedRef.current) {
+      speechSessionTelemetry.paused();
+      stopSpeechSession("paused");
     }
     recordingIntendedRef.current = false;
     // Clear before teardown: the stopping recognizer may deliver its final
@@ -247,13 +248,17 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
     unhealthyReportedRef.current = false;
     setStatus("disconnected");
     setSession(IDLE_SESSION);
-  }, [teardownSession]);
+  }, [stopSpeechSession, teardownSession]);
 
   useEffect(
     () => () => {
       // Unmounted while recording (submitted, page left, remounted): the Speech
-      // session's time still counts (OBS-5), and this is not a pause.
-      speechSessionTelemetry.tornDown();
+      // session's time still counts (OBS-5), and this is not a pause, but
+      // recording has stopped, so a later start is a resume.
+      if (recordingIntendedRef.current) {
+        speechSessionTelemetry.tornDown({ key: speechKeyRef.current });
+      }
+      speechKeyRef.current = null;
       recordingIntendedRef.current = false;
       teardownSession();
     },
@@ -279,12 +284,6 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
 
       const sessionIndex = sessionIndexRef.current;
       const sessionId = speechSessionIdRef.current;
-      // A reconnect that failed before the SDK's sessionStarted never had a
-      // Speech session to stop.
-      const started = sessionStartedAtRef.current > 0;
-      const durationMs = started ? Date.now() - sessionStartedAtRef.current : 0;
-      const segmentsCaptured = sessionSegmentCountRef.current;
-      sessionStartedAtRef.current = 0;
 
       teardownSession();
       setStatus("connecting");
@@ -307,15 +306,9 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
           collapsesInWindow,
         });
       }
-      if (started) {
-        speechSessionTelemetry.sessionStopped({
-          sessionId,
-          sessionIndex,
-          durationMs,
-          segmentsCaptured,
-          userInitiated: false,
-        });
-      }
+      // A reconnect that failed before the SDK's sessionStarted never had a
+      // Speech session to stop.
+      stopSpeechSession("collapsed");
 
       if (
         isUnhealthyCollapseCount(collapsesInWindow, collapseThreshold) &&
@@ -341,7 +334,13 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         void startSessionRef.current?.();
       }, reconnectDelayMs(collapsesInWindow));
     },
-    [collapseThreshold, collapseWindowMs, publishSession, teardownSession]
+    [
+      collapseThreshold,
+      collapseWindowMs,
+      publishSession,
+      stopSpeechSession,
+      teardownSession,
+    ]
   );
 
   // ------------------------------------------------------------------
@@ -360,7 +359,6 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
     try {
       setStatus("connecting");
       sessionIndexRef.current += 1;
-      sessionSegmentCountRef.current = 0;
       speechSessionIdRef.current = undefined;
       firstTextReportedRef.current = false;
       speechSessionTelemetry.recordingRequested({
@@ -544,7 +542,6 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
           // Only text counts as captured: an empty result (silence, noise) must
           // not hide a dictation that captured nothing (DIAAT-300).
           if (text.trim()) {
-            sessionSegmentCountRef.current += 1;
             reportFirstText(e.sessionId, text);
             speechSessionTelemetry.segmentCaptured();
           }
@@ -607,10 +604,12 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
       transcriber.sessionStarted = (_s, e) => {
         if (!isCurrent()) return;
         sdkConnectedRef.current = true;
-        sessionStartedAtRef.current = Date.now();
         speechSessionIdRef.current = e?.sessionId || undefined;
         setStatus("connected");
+        const key: SpeechSessionKey = Symbol("speech-session");
+        speechKeyRef.current = key;
         speechSessionTelemetry.sessionStarted({
+          key,
           sessionId: speechSessionIdRef.current,
           sessionIndex,
           reconnectAttempt: pendingReconnectAttemptRef.current,
@@ -656,7 +655,7 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
 
   const connect = useCallback(async () => {
     setError(null);
-    sessionStartedAtRef.current = 0;
+    speechKeyRef.current = null;
     setSegments([]);
     currentSegmentIdRef.current = null;
     recordingIntendedRef.current = true;

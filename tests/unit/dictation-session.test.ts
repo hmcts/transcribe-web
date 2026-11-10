@@ -6,6 +6,17 @@ import {
 } from "@/lib/dictation-session";
 import type { RelayEvent, TelemetryRelay } from "@/lib/telemetry-relay";
 
+/** One key per Speech session index, as the hook would give each session. */
+const speechKeys = new Map<number, symbol>();
+function speechKey(sessionIndex: number): symbol {
+  let key = speechKeys.get(sessionIndex);
+  if (!key) {
+    key = Symbol(`speech-session-${sessionIndex}`);
+    speechKeys.set(sessionIndex, key);
+  }
+  return key;
+}
+
 const SDK_SESSION = "0123456789abcdef0123456789abcdef";
 
 function setup() {
@@ -36,6 +47,7 @@ describe("dictation session telemetry", () => {
     telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
     advance(800);
     telemetry.speechSessionStarted({
+      key: speechKey(1),
       sessionId: SDK_SESSION,
       sessionIndex: 1,
       reconnectAttempt: 0,
@@ -57,12 +69,7 @@ describe("dictation session telemetry", () => {
   it("times resume to the next text and distinguishes pause from a collapse", () => {
     const { telemetry, advance, named } = setup();
     telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
-    telemetry.speechSessionStopped({
-      sessionIndex: 1,
-      durationMs: 5000,
-      segmentsCaptured: 2,
-      userInitiated: false, // a collapse: not a pause
-    });
+    telemetry.speechSessionStopped({ key: speechKey(1), reason: "collapsed" });
     expect(named("dictation.paused")).toHaveLength(0);
 
     telemetry.recordingPaused();
@@ -135,6 +142,7 @@ describe("dictation session telemetry", () => {
   it("drops a malformed SDK session ID rather than sending it", () => {
     const { telemetry, named } = setup();
     telemetry.speechSessionStarted({
+      key: speechKey(1),
       sessionId: "not-a-session",
       sessionIndex: 1,
       reconnectAttempt: 0,
@@ -178,6 +186,7 @@ describe("dictation session telemetry", () => {
     const { telemetry, named } = setup();
     telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
     telemetry.speechSessionStarted({
+      key: speechKey(1),
       sessionId: SDK_SESSION,
       sessionIndex: 1,
       reconnectAttempt: 0,

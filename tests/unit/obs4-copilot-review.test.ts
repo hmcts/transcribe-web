@@ -18,6 +18,17 @@ import {
   UNSENT_STORAGE_KEY,
 } from "@/lib/telemetry-relay";
 
+/** One key per Speech session index, as the hook would give each session. */
+const speechKeys = new Map<number, symbol>();
+function speechKey(sessionIndex: number): symbol {
+  let key = speechKeys.get(sessionIndex);
+  if (!key) {
+    key = Symbol(`speech-session-${sessionIndex}`);
+    speechKeys.set(sessionIndex, key);
+  }
+  return key;
+}
+
 const SDK_SESSION = "0123456789abcdef0123456789abcdef";
 
 function recorder() {
@@ -140,6 +151,7 @@ describe("a session that ends while hidden", () => {
     const stop = trackDictationPage(telemetry, rec.relay, () => local);
     telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
     telemetry.speechSessionStarted({
+      key: speechKey(1),
       sessionId: SDK_SESSION,
       sessionIndex: 1,
       reconnectAttempt: 0,

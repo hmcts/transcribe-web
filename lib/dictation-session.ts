@@ -13,9 +13,11 @@
  * - `dictation.resume_first_result`: resume -> first text after it;
  * - `speech.session_stopped`: Speech session length (the realtime audio usage of
  *   OBS-5). Every Speech session that started is stopped exactly once: by a
- *   pause or a collapse (the hook), or, if still running when the dictation
- *   session ends (submitted, page left) or the hook unmounts, here, just before
- *   the end, with `speech.stop_reason` "submitted", "page_exit" or "teardown".
+ *   pause, a collapse or the hook unmounting ("teardown"), or, if still running
+ *   when the dictation session ends (submitted, page left), here, just before
+ *   the end, with `speech.stop_reason` "submitted" or "page_exit". Its length
+ *   and segments are counted here, not by the hook, and a stop is matched to its
+ *   session by the key the hook gave it, so a late stop is never counted twice.
  *
  * A session starts when recording is first requested (restoring a draft,
  * autosave or a typed-only submission do not start one; their events then carry
@@ -61,8 +63,12 @@ function randomId(): string {
   });
 }
 
+/** Identifies one Speech session of one hook instance (made by the hook). */
+export type SpeechSessionKey = symbol;
+
 /** The Speech session running now (started, not yet stopped). */
 interface ActiveSpeechSession {
+  key: SpeechSessionKey;
   sessionId?: string;
   sessionIndex: number;
   startedAt: number;
@@ -85,7 +91,6 @@ interface SessionState {
   /** A saved draft was restored into this page: the transcript has content even
    * if this session captured no new speech. */
   restoredContent: boolean;
-  speech: ActiveSpeechSession | null;
 }
 
 export interface DictationSessionTelemetry {
@@ -99,6 +104,7 @@ export interface DictationSessionTelemetry {
     durationMs: number;
   }): void;
   speechSessionStarted(input: {
+    key: SpeechSessionKey;
     sessionId?: string;
     sessionIndex: number;
     reconnectAttempt: number;
@@ -109,12 +115,11 @@ export interface DictationSessionTelemetry {
   segmentCaptured(input?: { stoppedSession?: boolean }): void;
   /** The user stopped recording (a pause until resumed, submitted or left). */
   recordingPaused(): void;
+  /** The hook stopped a Speech session: a pause (the user) or a collapse. Not
+   * sent if it was already stopped here (the dictation session ended). */
   speechSessionStopped(input: {
-    sessionId?: string;
-    sessionIndex: number;
-    durationMs: number;
-    segmentsCaptured: number;
-    userInitiated: boolean;
+    key: SpeechSessionKey;
+    reason: "paused" | "collapsed";
   }): void;
   speechCanceled(input: {
     sessionId?: string;
@@ -158,38 +163,53 @@ export interface DictationSessionTelemetry {
     errorCode?: string;
     mode: string;
     durationMs: number;
+    /** The journey ID the request carried (`X-Dictation-Session-Id`): the outcome
+     * is reported under it even if the journey was renewed while in flight. */
+    sessionId?: string | null;
   }): void;
   sessionEnded(reason: DictationEndReason): void;
-  /** The running Speech session went away without a pause or a collapse (the hook
-   * unmounted): stop it now, if it is still running. */
-  speechSessionTornDown(): void;
-  /** The event `sessionEnded("page_hidden")` would send now, without ending the
-   * session (kept in case the page is killed while hidden). */
-  pendingEnd(): RelayEvent | null;
-  /** The `speech.session_stopped` that `sessionEnded("page_hidden")` would send
-   * before it now, for a Speech session still running (else null). */
-  pendingSpeechStop(): RelayEvent | null;
+  /** The hook unmounted (`key`: its Speech session, if one was up): stop that
+   * session if it is still running. Recording has stopped, so a later start is a
+   * resume, but the user did not pause: no `dictation.paused`. */
+  speechSessionTornDown(input: { key: SpeechSessionKey | null }): void;
+  /** What `sessionEnded("page_hidden")` would send now, without ending the
+   * session (kept in case the page is killed while hidden): the end, and before
+   * it the stop of a Speech session still running, both as of `at`. */
+  pendingEnd(): PendingEnd | null;
   /** Forget the running session without an event (it was ended elsewhere and the
    * page is going away). */
   discardSession(): void;
   /** Called whenever a session ends (so a page can drop its stored end at once).
    * Returns the unsubscribe function. */
   onSessionEnded(listener: () => void): () => void;
-  /** Its end was sent elsewhere but the page is back (a frozen tab): carry on
+  /** Its end was sent elsewhere but the page is alive (a frozen tab): carry on
    * under a new journey ID, so later events and the submission still have one.
-   * Counts are kept, so the outcome still reflects the whole dictation. */
+   * Counts are kept, so the outcome still reflects the whole dictation; the
+   * running Speech session counts only what follows. */
   continueAsNewSession(): void;
+  /** Run before anything is sent, started, stopped or ended, and before the
+   * journey ID is read for a submission (trackDictationPage):
+   * a frozen page that wakes may find its end was sent elsewhere, and must carry on
+   * under a new journey before it sends anything, not at its next heartbeat. */
+  setReconciler(reconcile: (() => void) | null): void;
   /** The running session's journey ID, sent with the submission so the server can
    * relate it to the transcription it creates. */
   currentSessionId(): string | null;
+}
+
+export interface PendingEnd {
+  at: number;
+  end: RelayEvent;
+  speechStop?: RelayEvent;
 }
 
 function speechStopReason(reason: DictationEndReason): SpeechStopReason {
   return reason === "submitted" ? "submitted" : "page_exit";
 }
 
+/** The one `speech.session_stopped` shape, whichever way the session stopped. */
 function speechStopEvent(
-  state: SessionState,
+  state: SessionState | null,
   speech: ActiveSpeechSession,
   reason: SpeechStopReason,
   at: number
@@ -200,11 +220,13 @@ function speechStopEvent(
       "speech.session_id": speechSessionId(speech.sessionId),
       "dictation.session_index": speech.sessionIndex,
       "dictation.segments_captured": speech.segments,
-      "dictation.user_initiated": false,
+      "dictation.user_initiated": reason === "paused",
       "speech.stop_reason": reason,
     },
     durationMs: Math.max(0, at - speech.startedAt),
-    journey: { type: JOURNEY_DICTATION_SESSION, id: state.id },
+    journey: state
+      ? { type: JOURNEY_DICTATION_SESSION, id: state.id }
+      : undefined,
   };
 }
 
@@ -263,12 +285,14 @@ export function createDictationSessionTelemetry(
   let session: SessionState | null = null;
   /** A draft was restored on this page (it applies to the sessions that follow). */
   let pageHasRestoredContent = false;
-  /** The last Speech session stopped here (not by the hook): the hook's own later
-   * stop for it, if any, is not a second session. */
-  let finalisedSpeechIndex: number | null = null;
+  /** The Speech session running on this page, with or without a dictation
+   * session (a recognizer can reconnect after a submission). */
+  let speech: ActiveSpeechSession | null = null;
   /** The last session on this page ended with a submission. */
   let submittedOnPage = false;
   const endListeners = new Set<() => void>();
+  let reconciler: (() => void) | null = null;
+  const reconcile = () => reconciler?.();
 
   /** Start a session if none is running. Only a recording request does this. */
   const start = (): SessionState => {
@@ -288,7 +312,6 @@ export function createDictationSessionTelemetry(
         unhealthy: false,
         submissionFailed: false,
         restoredContent: pageHasRestoredContent,
-        speech: null,
       };
     }
     return session;
@@ -298,16 +321,25 @@ export function createDictationSessionTelemetry(
     name: string,
     attributes?: RelayEvent["attributes"],
     durationMs?: number,
-    state: SessionState | null = session
+    journeyId?: string | null
   ) => {
+    reconcile();
+    const id = journeyId ?? session?.id;
     relay.emit({
       name,
       attributes,
       durationMs,
-      journey: state
-        ? { type: JOURNEY_DICTATION_SESSION, id: state.id }
-        : undefined,
+      journey: id ? { type: JOURNEY_DICTATION_SESSION, id } : undefined,
     });
+  };
+
+  /** Stop the running Speech session if `key` is it; else it was already
+   * stopped (or never counted), and nothing is sent. */
+  const stopSpeech = (key: SpeechSessionKey, reason: SpeechStopReason) => {
+    reconcile();
+    if (speech === null || speech.key !== key) return;
+    relay.emit(speechStopEvent(session, speech, reason, now()));
+    speech = null;
   };
 
   return {
@@ -345,18 +377,11 @@ export function createDictationSessionTelemetry(
       );
     },
 
-    speechSessionStarted({ sessionId, sessionIndex, reconnectAttempt }) {
+    speechSessionStarted({ key, sessionId, sessionIndex, reconnectAttempt }) {
+      reconcile();
       const state = session;
-      if (state) {
-        state.speechSessions += 1;
-        state.speech = {
-          sessionId,
-          sessionIndex,
-          startedAt: now(),
-          segments: 0,
-        };
-      }
-      finalisedSpeechIndex = null;
+      if (state) state.speechSessions += 1;
+      speech = { key, sessionId, sessionIndex, startedAt: now(), segments: 0 };
       emit(
         "speech.session_started",
         {
@@ -390,9 +415,9 @@ export function createDictationSessionTelemetry(
     },
 
     segmentCaptured(input) {
+      reconcile();
       if (session) session.segments += 1;
-      if (session?.speech && !input?.stoppedSession)
-        session.speech.segments += 1;
+      if (speech && !input?.stoppedSession) speech.segments += 1;
     },
 
     recordingPaused() {
@@ -403,42 +428,13 @@ export function createDictationSessionTelemetry(
       emit("dictation.paused");
     },
 
-    speechSessionStopped({
-      sessionId,
-      sessionIndex,
-      durationMs,
-      segmentsCaptured,
-      userInitiated,
-    }) {
-      const speech = session?.speech;
-      let duration = durationMs;
-      if (speech && speech.sessionIndex === sessionIndex) {
-        // Only the time not reported yet (see continueAsNewSession).
-        duration = Math.min(durationMs, Math.max(0, now() - speech.startedAt));
-        if (session) session.speech = null;
-      } else if (finalisedSpeechIndex === sessionIndex) {
-        return; // already stopped when the dictation session ended
-      }
-      emit(
-        "speech.session_stopped",
-        {
-          "speech.session_id": speechSessionId(sessionId),
-          "dictation.session_index": sessionIndex,
-          "dictation.segments_captured": segmentsCaptured,
-          "dictation.user_initiated": userInitiated,
-          "speech.stop_reason": userInitiated ? "paused" : "collapsed",
-        },
-        duration
-      );
+    speechSessionStopped({ key, reason }) {
+      stopSpeech(key, reason);
     },
 
-    speechSessionTornDown() {
-      const state = session;
-      const speech = state?.speech;
-      if (!state || !speech) return;
-      state.speech = null;
-      finalisedSpeechIndex = speech.sessionIndex;
-      relay.emit(speechStopEvent(state, speech, "teardown", now()));
+    speechSessionTornDown({ key }) {
+      if (key) stopSpeech(key, "teardown");
+      if (session) session.paused = true;
     },
 
     speechCanceled({
@@ -525,7 +521,7 @@ export function createDictationSessionTelemetry(
       );
     },
 
-    submissionFinished({ ok, status, errorCode, mode, durationMs }) {
+    submissionFinished({ ok, status, errorCode, mode, durationMs, sessionId }) {
       const state = session;
       if (state) state.submissionFailed = !ok;
       emit(
@@ -546,11 +542,13 @@ export function createDictationSessionTelemetry(
               "dictation.mode": mode,
               "http.response.status_code": status,
             },
-        durationMs
+        durationMs,
+        sessionId
       );
     },
 
     sessionEnded(reason) {
+      reconcile();
       // A submitted draft is deleted, and a restore belongs to the page it was made
       // on: either way later sessions start without restored content. Reset before
       // the early return, so a restore submitted without recording is cleared too.
@@ -561,12 +559,13 @@ export function createDictationSessionTelemetry(
       session = null;
       const at = now();
       // The Speech session still running is part of this journey: stop it first,
-      // so its time is counted (OBS-5). Not a pause.
-      if (state.speech) {
-        finalisedSpeechIndex = state.speech.sessionIndex;
+      // so its time is counted (OBS-5). Not a pause. The hook's later stop for it
+      // is not a second session.
+      if (speech) {
         relay.emit(
-          speechStopEvent(state, state.speech, speechStopReason(reason), at)
+          speechStopEvent(state, speech, speechStopReason(reason), at)
         );
+        speech = null;
       }
       relay.emit(endEvent(state, reason, at));
       for (const listener of [...endListeners]) {
@@ -584,38 +583,45 @@ export function createDictationSessionTelemetry(
     },
 
     pendingEnd() {
-      return session === null ? null : endEvent(session, "page_hidden", now());
-    },
-
-    pendingSpeechStop() {
-      return session?.speech
-        ? speechStopEvent(
-            session,
-            session.speech,
-            speechStopReason("page_hidden"),
-            now()
-          )
-        : null;
+      if (session === null) return null;
+      const at = now();
+      const end = endEvent(session, "page_hidden", at);
+      return speech
+        ? {
+            at,
+            end,
+            speechStop: speechStopEvent(session, speech, "page_exit", at),
+          }
+        : { at, end };
     },
 
     discardSession() {
       // Its end, and the stop of its Speech session, were sent elsewhere.
-      if (session?.speech) finalisedSpeechIndex = session.speech.sessionIndex;
       session = null;
+      speech = null;
     },
 
     continueAsNewSession() {
       if (session === null) return;
       const at = now();
-      // The Speech session's time so far was sent with the end: count only what
-      // follows under the new journey.
-      const speech = session.speech
-        ? { ...session.speech, startedAt: at, segments: 0 }
-        : null;
-      session = { ...session, id: newId(), startedAt: at, speech };
+      // The Speech session's time and segments so far were sent with the end
+      // (the time frozen is not counted): count only what follows, under the
+      // new journey.
+      if (speech) {
+        speech.startedAt = at;
+        speech.segments = 0;
+      }
+      session.id = newId();
+      session.startedAt = at;
+    },
+
+    setReconciler(next) {
+      reconciler = next;
     },
 
     currentSessionId() {
+      // Sent with a submission: the journey the outcome is then reported under.
+      reconcile();
       return session?.id ?? null;
     },
   };
@@ -670,13 +676,10 @@ interface StoredEnd {
   speechStop?: RelayEvent;
 }
 
-function storedEnd(
-  telemetry: DictationSessionTelemetry,
-  event: RelayEvent,
-  storedAt: number
-): StoredEnd {
-  const speechStop = telemetry.pendingSpeechStop() ?? undefined;
-  return speechStop ? { storedAt, event, speechStop } : { storedAt, event };
+function storedEnd({ at, end, speechStop }: PendingEnd): StoredEnd {
+  return speechStop
+    ? { storedAt: at, event: end, speechStop }
+    : { storedAt: at, event: end };
 }
 
 function pageStorage(): Storage | null {
@@ -821,22 +824,32 @@ export function trackDictationPage(
       // Best effort only.
     }
   };
+  /** Store what to send if this page is killed while hidden. */
+  const storePending = () => {
+    const pending = telemetry.pendingEnd();
+    if (pending === null) return false;
+    set(endKey, JSON.stringify(storedEnd(pending)));
+    return get(endKey) !== null;
+  };
+  /** Another page sent the stored end while this one was frozen, and it is still
+   * hidden: carry on under a new journey (as when it comes back) and store its end,
+   * before anything else is sent, so no event or Speech stop repeats the old one. */
+  const reconcile = () => {
+    if (!storedPending || get(endKey) !== null) return;
+    set(aliveKey, String(now()));
+    telemetry.continueAsNewSession();
+    storedPending = storePending();
+  };
   const heartbeat = () => {
     set(aliveKey, String(now()));
     if (!storedPending) return;
-    const pending = telemetry.pendingEnd();
-    if (pending === null) {
-      // The session ended some other way (e.g. submitted) while hidden: the
-      // stored end is no longer pending.
-      remove(endKey);
-      storedPending = false;
-    } else if (get(endKey) !== null) {
-      // Still dictating while hidden: keep the stored end current (counts and
-      // duration), in case the page is killed. Only while it is still stored: if
-      // another page has sent it, recreating it would hide that from the
-      // visibility handler and lead to a second end for the same journey.
-      set(endKey, JSON.stringify(storedEnd(telemetry, pending, now())));
-    }
+    reconcile();
+    // Still dictating while hidden: keep the stored end current (counts and
+    // duration), in case the page is killed.
+    storedPending = storePending();
+    // Else the session ended some other way (e.g. submitted) while hidden: the
+    // stored end is no longer pending.
+    if (!storedPending) remove(endKey);
   };
   /** End here, unless another page already sent this session's end. */
   const endHere = (reason: DictationEndReason) => {
@@ -847,6 +860,7 @@ export function trackDictationPage(
     storedPending = false;
   };
 
+  telemetry.setReconciler(reconcile);
   heartbeat();
   const heartbeatTimer = setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);
 
@@ -863,13 +877,10 @@ export function trackDictationPage(
 
   const onVisibilityChange = () => {
     if (document.visibilityState === "hidden") {
-      const pending = telemetry.pendingEnd();
-      if (!pending) return;
-      set(endKey, JSON.stringify(storedEnd(telemetry, pending, now())));
-      storedPending = get(endKey) !== null;
+      storedPending = storePending();
       return;
     }
-    heartbeat();
+    set(aliveKey, String(now()));
     if (!storedPending) return;
     storedPending = false;
     if (get(endKey) !== null) remove(endKey);
@@ -889,6 +900,7 @@ export function trackDictationPage(
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pagehide", onPageHide);
     endHere("left_page");
+    telemetry.setReconciler(null);
     stopListening();
     void relay.flush();
   };
