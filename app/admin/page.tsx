@@ -162,7 +162,9 @@ export default function AdminPage() {
         </TabsContent>
 
         {/* DIAAT-356: jurisdictions and their members, without a server command. */}
-        <TabsContent value="jurisdictions" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
+        {/* Kept mounted while another tab is open: unsaved jurisdiction or template
+            edits survive a look at another tab (DIAAT-344). */}
+        <TabsContent forceMount value="jurisdictions" className="flex-1 overflow-auto mt-0 p-6 data-[state=inactive]:hidden">
           {adminRole === "SystemAdministrator" && <JurisdictionsPanel />}
         </TabsContent>
       </Tabs>

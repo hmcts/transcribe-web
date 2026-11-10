@@ -12,6 +12,8 @@ export interface ApiResponse<T> {
   requestId?: string;
   /** The refusal's machine-readable ``detail.code`` (DIAAT-322), when it has one. */
   code?: string;
+  /** What the refusal lists as missing (``detail.problems``, DIAAT-344), when it does. */
+  problems?: string[];
 }
 
 /**
@@ -42,6 +44,16 @@ function detailCode(detail: unknown): string | undefined {
   if (detail && typeof detail === "object" && !Array.isArray(detail)) {
     const code = (detail as { code?: unknown }).code;
     return typeof code === "string" && code ? code : undefined;
+  }
+  return undefined;
+}
+
+function detailProblems(detail: unknown): string[] | undefined {
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const problems = (detail as { problems?: unknown }).problems;
+    if (Array.isArray(problems) && problems.every((p) => typeof p === "string")) {
+      return problems.length > 0 ? problems : undefined;
+    }
   }
   return undefined;
 }
@@ -149,11 +161,13 @@ class ApiClient {
         let errorMessage = `HTTP error! status: ${response.status}`;
         let bodyRequestId: string | undefined;
         let errorCode: string | undefined;
+        let errorProblems: string[] | undefined;
         try {
           const errorData = await response.json();
           errorMessage =
             detailMessage(errorData.detail) || errorData.message || errorMessage;
           errorCode = detailCode(errorData.detail);
+          errorProblems = detailProblems(errorData.detail);
           if (errorData.request_id) {
             bodyRequestId = errorData.request_id as string;
           }
@@ -165,10 +179,12 @@ class ApiClient {
           requestId?: string;
           status?: number;
           code?: string;
+          problems?: string[];
         };
         e.requestId = bodyRequestId || requestId;
         e.status = response.status;
         e.code = errorCode;
+        e.problems = errorProblems;
         throw e;
       }
 
@@ -196,12 +212,14 @@ class ApiClient {
           requestId?: string;
           status?: number;
           code?: string;
+          problems?: string[];
         };
         return {
           error: error.message,
           status: apiError.status,
           requestId: apiError.requestId,
           ...(apiError.code && { code: apiError.code }),
+          ...(apiError.problems && { problems: apiError.problems }),
         };
       }
 
