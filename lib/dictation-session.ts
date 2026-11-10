@@ -606,7 +606,8 @@ export function createDictationSessionTelemetry(
         speech.startedAt = at;
         speech.segments = 0;
       }
-      session = { ...session, id: newId(), startedAt: at };
+      session.id = newId();
+      session.startedAt = at;
     },
 
     setReconciler(next) {
