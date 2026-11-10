@@ -184,7 +184,8 @@ export interface DictationSessionTelemetry {
    * Counts are kept, so the outcome still reflects the whole dictation; the
    * running Speech session counts only what follows. */
   continueAsNewSession(): void;
-  /** Run before anything is sent, started, stopped or ended (trackDictationPage):
+  /** Run before anything is sent, started, stopped or ended, and before the
+   * journey ID is read for a submission (trackDictationPage):
    * a frozen page that wakes may find its end was sent elsewhere, and must carry on
    * under a new journey before it sends anything, not at its next heartbeat. */
   setReconciler(reconcile: (() => void) | null): void;
@@ -615,6 +616,8 @@ export function createDictationSessionTelemetry(
     },
 
     currentSessionId() {
+      // Sent with a submission: the journey the outcome is then reported under.
+      reconcile();
       return session?.id ?? null;
     },
   };

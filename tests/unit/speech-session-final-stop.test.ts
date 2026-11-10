@@ -301,6 +301,38 @@ describe("the final Speech session stop", () => {
     stopPage();
   });
 
+  it("gives a woken page's submission the journey its outcome is reported under", () => {
+    const local = storage();
+    const clock = { now: 1_000_000 };
+    const page = dictating(clock);
+    const stopPage = trackDictationPage(
+      page.telemetry,
+      page.relay,
+      () => local,
+      () => clock.now
+    );
+    setVisibility("hidden");
+    clock.now += 10 * 60_000; // frozen
+    const other = recorder();
+    const stopOther = trackDictationPage(
+      createDictationSessionTelemetry(other.relay, () => clock.now),
+      other.relay,
+      () => local,
+      () => clock.now
+    );
+    const [sent] = other.named("dictation.session_ended");
+
+    // Wakes still hidden and submits before any heartbeat or event.
+    const sessionId = page.telemetry.currentSessionId();
+    page.telemetry.submissionFinished({ ok: true, mode: "mic", durationMs: 1 });
+    expect(sessionId).not.toBe(sent.journey?.id);
+    expect(page.named("dictation.submission_finished")[0].journey?.id).toBe(
+      sessionId
+    );
+    stopOther();
+    stopPage();
+  });
+
   it("ignores a stop from another hook, or a late stop after a reconnect", () => {
     const clock = { now: 1_000 };
     const { telemetry, named } = dictating(clock);
