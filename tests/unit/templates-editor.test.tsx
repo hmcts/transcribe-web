@@ -125,8 +125,10 @@ function serve(templates: AdminTemplate[] = [], refuse?: string[]) {
             status: 400,
           };
         const body = JSON.parse(String(options?.body));
+        const existing = list.find((t) => t.id === one[1]);
+        if (!existing) return { error: "Not found", status: 404 };
         const saved = {
-          ...list.find((t) => t.id === one[1])!,
+          ...existing,
           ...body,
           problems: [],
           version: "v2",
@@ -338,6 +340,44 @@ describe("TemplatesEditor", () => {
     expect(puts()[0].fields[0]).toMatchObject({
       type: "benchnotes",
       source: "year",
+    });
+  });
+
+  it("edits the options of a box tagged like one of Object's own properties", async () => {
+    const odd: AdminTemplate = {
+      ...UPLOADED,
+      boxes: [
+        {
+          key: "__proto__",
+          label: "Outcome",
+          kind: "dropdown",
+          options: ["Allowed"],
+          count: 1,
+        },
+      ],
+      fields: [
+        field("__proto__", {
+          label: "Outcome",
+          type: "dropdown",
+          options: ["Allowed"],
+        }),
+      ],
+    };
+    serve([odd]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    const options = within(fields).getByLabelText(
+      "Options for Outcome"
+    ) as HTMLTextAreaElement;
+    expect(options.value).toBe("Allowed");
+    await user.type(options, "{Enter}Dismissed");
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).toMatchObject({
+      tag: "__proto__",
+      options: ["Allowed", "Dismissed"],
     });
   });
 

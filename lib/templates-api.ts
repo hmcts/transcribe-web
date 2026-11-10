@@ -187,6 +187,19 @@ export function fetchAvailableTemplates(): Promise<AvailableTemplate[]> {
   return request("/jurisdictions/templates");
 }
 
+/**
+ * A value by box tag, its own only. Tags are whatever the template's author typed in
+ * Word, so one can be "__proto__" or "constructor": a plain lookup would find
+ * Object.prototype's instead. Maps of tags are built with Object.fromEntries or
+ * computed keys, which always make own properties.
+ */
+export function ownValue<T>(
+  record: Readonly<Record<string, T>>,
+  key: string
+): T | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
+}
+
 function isEmpty(value: TemplateValue | undefined): boolean {
   return (
     value === undefined ||
@@ -205,13 +218,11 @@ export function missingValues(
   template: AvailableTemplate,
   values: TemplateValues
 ): Record<string, string> {
-  const errors: Record<string, string> = {};
-  for (const field of template.fields) {
-    if (field.required && isEmpty(values[field.tag])) {
-      errors[field.tag] = `${field.label} is required`;
-    }
-  }
-  return errors;
+  return Object.fromEntries(
+    template.fields
+      .filter((field) => field.required && isEmpty(ownValue(values, field.tag)))
+      .map((field) => [field.tag, `${field.label} is required`])
+  );
 }
 
 /** The values to send: the template's fields only, empty ones left out. */
@@ -219,10 +230,10 @@ export function valuesToSend(
   template: AvailableTemplate,
   values: TemplateValues
 ): Record<string, TemplateValue> {
-  const sent: Record<string, TemplateValue> = {};
-  for (const field of template.fields) {
-    const value = values[field.tag];
-    if (!isEmpty(value)) sent[field.tag] = value as TemplateValue;
-  }
-  return sent;
+  return Object.fromEntries(
+    template.fields.flatMap((field) => {
+      const value = ownValue(values, field.tag);
+      return isEmpty(value) ? [] : [[field.tag, value as TemplateValue]];
+    })
+  );
 }

@@ -1096,6 +1096,10 @@ export default function RecordPage() {
       values={templateValues}
       onValuesChange={setTemplateValues}
       errors={templateErrors}
+      onClear={() => {
+        setTemplateValues({});
+        setTemplateErrors({});
+      }}
     />
   ) : null;
 

@@ -1,5 +1,7 @@
 "use client";
 
+import { RefreshCcwIcon } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
@@ -12,11 +14,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import type {
-  AvailableTemplate,
-  TemplateFormField,
-  TemplateValue,
-  TemplateValues,
+import {
+  type AvailableTemplate,
+  hasAnswers,
+  ownValue,
+  type TemplateFormField,
+  type TemplateValue,
+  type TemplateValues,
 } from "@/lib/templates-api";
 
 /**
@@ -52,6 +56,7 @@ export function TemplateForm({
   values,
   onValuesChange,
   errors,
+  onClear,
 }: {
   templates: AvailableTemplate[];
   templateId: string;
@@ -59,6 +64,8 @@ export function TemplateForm({
   values: TemplateValues;
   onValuesChange: (values: TemplateValues) => void;
   errors: Record<string, string>;
+  /** Discard every answer (a dropdown or yes/no cannot be unanswered otherwise). */
+  onClear: () => void;
 }) {
   const template = templates.find((t) => t.id === templateId) ?? templates[0];
   const set = (tag: string, value: TemplateValue | undefined) =>
@@ -66,7 +73,15 @@ export function TemplateForm({
 
   return (
     <form className="space-y-6" noValidate onSubmit={(e) => e.preventDefault()}>
-      <h2 className="text-lg font-semibold">Hearing details</h2>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="text-lg font-semibold">Hearing details</h2>
+        {hasAnswers(values) && (
+          <Button type="button" variant="ghost" size="sm" onClick={onClear}>
+            <RefreshCcwIcon className="mr-1 h-4 w-4" aria-hidden />
+            Clear answers
+          </Button>
+        )}
+      </div>
       <div className="space-y-2">
         <Label htmlFor="template-choice">Template</Label>
         {templates.length === 1 ? (
@@ -93,8 +108,8 @@ export function TemplateForm({
         <TemplateFieldInput
           key={`${template.id}:${field.tag}`}
           field={field}
-          value={values[field.tag]}
-          error={errors[field.tag]}
+          value={ownValue(values, field.tag)}
+          error={ownValue(errors, field.tag)}
           onChange={(value) => set(field.tag, value)}
         />
       ))}

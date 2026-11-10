@@ -282,6 +282,71 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
   });
 
+  it("lets the judge clear answers that cannot be unanswered, and then switch", async () => {
+    const user = userEvent.setup();
+    await renderPage([JUDGMENT]); // one template: no picker to change
+    await screen.findByText("Hearing details");
+    expect(screen.queryByRole("button", { name: "Clear answers" })).toBeNull();
+
+    await user.click(
+      screen.getByRole("combobox", { name: /First party is the/ })
+    );
+    await user.click(await screen.findByRole("option", { name: "Claimant" }));
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "unsaved",
+    });
+
+    await user.click(screen.getByRole("button", { name: "Clear answers" }));
+    expect(
+      screen.getByRole("combobox", { name: /First party is the/ }).textContent
+    ).toBe("Choose");
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+  });
+
+  it("handles boxes tagged like Object's own properties as ordinary fields", async () => {
+    const user = userEvent.setup();
+    await renderPage([
+      {
+        id: "33333333-3333-4333-8333-333333333333",
+        name: "Odd tags",
+        service: null,
+        fields: [
+          {
+            tag: "__proto__",
+            label: "Case number",
+            type: "text",
+            required: true,
+            options: [],
+          },
+          {
+            tag: "constructor",
+            label: "Outcome",
+            type: "dropdown",
+            required: true,
+            options: [{ value: "Allowed", label: "Allowed" }],
+          },
+        ],
+      },
+    ]);
+    await screen.findByText("Hearing details");
+
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    expect(await screen.findByText("Case number is required")).toBeTruthy();
+    expect(screen.getByText("Outcome is required")).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText(/Case number/), "1/2026");
+    await user.click(screen.getByRole("combobox", { name: /Outcome/ }));
+    await user.click(await screen.findByRole("option", { name: "Allowed" }));
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const raw = String(fetchMock.mock.calls[0][1].body);
+    expect(raw).toContain(
+      '"values":{"__proto__":"1/2026","constructor":"Allowed"}'
+    );
+  });
+
   it("shows the server's reason when the values are refused", async () => {
     const user = userEvent.setup();
     fetchMock.mockResolvedValue({

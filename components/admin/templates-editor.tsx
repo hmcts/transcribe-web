@@ -40,6 +40,7 @@ import {
   FIELD_TYPES,
   fetchTemplates,
   LIST_TYPES,
+  ownValue,
   saveTemplate,
   type TemplateField,
   type TemplateFieldType,
@@ -316,7 +317,7 @@ function TemplateFieldsEditor({
         fields: fields.map((f) => ({
           ...f,
           options: LIST_TYPES.includes(f.type)
-            ? (optionText[f.tag] ?? "")
+            ? (ownValue(optionText, f.tag) ?? "")
                 .split("\n")
                 .map((o) => o.trim())
                 .filter(Boolean)
@@ -504,7 +505,7 @@ function TemplateFieldsEditor({
                 <TableCell className="align-top">
                   <FieldConfiguration
                     field={f}
-                    options={optionText[f.tag] ?? ""}
+                    options={ownValue(optionText, f.tag) ?? ""}
                     onOptions={(text) =>
                       setOptionText((all) => ({ ...all, [f.tag]: text }))
                     }
