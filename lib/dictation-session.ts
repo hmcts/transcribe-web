@@ -413,6 +413,7 @@ export function createDictationSessionTelemetry(
     },
 
     segmentCaptured(input) {
+      reconcile();
       if (session) session.segments += 1;
       if (speech && !input?.stoppedSession) speech.segments += 1;
     },

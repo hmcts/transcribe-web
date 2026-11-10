@@ -378,6 +378,47 @@ describe("the final Speech session stop", () => {
     expect(named("dictation.resume_first_result")[0].durationMs).toBe(2_000);
   });
 
+  it("counts a segment captured by a woken page before its next heartbeat under the new journey", () => {
+    vi.useFakeTimers();
+    try {
+      const local = storage();
+      const clock = { now: 1_000_000 };
+      const page = dictating(clock);
+      const stopPage = trackDictationPage(
+        page.telemetry,
+        page.relay,
+        () => local,
+        () => clock.now
+      );
+      clock.now += 60_000;
+      setVisibility("hidden"); // stores a stop of 60 s with 2 segments
+      clock.now += 10 * 60_000; // frozen
+      const other = recorder();
+      const stopOther = trackDictationPage(
+        createDictationSessionTelemetry(other.relay, () => clock.now),
+        other.relay,
+        () => local,
+        () => clock.now
+      );
+      expect(other.named("speech.session_stopped")[0].durationMs).toBe(60_000);
+
+      // Wakes still hidden; a final transcript arrives before any heartbeat.
+      page.telemetry.segmentCaptured();
+      clock.now += 5_000;
+      page.telemetry.speechSessionStopped({
+        key: speechKey(1),
+        reason: "collapsed",
+      });
+      const [stop] = page.named("speech.session_stopped");
+      expect(stop.durationMs).toBe(5_000);
+      expect(stop.attributes?.["dictation.segments_captured"]).toBe(1);
+      stopOther();
+      stopPage();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("counts only the time after a frozen page's end was sent elsewhere", () => {
     const local = storage();
     const clock = { now: 1_000_000 };
