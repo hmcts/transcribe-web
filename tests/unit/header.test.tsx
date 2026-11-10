@@ -72,6 +72,7 @@ vi.mock("@/lib/admin-access", () => ({
 }));
 
 import Header from "@/components/layout/header";
+import { getAdminAccessStatus } from "@/lib/admin-access";
 
 describe("Header", () => {
   afterEach(() => {
@@ -118,6 +119,31 @@ describe("Header", () => {
       expect(getByRole("link", { name: /Wording/ }).getAttribute("href")).toBe(
         "/jurisdiction-wording"
       );
+    } finally {
+      mockRole = "judge";
+    }
+  });
+
+  it("links an admin of a jurisdiction with legal wording to it, unless the Admin link already does (DIAAT-342)", async () => {
+    const { queryByRole, unmount } = render(<Header />);
+    expect(queryByRole("link", { name: "Legal wording" })).toBeNull();
+    unmount();
+
+    mockRole = "admin";
+    try {
+      const view = render(<Header />);
+      expect(
+        view.getByRole("link", { name: "Legal wording" }).getAttribute("href")
+      ).toBe("/admin");
+      view.unmount();
+
+      // With an admin app role the Admin link reaches the same page.
+      vi.mocked(getAdminAccessStatus).mockResolvedValueOnce("authorised");
+      const withRole = render(<Header />);
+      expect(
+        await withRole.findByRole("link", { name: "Go to admin" })
+      ).toBeTruthy();
+      expect(withRole.queryByRole("link", { name: "Legal wording" })).toBeNull();
     } finally {
       mockRole = "judge";
     }

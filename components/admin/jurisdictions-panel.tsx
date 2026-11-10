@@ -3,6 +3,11 @@
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import {
+  type EditorState,
+  IDLE,
+  TemplatesEditor,
+} from "@/components/admin/templates-editor";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -33,14 +38,25 @@ import {
   fetchWordingKeys,
   MEMBER_ROLES,
   removeJurisdictionMember,
+  STAGES,
   saveJurisdiction,
 } from "@/lib/admin-jurisdictions-api";
+import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 
 /**
  * Jurisdictions and their members (DIAAT-356), for SystemAdministrators: what
  * used to need a command on the server. A jurisdiction's wording, template and
  * hearing recordings are its settings; its members are added by sign-in email,
  * before or after they first sign in.
+ *
+ * DIAAT-345: a new jurisdiction is a draft only its admins see. Moved to test,
+ * its testers see it too; live, every member. It leaves draft only when it is
+ * ready, and the editor lists what is missing.
+ *
+ * All of that needs an API that knows stages. If the web is deployed first, the
+ * old API would ignore the stage (and display name, service, tester) and make a
+ * "draft" visible to every member, so until the API reports stages the panel
+ * offers none of it and works as it did before.
  */
 
 const message = (error: unknown) =>
@@ -53,6 +69,13 @@ export function JurisdictionsPanel() {
   // Bumped to reopen the editor from the server's copy, dropping unsaved edits.
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [creating, setCreating] = useState(false);
+  // DIAAT-344: the open jurisdiction's templates. Leaving it (another row, or Add
+  // jurisdiction) closes them: not while a change is under way, and only once the
+  // admin agrees to drop unsaved edits.
+  const [templatesState, setTemplatesState] = useState<EditorState>(IDLE);
+  const mayLeaveTemplates = () =>
+    !templatesState.unsaved ||
+    window.confirm("Discard your unsaved changes to this jurisdiction's template?");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -85,6 +108,9 @@ export function JurisdictionsPanel() {
   }, [load]);
 
   const current = jurisdictions.find((j) => j.code === selected) ?? null;
+  // The API reports every jurisdiction's stage once it enforces stages.
+  const stagesSupported =
+    jurisdictions.length > 0 && jurisdictions.every((j) => j.stage !== undefined);
 
   if (loading) {
     return (
@@ -116,7 +142,9 @@ export function JurisdictionsPanel() {
         </div>
         <Button
           size="sm"
+          disabled={templatesState.busy}
           onClick={() => {
+            if (!mayLeaveTemplates()) return;
             setCreating(true);
             setSelected(null);
           }}
@@ -146,8 +174,10 @@ export function JurisdictionsPanel() {
                   <button
                     type="button"
                     aria-current={j.code === selected ? "true" : undefined}
-                    className="underline-offset-2 hover:underline"
+                    className="underline-offset-2 hover:underline disabled:no-underline disabled:opacity-60"
+                    disabled={templatesState.busy && j.code !== selected}
                     onClick={() => {
+                      if (j.code !== selected && !mayLeaveTemplates()) return;
                       setSelected(j.code);
                       setCreating(false);
                     }}
@@ -155,11 +185,16 @@ export function JurisdictionsPanel() {
                     {j.code}
                   </button>
                 </TableCell>
-                <TableCell>{j.name}</TableCell>
+                <TableCell>
+                  {(stagesSupported && j.display_name) || j.name}
+                  {stagesSupported && j.service && (
+                    <span className="block text-xs text-muted-foreground">{j.service}</span>
+                  )}
+                </TableCell>
                 <TableCell>{j.member_count}</TableCell>
                 <TableCell className="space-x-1">
                   <Badge variant={j.enabled ? "default" : "secondary"}>
-                    {j.enabled ? "Enabled" : "Disabled"}
+                    {j.enabled ? (stagesSupported && stageNote(j.stage)) || "Live" : "Disabled"}
                   </Badge>
                   {j.auto_enrol && <Badge variant="outline">New users join</Badge>}
                 </TableCell>
@@ -175,6 +210,7 @@ export function JurisdictionsPanel() {
           jurisdiction={creating ? null : current}
           existingCodes={jurisdictions.map((j) => j.code)}
           wordingKeys={wordingKeys}
+          stagesSupported={stagesSupported}
           onDiscard={async () => {
             await refresh();
             setEditorGeneration((g) => g + 1);
@@ -187,7 +223,19 @@ export function JurisdictionsPanel() {
         />
       )}
       {current && !creating && (
-        <MembersEditor key={current.code} code={current.code} onChanged={refresh} />
+        <MembersEditor
+          key={current.code}
+          code={current.code}
+          onChanged={refresh}
+          stagesSupported={stagesSupported}
+        />
+      )}
+      {current && !creating && (
+        <TemplatesEditor
+          key={`templates:${current.code}`}
+          code={current.code}
+          onStateChange={setTemplatesState}
+        />
       )}
     </div>
   );
@@ -197,12 +245,15 @@ function JurisdictionEditor({
   jurisdiction,
   existingCodes,
   wordingKeys,
+  stagesSupported,
   onSaved,
   onDiscard,
 }: {
   jurisdiction: AdminJurisdiction | null;
   existingCodes: string[];
   wordingKeys: Record<string, string>;
+  /** False: an API before DIAAT-345, which would ignore the stage. */
+  stagesSupported: boolean;
   onSaved: (code: string) => Promise<void>;
   /** Reopen from the server's copy (after a 409, say). */
   onDiscard: () => Promise<void>;
@@ -210,6 +261,12 @@ function JurisdictionEditor({
   const settings = jurisdiction?.settings ?? {};
   const [code, setCode] = useState(jurisdiction?.code ?? "");
   const [name, setName] = useState(jurisdiction?.name ?? "");
+  const [displayName, setDisplayName] = useState(jurisdiction?.display_name ?? "");
+  const [service, setService] = useState(jurisdiction?.service ?? "");
+  // A new one is a draft; one from an API before stages is live.
+  const [stage, setStage] = useState<JurisdictionStage>(
+    jurisdiction ? (jurisdiction.stage ?? "live") : "draft"
+  );
   const [enabled, setEnabled] = useState(jurisdiction?.enabled ?? true);
   const [autoEnrol, setAutoEnrol] = useState(jurisdiction?.auto_enrol ?? false);
   const [template, setTemplate] = useState<string>(settings.template ?? "none");
@@ -223,7 +280,18 @@ function JurisdictionEditor({
   const [version, setVersion] = useState(jurisdiction?.version ?? "");
 
   // DIAAT-332: a switch reloads the tab, losing changes not saved, or a save under way.
-  const form = JSON.stringify({ code, name, enabled, autoEnrol, template, recordings, wording });
+  const form = JSON.stringify({
+    code,
+    name,
+    displayName,
+    service,
+    stage,
+    enabled,
+    autoEnrol,
+    template,
+    recordings,
+    wording,
+  });
   const [savedForm, setSavedForm] = useState(form);
   useJurisdictionSwitchGuard({ busy: saving, unsaved: form !== savedForm });
 
@@ -237,6 +305,8 @@ function JurisdictionEditor({
     try {
       const saved = await saveJurisdiction(code, {
         name,
+        // Only to an API that knows them: an older one would ignore them.
+        ...(stagesSupported ? { display_name: displayName, service, stage } : {}),
         enabled,
         auto_enrol: autoEnrol,
         settings: {
@@ -296,6 +366,58 @@ function JurisdictionEditor({
             placeholder="Employment Tribunal"
           />
         </div>
+        {stagesSupported && (
+          <>
+        <div className="space-y-1">
+          <Label htmlFor="jurisdiction-display-name">Display name</Label>
+          <Input
+            id="jurisdiction-display-name"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Employment Tribunals (ET)"
+            maxLength={200}
+            aria-describedby="jurisdiction-display-name-hint"
+          />
+          <p id="jurisdiction-display-name-hint" className="text-xs text-muted-foreground">
+            What users see. Blank: the name.
+          </p>
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="jurisdiction-service">Service (where it applies)</Label>
+          <Input
+            id="jurisdiction-service"
+            value={service}
+            onChange={(e) => setService(e.target.value)}
+            placeholder="England and Wales"
+            maxLength={200}
+          />
+        </div>
+        <div className="space-y-1">
+          <Label htmlFor="jurisdiction-stage">Who sees it</Label>
+          <Select
+            value={stage}
+            onValueChange={(v) => setStage(v as JurisdictionStage)}
+            disabled={!jurisdiction}
+          >
+            <SelectTrigger id="jurisdiction-stage" aria-describedby="jurisdiction-stage-hint">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {STAGES.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p id="jurisdiction-stage-hint" className="text-xs text-muted-foreground">
+            {jurisdiction
+              ? "Mark members as testers below to put them in the test group."
+              : "A new jurisdiction starts as a draft. Add its admins, then switch it on."}
+          </p>
+        </div>
+          </>
+        )}
         <div className="space-y-1">
           <Label htmlFor="jurisdiction-template">Template</Label>
           <Select value={template} onValueChange={setTemplate}>
@@ -324,6 +446,30 @@ function JurisdictionEditor({
           />
         </div>
       </div>
+
+      {!stagesSupported && !jurisdiction && (
+        <p className="text-sm text-muted-foreground">
+          It is live for its members as soon as it is enabled: setting one up as a draft
+          needs the latest API.
+        </p>
+      )}
+
+      {jurisdiction?.stage === "draft" && (jurisdiction.problems?.length ?? 0) > 0 && (
+        <div
+          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
+          aria-labelledby="jurisdiction-not-ready"
+          role="region"
+        >
+          <p id="jurisdiction-not-ready" className="font-medium">
+            Before it can be switched on for testers or everyone:
+          </p>
+          <ul className="mt-1 list-disc pl-5">
+            {jurisdiction.problems?.map((problem) => (
+              <li key={problem}>{problem}</li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <details>
         <summary className="cursor-pointer text-sm font-medium">
@@ -379,10 +525,20 @@ function CheckboxField({
   );
 }
 
-function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Promise<void> }) {
+function MembersEditor({
+  code,
+  onChanged,
+  stagesSupported,
+}: {
+  code: string;
+  onChanged: () => Promise<void>;
+  /** False: an API before DIAAT-345, with no test group. */
+  stagesSupported: boolean;
+}) {
   const [members, setMembers] = useState<AdminJurisdictionMember[]>([]);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<AdminJurisdictionMember["role"]>("judge");
+  const [tester, setTester] = useState(false);
   const [busy, setBusy] = useState(false);
   const [removing, setRemoving] = useState<string | null>(null);
   // An email typed but not added yet is a change a switch would lose.
@@ -404,7 +560,15 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
     setBusy(true);
     try {
       const existing = members.find((m) => m.email === email.trim().toLowerCase());
-      const added = await addJurisdictionMember(code, email.trim(), role);
+      const added = await addJurisdictionMember(
+        code,
+        email.trim(),
+        role,
+        // Unticked sends nothing: the members list may not have loaded, so an existing
+        // tester could look new. The API keeps a member's group and makes a new one a
+        // non-tester; only the members list takes someone out of the test group.
+        stagesSupported && tester ? true : undefined
+      );
       toast.success(
         existing
           ? `${added.email} is now ${added.role === "admin" ? "an admin" : "a judge"} in ${code}`
@@ -413,8 +577,35 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             : `Added ${added.email} to ${code}`
       );
       setEmail("");
+      setTester(false);
       await load();
       await onChanged();
+    } catch (err) {
+      toast.error(message(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // DIAAT-345: in or out of the test group, keeping their role.
+  async function setTesterOf(member: AdminJurisdictionMember, value: boolean) {
+    setBusy(true);
+    try {
+      // The role is sent with the change, so use the current one: another admin may
+      // have changed it since this list was loaded.
+      const current = (await fetchJurisdictionMembers(code)).find((m) => m.email === member.email);
+      if (!current) {
+        toast.error(`${member.email} is no longer a member of ${code}`);
+        await load();
+        return;
+      }
+      await addJurisdictionMember(code, member.email, current.role, value);
+      toast.success(
+        value
+          ? `${member.email} is now in the test group for ${code}`
+          : `${member.email} is no longer in the test group for ${code}`
+      );
+      await load();
     } catch (err) {
       toast.error(message(err));
     } finally {
@@ -476,6 +667,11 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             </SelectContent>
           </Select>
         </div>
+        {stagesSupported && (
+          <div className="flex h-9 items-center">
+            <CheckboxField id="member-tester" label="Tester" checked={tester} onChange={setTester} />
+          </div>
+        )}
         <Button type="submit" disabled={busy || !email.trim()}>
           <Plus className="mr-1 h-4 w-4" />
           Add member
@@ -490,6 +686,7 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             <TableRow>
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
+              {stagesSupported && <TableHead>Tester</TableHead>}
               <TableHead>Signed in</TableHead>
               <TableHead className="w-40" />
             </TableRow>
@@ -499,6 +696,16 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
               <TableRow key={m.email}>
                 <TableCell className="font-medium">{m.email}</TableCell>
                 <TableCell>{m.role === "admin" ? "Admin" : "Judge"}</TableCell>
+                {stagesSupported && (
+                  <TableCell>
+                    <Checkbox
+                      checked={m.tester ?? false}
+                      disabled={busy}
+                      onCheckedChange={(value) => void setTesterOf(m, value === true)}
+                      aria-label={`${m.email} is a tester`}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>
                   {m.pending ? <Badge variant="outline">Not yet</Badge> : "Yes"}
                 </TableCell>

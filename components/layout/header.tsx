@@ -1,6 +1,14 @@
 "use client";
 
-import { FileAudio, HelpCircle, Menu, Mic, PenLine, Shield } from "lucide-react";
+import {
+  FileAudio,
+  HelpCircle,
+  Menu,
+  Mic,
+  PenLine,
+  Scale,
+  Shield,
+} from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -24,6 +32,7 @@ import {
   HEARING_RECORDINGS_HREF,
   isPathActive,
 } from "@/lib/navigation";
+import { canEditLegalWording } from "@/lib/jurisdiction-context";
 import { inSentence } from "@/lib/jurisdiction-wording";
 import cn from "@/lib/utils";
 import { useJurisdiction } from "@/providers/jurisdiction";
@@ -43,6 +52,9 @@ export default function Header() {
   const { current, hasHearingRecordings, wording } = useJurisdiction();
   // DIAAT-356: an admin for the jurisdiction they work in can change its wording.
   const isJurisdictionAdmin = current?.role === "admin";
+  // DIAAT-342: and, where it has legal wording, that too (the Admin link below
+  // reaches the same page for those with an admin app role).
+  const canEditLegal = canEditLegalWording(current);
   const recordingsLabel = wording("nav.recordings");
   const router = useRouter();
   const pathname = usePathname();
@@ -175,6 +187,16 @@ export default function Header() {
               <span className="text-base">Wording</span>
             </Link>
           )}
+          {!hideNavLinks && canEditLegal && !isAdminUser && (
+            <Link
+              href="/admin"
+              className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
+              title={`Change ${current?.code} legal wording`}
+            >
+              <Scale className="mr-1 size-5" />
+              <span className="text-base">Legal wording</span>
+            </Link>
+          )}
           {/* MERGE NOTE: entry points for both feature areas (dictation and
               hearing recordings). Without nav links the merged app would ship
               two unreachable halves rather than one application. */}
@@ -272,6 +294,17 @@ export default function Header() {
                   >
                     <PenLine className="size-4" />
                     Wording
+                  </Link>
+                </SheetClose>
+              )}
+              {!hideNavLinks && canEditLegal && !isAdminUser && (
+                <SheetClose asChild>
+                  <Link
+                    href="/admin"
+                    className="inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground"
+                  >
+                    <Scale className="size-4" />
+                    Legal wording
                   </Link>
                 </SheetClose>
               )}

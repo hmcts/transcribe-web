@@ -10,6 +10,17 @@ import {
 } from "@/lib/dictation-session";
 import { type RelayEvent, TelemetryRelay } from "@/lib/telemetry-relay";
 
+/** One key per Speech session index, as the hook would give each session. */
+const speechKeys = new Map<number, symbol>();
+function speechKey(sessionIndex: number): symbol {
+  let key = speechKeys.get(sessionIndex);
+  if (!key) {
+    key = Symbol(`speech-session-${sessionIndex}`);
+    speechKeys.set(sessionIndex, key);
+  }
+  return key;
+}
+
 function response(status: number) {
   return { ok: status >= 200 && status < 300, status } as Response;
 }
@@ -21,6 +32,7 @@ function recorder() {
     flush: async () => undefined,
     flushOnHide: () => undefined,
     restoreUnsent: () => undefined,
+    suspendUntilAccountConfirmed: () => undefined,
   } as unknown as TelemetryRelay;
   return {
     events,
@@ -40,7 +52,11 @@ describe("finding 1: only recording starts a dictation session", () => {
     // The recognizer is still running and delivers more results.
     telemetry.firstText({ sessionIndex: 1 });
     telemetry.segmentCaptured();
-    telemetry.speechSessionStarted({ sessionIndex: 2, reconnectAttempt: 1 });
+    telemetry.speechSessionStarted({
+      key: speechKey(2),
+      sessionIndex: 2,
+      reconnectAttempt: 1,
+    });
     telemetry.speechUnhealthy({ collapsesInWindow: 3, windowSeconds: 120 });
     telemetry.sessionEnded("left_page"); // the page unmounts on navigation
 
@@ -304,7 +320,7 @@ describe("finding 5: a session whose page is killed while hidden still ends", ()
     }
   });
 
-  it("does not recreate a stored end that another page already sent", () => {
+  it("does not store a second end for a journey another page already ended", () => {
     vi.useFakeTimers();
     try {
       const local = storageWithKeys();
@@ -313,10 +329,18 @@ describe("finding 5: a session whose page is killed while hidden still ends", ()
       setVisibility("hidden");
       clock.now += 10 * 60_000; // frozen
       const other = openPage(local, clock); // sends and removes the stored end
+      const [sent] = other.named("dictation.session_ended");
       expect(other.named("dictation.session_ended")).toHaveLength(1);
 
       vi.advanceTimersByTime(30_000); // the frozen page wakes and beats while still hidden
-      expect(pendingEnds(local)).toBe(0);
+      // Still dictating, so it stores an end again, but under a new journey.
+      expect(pendingEnds(local)).toBe(1);
+      clock.now += 10 * 60_000; // ... and is killed
+      const last = openPage(local, clock);
+      const [again] = last.named("dictation.session_ended");
+      expect(again.journey?.id).toBeDefined();
+      expect(again.journey?.id).not.toBe(sent.journey?.id);
+      last.stop();
       other.stop();
       page.stop();
     } finally {

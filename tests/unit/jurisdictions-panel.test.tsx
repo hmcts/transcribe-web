@@ -22,6 +22,7 @@ const IAC: api.AdminJurisdiction = {
   settings: { template: "iac_decision", features: { hearing_recordings: true } },
   member_count: 12,
   version: "2026-10-01T09:00:00",
+  stage: "live",
 };
 const ET: api.AdminJurisdiction = {
   code: "ET",
@@ -31,7 +32,10 @@ const ET: api.AdminJurisdiction = {
   settings: { wording: { "help.subtitle": "Employment Tribunal" }, template: null },
   member_count: 0,
   version: "2026-10-31T09:00:00",
+  stage: "live",
 };
+/** As an API before DIAAT-345 returns it: no stage. */
+const beforeStages = ({ stage: _, ...j }: api.AdminJurisdiction): api.AdminJurisdiction => j;
 
 const request = vi.mocked(apiClient.request);
 
@@ -39,6 +43,21 @@ const request = vi.mocked(apiClient.request);
 Element.prototype.scrollIntoView ??= vi.fn();
 Element.prototype.hasPointerCapture ??= vi.fn(() => false);
 Element.prototype.releasePointerCapture ??= vi.fn();
+// Radix Checkbox measures itself.
+vi.stubGlobal(
+  "ResizeObserver",
+  class {
+    observe() {
+      // No-op for jsdom.
+    }
+    unobserve() {
+      // No-op for jsdom.
+    }
+    disconnect() {
+      // No-op for jsdom.
+    }
+  }
+);
 
 /** A small fake of the API's admin routes. A refusal comes back as `error`, as
  * apiClient.request returns it (it never throws). */
@@ -64,8 +83,15 @@ function serve({ jurisdictions = [IAC], members = [] as api.AdminJurisdictionMem
     if (endpoint.endsWith("/members") && method === "GET") return { data: memberList };
     if (endpoint.endsWith("/members") && method === "POST") {
       if (body.email === "nope@example.test") return { error: "No jurisdiction ET", status: 404 };
-      const added = { email: body.email.toLowerCase(), role: body.role, pending: true };
-      memberList.push(added);
+      const email = body.email.toLowerCase();
+      const existing = memberList.find((m) => m.email === email);
+      const added = {
+        email,
+        role: body.role,
+        tester: body.tester ?? existing?.tester ?? false,
+        pending: existing?.pending ?? true,
+      };
+      memberList.splice(0, memberList.length, ...memberList.filter((m) => m.email !== email), added);
       return { data: added };
     }
     if (endpoint.includes("/members?") && method === "DELETE") {
@@ -78,6 +104,11 @@ function serve({ jurisdictions = [IAC], members = [] as api.AdminJurisdictionMem
     throw new Error(`Unexpected ${method} ${endpoint}`);
   });
   return {
+    /** Someone else changes a member's role meanwhile. */
+    changeRoleElsewhere(email: string, role: api.AdminJurisdictionMember["role"]) {
+      const index = memberList.findIndex((m) => m.email === email);
+      memberList[index] = { ...memberList[index], role };
+    },
     /** Someone else changes `code` meanwhile. */
     changeElsewhere(code: string, name: string) {
       list = list.map((j) => (j.code === code ? { ...j, name, version: `${j.version}+` } : j));
@@ -118,6 +149,10 @@ describe("JurisdictionsPanel", () => {
     expect(put?.[0]).toBe("/admin/jurisdictions/ET");
     expect(JSON.parse(String(put?.[1]?.body))).toEqual({
       name: "Employment Tribunal",
+      display_name: "",
+      service: "",
+      // DIAAT-345: a new jurisdiction is a draft only its admins see.
+      stage: "draft",
       enabled: true,
       auto_enrol: false,
       settings: {
@@ -346,6 +381,255 @@ describe("JurisdictionsPanel", () => {
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("a@example.test is now an admin in ET")
     );
+  });
+
+  // DIAAT-345 ---------------------------------------------------------------
+
+  it("shows each jurisdiction's stage, display name and service", async () => {
+    serve({
+      jurisdictions: [
+        { ...IAC, stage: "live" },
+        { ...ET, stage: "test", display_name: "Employment Tribunals (ET)", service: "England and Wales" },
+        { ...ET, code: "SSCS", name: "Social Security", stage: "draft" },
+        { ...ET, code: "OLD", name: "Old", stage: "live", enabled: false },
+      ],
+    });
+    render(<JurisdictionsPanel />);
+
+    expect(await screen.findByText("Employment Tribunals (ET)")).toBeTruthy();
+    expect(screen.getByText("England and Wales")).toBeTruthy();
+    for (const status of ["Live", "Test", "Draft", "Disabled"]) {
+      expect(screen.getByText(status)).toBeTruthy();
+    }
+  });
+
+  it("starts a new jurisdiction as a draft, with its display name and service", async () => {
+    serve();
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: /Add jurisdiction/ }));
+    const stage = screen.getByLabelText("Who sees it");
+    expect(stage.textContent).toContain("Draft: only its admins see it");
+    expect((stage as HTMLButtonElement).disabled).toBe(true);
+    await user.type(screen.getByLabelText("Code"), "et");
+    await user.type(screen.getByLabelText("Name"), "Employment Tribunals");
+    await user.type(screen.getByLabelText("Display name"), "Employment Tribunals (ET)");
+    await user.type(screen.getByLabelText("Service (where it applies)"), "England and Wales");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved ET"));
+    const body = JSON.parse(String(request.mock.calls.find(([, o]) => o?.method === "PUT")?.[1]?.body));
+    expect([body.display_name, body.service, body.stage]).toEqual([
+      "Employment Tribunals (ET)",
+      "England and Wales",
+      "draft",
+    ]);
+  });
+
+  it("lists what stops a draft being switched on", async () => {
+    serve({
+      jurisdictions: [
+        {
+          ...ET,
+          stage: "draft",
+          problems: ["Add the screen wording for: Subtitle of the help page.", "Assign at least one jurisdiction admin."],
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    const region = screen.getByRole("region", { name: /Before it can be switched on/ });
+    expect(region.textContent).toContain("Add the screen wording for: Subtitle of the help page.");
+    expect(region.textContent).toContain("Assign at least one jurisdiction admin.");
+  });
+
+  it("does not list problems for a jurisdiction already switched on", async () => {
+    serve({ jurisdictions: [{ ...ET, stage: "live", problems: ["Assign at least one jurisdiction admin."] }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    expect(screen.queryByRole("region", { name: /Before it can be switched on/ })).toBeNull();
+  });
+
+  it("switches a draft on for its test group, and shows why if it is not ready", async () => {
+    serve({ jurisdictions: [{ ...ET, stage: "draft" }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await user.click(screen.getByLabelText("Who sees it"));
+    await user.click(await screen.findByRole("option", { name: "Test: its admins and testers see it" }));
+    const fake = request.getMockImplementation();
+    request.mockImplementation(async (endpoint: string, options?: RequestInit) =>
+      options?.method === "PUT"
+        ? { error: "ET is not ready to be switched on. Assign at least one jurisdiction admin.", status: 400 }
+        : (fake as typeof apiClient.request)(endpoint, options)
+    );
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "ET is not ready to be switched on. Assign at least one jurisdiction admin."
+      )
+    );
+    const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body)).stage).toBe("test");
+  });
+
+  it("adds a member to the test group, and takes one out keeping their role", async () => {
+    serve({ jurisdictions: [ET], members: [{ email: "lead@example.test", role: "admin", tester: true, pending: false }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await screen.findByText("lead@example.test");
+    await user.type(screen.getByLabelText("Sign-in email"), "tester@example.test");
+    await user.click(screen.getByLabelText("Tester"));
+    await user.click(screen.getByRole("button", { name: /Add member/ }));
+    await screen.findByText("tester@example.test");
+    const added = request.mock.calls.filter(([, o]) => o?.method === "POST").map(([, o]) => JSON.parse(String(o?.body)));
+    expect(added).toEqual([{ email: "tester@example.test", role: "judge", tester: true }]);
+    expect((screen.getByLabelText("Tester") as HTMLButtonElement).getAttribute("aria-checked")).toBe("false");
+
+    await user.click(screen.getByRole("checkbox", { name: "lead@example.test is a tester" }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("lead@example.test is no longer in the test group for ET")
+    );
+    const posts = request.mock.calls.filter(([, o]) => o?.method === "POST").map(([, o]) => JSON.parse(String(o?.body)));
+    expect(posts.at(-1)).toEqual({ email: "lead@example.test", role: "admin", tester: false });
+  });
+
+  it("keeps a tester in the test group when their role is changed", async () => {
+    serve({ jurisdictions: [ET], members: [{ email: "lead@example.test", role: "admin", tester: true, pending: false }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await screen.findByText("lead@example.test");
+    await user.type(screen.getByLabelText("Sign-in email"), "lead@example.test");
+    await user.click(screen.getByRole("button", { name: /Add member/ }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("lead@example.test is now a judge in ET"));
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ email: "lead@example.test", role: "judge" });
+    expect(
+      (screen.getByRole("checkbox", { name: "lead@example.test is a tester" }) as HTMLButtonElement).getAttribute(
+        "aria-checked"
+      )
+    ).toBe("true");
+  });
+
+  it("keeps the role another admin set when only the tester box is changed", async () => {
+    const fake = serve({
+      jurisdictions: [ET],
+      members: [{ email: "lead@example.test", role: "admin", tester: true, pending: false }],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await screen.findByText("lead@example.test");
+    fake.changeRoleElsewhere("lead@example.test", "judge");
+    await user.click(screen.getByRole("checkbox", { name: "lead@example.test is a tester" }));
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("lead@example.test is no longer in the test group for ET")
+    );
+    const posts = request.mock.calls.filter(([, o]) => o?.method === "POST").map(([, o]) => JSON.parse(String(o?.body)));
+    expect(posts.at(-1)).toEqual({ email: "lead@example.test", role: "judge", tester: false });
+  });
+
+  it("leaves the test group alone when a role is changed before the members list loads", async () => {
+    serve({ jurisdictions: [ET] });
+    const served = request.getMockImplementation();
+    if (!served) throw new Error("serve() installs the fake API");
+    request.mockImplementation(async (endpoint: string, options?: RequestInit) =>
+      endpoint.endsWith("/members") && (options?.method ?? "GET") === "GET"
+        ? { error: "Unavailable", status: 503 }
+        : served(endpoint, options)
+    );
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await user.type(screen.getByLabelText("Sign-in email"), "lead@example.test");
+    await user.click(screen.getByRole("button", { name: /Add member/ }));
+    await waitFor(() => expect(request.mock.calls.some(([, o]) => o?.method === "POST")).toBe(true));
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ email: "lead@example.test", role: "judge" });
+  });
+
+  it("offers no stages, display name or testers while the API cannot enforce them", async () => {
+    // Web deployed before the API: the old API would ignore the stage and make a
+    // "draft" visible to every member.
+    serve({
+      jurisdictions: [beforeStages(IAC), beforeStages(ET)],
+      members: [{ email: "a@example.test", role: "judge", pending: false }],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await screen.findByText("a@example.test");
+    expect(screen.queryByLabelText("Who sees it")).toBeNull();
+    expect(screen.queryByLabelText("Display name")).toBeNull();
+    expect(screen.queryByLabelText("Tester")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "a@example.test is a tester" })).toBeNull();
+    await user.type(screen.getByLabelText("Sign-in email"), "b@example.test");
+    await user.click(screen.getByRole("button", { name: /Add member/ }));
+    await screen.findByText("b@example.test");
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ email: "b@example.test", role: "judge" });
+
+    await user.click(screen.getByRole("button", { name: /Add jurisdiction/ }));
+    expect(screen.getByText(/live for its members as soon as it is enabled/)).toBeTruthy();
+    await user.type(screen.getByLabelText("Code"), "SSCS");
+    await user.type(screen.getByLabelText("Name"), "Social Security");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved SSCS"));
+    const body = JSON.parse(String(request.mock.calls.find(([, o]) => o?.method === "PUT")?.[1]?.body));
+    expect(Object.keys(body)).not.toContain("stage");
+    expect(Object.keys(body)).not.toContain("display_name");
+  });
+
+  it("asks before leaving a jurisdiction with unsaved template edits (DIAAT-344)", async () => {
+    serve({ jurisdictions: [IAC, ET] });
+    const fake = request.getMockImplementation();
+    const template = {
+      id: "t1",
+      name: "Judgment",
+      service: null,
+      file_name: "Judgment.docx",
+      enabled: false,
+      boxes: [{ key: "Reference", label: "Reference", kind: "text", options: [], count: 1 }],
+      fields: [{ tag: "Reference", label: "Reference", type: "text", required: true, options: [], source: null }],
+      problems: [],
+      version: "v1",
+    };
+    request.mockImplementation(async (endpoint: string, options?: RequestInit) =>
+      endpoint.endsWith("/templates")
+        ? { data: endpoint.includes("/ET/") ? [template] : [] }
+        : (fake?.(endpoint, options) as ReturnType<typeof apiClient.request>)
+    );
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await user.click(await screen.findByRole("button", { name: "Judgment" }));
+    await user.type(await screen.findByLabelText("Label of box Reference"), "!");
+    await user.click(screen.getByRole("button", { name: "IAC" }));
+
+    expect(confirm).toHaveBeenCalledWith("Discard your unsaved changes to this jurisdiction's template?");
+    expect(screen.getByRole("heading", { name: "Templates of ET" })).toBeTruthy();
+    expect((screen.getByLabelText("Label of box Reference") as HTMLInputElement).value).toBe("Reference!");
+
+    confirm.mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "IAC" }));
+    expect(await screen.findByRole("heading", { name: "Templates of IAC" })).toBeTruthy();
+    confirm.mockRestore();
   });
 
   it("offers a retry when the list cannot be loaded", async () => {

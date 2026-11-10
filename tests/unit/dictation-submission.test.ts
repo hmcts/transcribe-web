@@ -48,7 +48,7 @@ describe("submitDictation (the speech demo's submission)", () => {
       "X-Dictation-Session-Id": SESSION,
     });
     expect(t.submissionFinished).toHaveBeenCalledWith(
-      expect.objectContaining({ ok: true, mode: "mic" })
+      expect.objectContaining({ ok: true, mode: "mic", sessionId: SESSION })
     );
     expect(t.sessionEnded).toHaveBeenCalledWith("submitted");
   });

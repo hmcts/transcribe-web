@@ -5,6 +5,8 @@ import type React from "react";
 import { useEffect, useState } from "react";
 import { getAdminAccessStatus } from "@/lib/admin-access";
 import { loginUrl } from "@/lib/auth-utils";
+import { canEditLegalWording } from "@/lib/jurisdiction-context";
+import { useJurisdiction } from "@/providers/jurisdiction";
 
 type AdminGateState = "checking" | "authorised" | "forbidden" | "error";
 
@@ -13,7 +15,16 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const [state, setState] = useState<AdminGateState>("checking");
+  const [roleState, setState] = useState<AdminGateState>("checking");
+  // DIAAT-342: an admin of the jurisdiction they work in, with no admin app
+  // role, reaches the area for its legal wording (the API still decides what
+  // they may do). Their role is known only once the jurisdiction has loaded.
+  const { current, resolved } = useJurisdiction();
+  let state = roleState;
+  if (roleState === "forbidden") {
+    if (canEditLegalWording(current)) state = "authorised";
+    else if (!resolved) state = "checking";
+  }
 
   useEffect(() => {
     let cancelled = false;

@@ -47,9 +47,10 @@ export async function submitDictation<T = unknown>(
   const submittedAt = now();
   let failedStatus: number | undefined;
   let failureCode: string | undefined;
+  let sessionId: string | null = null;
   try {
     const authToken = await getToken();
-    const sessionId = telemetry.currentSessionId();
+    sessionId = telemetry.currentSessionId();
     let response: Response;
     try {
       response = await fetchImpl(SUBMISSION_PATH, {
@@ -89,6 +90,7 @@ export async function submitDictation<T = unknown>(
       ok: true,
       mode,
       durationMs: now() - submittedAt,
+      sessionId,
     });
     telemetry.sessionEnded("submitted");
     return data as T;
@@ -99,6 +101,7 @@ export async function submitDictation<T = unknown>(
       errorCode: failureCode,
       mode,
       durationMs: now() - submittedAt,
+      sessionId,
     });
     throw error;
   }

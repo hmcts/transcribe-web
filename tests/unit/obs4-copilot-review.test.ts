@@ -15,8 +15,19 @@ import {
 import {
   type RelayEvent,
   TelemetryRelay,
-  UNSENT_STORAGE_KEY,
+  unsentStorageKey,
 } from "@/lib/telemetry-relay";
+
+/** One key per Speech session index, as the hook would give each session. */
+const speechKeys = new Map<number, symbol>();
+function speechKey(sessionIndex: number): symbol {
+  let key = speechKeys.get(sessionIndex);
+  if (!key) {
+    key = Symbol(`speech-session-${sessionIndex}`);
+    speechKeys.set(sessionIndex, key);
+  }
+  return key;
+}
 
 const SDK_SESSION = "0123456789abcdef0123456789abcdef";
 
@@ -27,6 +38,7 @@ function recorder() {
     flush: async () => undefined,
     flushOnHide: () => undefined,
     restoreUnsent: () => undefined,
+    suspendUntilAccountConfirmed: () => undefined,
   } as unknown as TelemetryRelay;
   return { events, relay, names: () => events.map((e) => e.name) };
 }
@@ -140,6 +152,7 @@ describe("a session that ends while hidden", () => {
     const stop = trackDictationPage(telemetry, rec.relay, () => local);
     telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
     telemetry.speechSessionStarted({
+      key: speechKey(1),
       sessionId: SDK_SESSION,
       sessionIndex: 1,
       reconnectAttempt: 0,
@@ -175,12 +188,13 @@ describe("a batch whose flush fails while the page is hidden", () => {
     const local = memoryStorage();
     const fetchImpl = vi.fn().mockRejectedValue(new TypeError("offline"));
     const relay = new TelemetryRelay({ fetchImpl, storage: () => local });
+    relay.setAccount("judge-1");
     relay.emit({ name: "dictation.paused" });
     const flushing = relay.flush(); // in flight, so not in the queue
     setVisibility("hidden");
     relay.flushOnHide(); // nothing queued to send
     await flushing; // the in-flight request fails while hidden
-    const kept = JSON.parse(local.getItem(UNSENT_STORAGE_KEY) ?? "[]");
+    const kept = JSON.parse(local.getItem(unsentStorageKey("judge-1")) ?? "[]");
     expect(kept.map((e: { name: string }) => e.name)).toEqual([
       "dictation.paused",
     ]);

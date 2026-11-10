@@ -10,6 +10,10 @@ export interface ApiResponse<T> {
   error?: string;
   status?: number;
   requestId?: string;
+  /** The refusal's machine-readable ``detail.code`` (DIAAT-322), when it has one. */
+  code?: string;
+  /** What the refusal lists as missing (``detail.problems``, DIAAT-344), when it does. */
+  problems?: string[];
 }
 
 /**
@@ -31,6 +35,25 @@ export function detailMessage(detail: unknown): string | undefined {
   if (detail && typeof detail === "object") {
     const message = (detail as { message?: unknown }).message;
     return typeof message === "string" && message ? message : undefined;
+  }
+  return undefined;
+}
+
+/** A FastAPI ``detail`` of the form ``{code, message}``: its code. */
+function detailCode(detail: unknown): string | undefined {
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const code = (detail as { code?: unknown }).code;
+    return typeof code === "string" && code ? code : undefined;
+  }
+  return undefined;
+}
+
+function detailProblems(detail: unknown): string[] | undefined {
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    const problems = (detail as { problems?: unknown }).problems;
+    if (Array.isArray(problems) && problems.every((p) => typeof p === "string")) {
+      return problems.length > 0 ? problems : undefined;
+    }
   }
   return undefined;
 }
@@ -137,10 +160,14 @@ class ApiClient {
         // Try to extract error message from response body
         let errorMessage = `HTTP error! status: ${response.status}`;
         let bodyRequestId: string | undefined;
+        let errorCode: string | undefined;
+        let errorProblems: string[] | undefined;
         try {
           const errorData = await response.json();
           errorMessage =
             detailMessage(errorData.detail) || errorData.message || errorMessage;
+          errorCode = detailCode(errorData.detail);
+          errorProblems = detailProblems(errorData.detail);
           if (errorData.request_id) {
             bodyRequestId = errorData.request_id as string;
           }
@@ -151,9 +178,13 @@ class ApiClient {
         const e = new Error(errorMessage) as Error & {
           requestId?: string;
           status?: number;
+          code?: string;
+          problems?: string[];
         };
         e.requestId = bodyRequestId || requestId;
         e.status = response.status;
+        e.code = errorCode;
+        e.problems = errorProblems;
         throw e;
       }
 
@@ -180,11 +211,15 @@ class ApiClient {
         const apiError = error as Error & {
           requestId?: string;
           status?: number;
+          code?: string;
+          problems?: string[];
         };
         return {
           error: error.message,
           status: apiError.status,
           requestId: apiError.requestId,
+          ...(apiError.code && { code: apiError.code }),
+          ...(apiError.problems && { problems: apiError.problems }),
         };
       }
 

@@ -42,12 +42,10 @@ tests/recording/                 recording's suite (+ e2e/ for Playwright)
 
 ## Branches and environments
 
-- Feature branches start from `develop`, and their PRs go into `develop`. Each PR gets its own preview.
-- `develop` deploys to demo (`benchnotes.demo.platform.hmcts.net`). The permanent draft PR #25 (`develop` → `master`) rebuilds on every push to `develop`, and Flux deploys its `pr-25-*` image. Never merge, close or mark #25 ready.
-- To release, open a PR into `master` from a branch cut from `develop`. `master` deploys to AAT, then prod.
-- Merge `master` into `develop` at least every 2 weeks, by a PR from a branch cut from `master` (not from `master` itself: Jenkins stops building a branch that is the head of an open PR), with a merge commit. Old `pr-*` images expire after about 3 weeks, and demo pods then fail to pull. If there is nothing to merge, re-run the latest Jenkins build of `PR-25` instead, which pushes a fresh tag.
-- Migrations go only through `master` of transcribe-api, so a feature that needs schema waits until its additive migration is on transcribe-api `master` and merged into its `develop`.
-- `demo` is the CNP branch for the demo Terraform only, and every `master` build overwrites it. Demo uses `master`'s Helm chart, so demo-only settings go in cnp-flux-config `apps/transcribe/transcribe-web/demo.yaml`.
+- Branch from `master` and open the PR into `master`. Each PR gets its own preview at `transcribe-web-pr-<n>.preview.platform.hmcts.net` (HMCTS VPN needed). Add the `enable_keep_helm` label to keep the preview running after the build.
+- Merging to `master` deploys to AAT, then prod.
+- Demo (`benchnotes.demo.platform.hmcts.net`) runs the images promoted to prod, through its image policies in cnp-flux-config ([cnp-flux-config#48971](https://github.com/hmcts/cnp-flux-config/pull/48971)). Demo-only settings go in cnp-flux-config `apps/transcribe/transcribe-web/demo.yaml`.
+- A feature that needs a schema change waits until its additive migration is on transcribe-api `master`.
 
 ## Local development
 
@@ -60,6 +58,18 @@ yarn install && yarn build && yarn start
 ```
 
 The backend serves both surfaces: `/api/*` (dictation) and `/api/v1/*` (recording).
+
+## Preview environments
+
+Every PR build deploys a preview to the CFT preview cluster at `https://transcribe-web-pr-<n>.preview.platform.hmcts.net` (HMCTS VPN needed).
+
+- Keeping it: CNP uninstalls the release at the end of each build. Add the GitHub label `enable_keep_helm` to keep it running after the build. Labels are read when the build starts, so rebuild after adding one.
+- Deleting it: hmcts/cnp-pr-cleanup-aks deletes the release when the PR is closed or merged. Removing the label uninstalls it at the end of the next build.
+- API: the preview brings its own transcribe-api, deployed in the same Helm release (the `transcribe-api` chart dependency, on only in `values.preview.template.yaml`) with no ingress of its own. Web reaches it through its in-cluster Service.
+  - By default it runs `transcribe/api:latest`, the last `master` build of transcribe-api. The image is pulled again on every build, so a kept preview picks up a newer api on its next build.
+  - To test against a transcribe-api PR, add the label `api-pr:<n>` (its PR number) and rebuild. That runs the api PR's `pr-<n>` image, but still this repo's pinned api chart version. The api PR must have built at least once. Once it closes, its image is untagged and the preview's api stops starting: remove the label and rebuild.
+- Sign-in: there is none. Web runs with `AUTH_ENABLED=false` (per-PR hostnames cannot be Entra redirect URIs), so it sends the api no token. The api runs with `ENVIRONMENT=preview` and `AUTH_PREVIEW_USER_ENABLED=true`, so every token-less call is a fixed preview user holding every app role.
+- Data is throwaway: Postgres and Azurite run in the release, and Speech is mocked (`SPEECH_BACKEND=mock`). The preview cluster shuts down every night, which wipes both. Postgres and Azurite otherwise survive pushes, except that changing the api image (adding or removing `api-pr:<n>`) recreates Azurite: blobs go while database rows stay.
 
 ## Sign-in
 
