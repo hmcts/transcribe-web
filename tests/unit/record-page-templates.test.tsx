@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import type { AvailableTemplate } from "@/lib/templates-api";
 
 // DIAAT-344: in a jurisdiction without the decision template, a judge chooses one of
@@ -247,6 +248,38 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       template_id: REASONS.id,
       values: { Agreed: false },
     });
+  });
+
+  it("stops a jurisdiction switch while it has answers, which drafts do not keep", async () => {
+    const user = userEvent.setup();
+    await renderPage([JUDGMENT]);
+    await screen.findByText("Hearing details");
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+
+    await user.type(screen.getByLabelText(/Case number/), "1234/2026");
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "unsaved",
+    });
+
+    await user.clear(screen.getByLabelText(/Case number/));
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+  });
+
+  it("clears the answers when the judge chooses another template", async () => {
+    const user = userEvent.setup();
+    await renderPage([JUDGMENT, REASONS]);
+    await screen.findByText("Hearing details");
+    await user.type(screen.getByLabelText(/Case number/), "1234/2026");
+
+    await user.click(screen.getByRole("combobox", { name: "Template" }));
+    await user.click(await screen.findByRole("option", { name: "Reasons" }));
+    await user.click(screen.getByRole("combobox", { name: "Template" }));
+    await user.click(await screen.findByRole("option", { name: /Judgment/ }));
+
+    expect(
+      (screen.getByLabelText(/Case number/) as HTMLInputElement).value
+    ).toBe("");
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
   });
 
   it("shows the server's reason when the values are refused", async () => {

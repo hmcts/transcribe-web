@@ -195,6 +195,11 @@ function isEmpty(value: TemplateValue | undefined): boolean {
   );
 }
 
+/** Whether the judge has answered anything: answers are not kept in the draft. */
+export function hasAnswers(values: TemplateValues): boolean {
+  return Object.values(values).some((value) => !isEmpty(value));
+}
+
 /** Each required field left empty, by tag: the message to show beside it. */
 export function missingValues(
   template: AvailableTemplate,

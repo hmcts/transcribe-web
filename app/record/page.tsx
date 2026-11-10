@@ -83,6 +83,7 @@ import { TemplateForm } from "@/components/audio/dictation/template-form";
 import {
   type AvailableTemplate,
   fetchAvailableTemplates,
+  hasAnswers,
   missingValues,
   type TemplateValues,
   valuesToSend,
@@ -265,6 +266,11 @@ export default function RecordPage() {
       normalizeOptionalEditorText(editorContent) !==
       normalizeOptionalEditorText(defaultNotes);
   }, [editorContent, defaultNotes]);
+  // DIAAT-344: a template's answers are not in the draft either.
+  const hasTemplateAnswersRef = useRef(false);
+  useEffect(() => {
+    hasTemplateAnswersRef.current = hasAnswers(templateValues);
+  }, [templateValues]);
   useEffect(
     () =>
       onBeforeJurisdictionSwitch(async () => {
@@ -276,7 +282,7 @@ export default function RecordPage() {
           const { judgeName: _blank, ...blank } = defaultFormValues;
           const unsavedForm =
             getAutosavePayload() === null && JSON.stringify(entered) !== JSON.stringify(blank);
-          if (hasNotesRef.current || unsavedForm) {
+          if (hasNotesRef.current || unsavedForm || hasTemplateAnswersRef.current) {
             throw new JurisdictionSwitchError("unsaved");
           }
         };
