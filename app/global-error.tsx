@@ -3,6 +3,7 @@
 import NextError from "next/error";
 import { useEffect } from "react";
 import { browserFailures } from "@/lib/browser-failures";
+import { confirmTelemetryAccount } from "@/lib/telemetry-account";
 import { installRelayLifecycle, telemetryRelay } from "@/lib/telemetry-relay";
 
 export default function GlobalError({
@@ -23,7 +24,21 @@ export default function GlobalError({
     installRelayLifecycle(telemetryRelay);
     browserFailures.clientError(error, "render", error.digest);
     void telemetryRelay.flush();
+    // The relay sends nothing until it knows who is signed in (lib/telemetry-relay),
+    // and the user-settings provider that tells it may never have mounted: ask here.
+    void confirmTelemetryAccount().then(() => telemetryRelay.flush());
   }, [error]);
+
+  // The relay holds again whenever this page is hidden and shown: look the account
+  // up again then, and send what is kept (there is no provider here to do it).
+  useEffect(() => {
+    const onShown = () => {
+      if (document.visibilityState !== "visible") return;
+      void confirmTelemetryAccount().then(() => telemetryRelay.flush());
+    };
+    document.addEventListener("visibilitychange", onShown);
+    return () => document.removeEventListener("visibilitychange", onShown);
+  }, []);
 
   return (
     // eslint-disable-next-line jsx-a11y/html-has-lang

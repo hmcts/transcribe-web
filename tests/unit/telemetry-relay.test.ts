@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TelemetryRelay, UNSENT_STORAGE_KEY } from "@/lib/telemetry-relay";
+import {
+  TelemetryRelay,
+  UNSENT_STORAGE_KEY,
+  unsentStorageKey,
+} from "@/lib/telemetry-relay";
+
+// Unsent events are kept per signed-in account.
+const ACCOUNT = "judge-1";
+const ACCOUNT_KEY = unsentStorageKey(ACCOUNT);
 
 function response(status: number) {
   return { ok: status >= 200 && status < 300, status } as Response;
@@ -158,6 +166,7 @@ describe("TelemetryRelay", () => {
       flushDelayMs: 100,
       storage: () => memory,
     });
+    relay.setAccount(ACCOUNT);
     relay.emit({ name: "dictation.paused" });
     await vi.advanceTimersByTimeAsync(100);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
@@ -168,7 +177,7 @@ describe("TelemetryRelay", () => {
 
     relay.flushOnHide(); // would be refused: kept, not sent
     expect(relay.pending).toBe(0);
-    const kept = JSON.parse(storage.get(UNSENT_STORAGE_KEY) ?? "[]");
+    const kept = JSON.parse(storage.get(ACCOUNT_KEY) ?? "[]");
     expect(kept.map((e: { name: string }) => e.name)).toEqual([
       "dictation.paused",
       "dictation.resumed",
@@ -176,14 +185,14 @@ describe("TelemetryRelay", () => {
     relay.restoreUnsent(); // visible again: queued, still respecting the retry deadline
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(relay.pending).toBe(2);
-    expect(storage.has(UNSENT_STORAGE_KEY)).toBe(false);
+    expect(storage.has(ACCOUNT_KEY)).toBe(false);
 
     // Signed in again: the next event's send succeeds and brings the kept ones.
     fetchImpl.mockResolvedValue(response(202));
     relay.emit({ name: "dictation.session_ended" });
     await vi.advanceTimersByTimeAsync(60_000);
     expect(relay.pending).toBe(0);
-    expect(storage.has(UNSENT_STORAGE_KEY)).toBe(false);
+    expect(storage.has(ACCOUNT_KEY)).toBe(false);
     const sent = fetchImpl.mock.calls
       .slice(1)
       .flatMap(([, init]) =>
@@ -207,6 +216,7 @@ describe("TelemetryRelay", () => {
     } as Storage;
     const fetchImpl = vi.fn().mockReturnValue(new Promise(() => undefined));
     const relay = new TelemetryRelay({ fetchImpl, storage: () => memory });
+    relay.setAccount(ACCOUNT);
     const big = { "attribute.text": "x".repeat(500) };
     for (let i = 0; i < 100; i++)
       relay.emit({ name: "live_draft.save_failed", attributes: big });
@@ -217,7 +227,7 @@ describe("TelemetryRelay", () => {
     const before = fetchImpl.mock.calls.length;
     relay.flushOnHide(); // pagehide: over the remaining budget, so kept
     expect(fetchImpl.mock.calls.length).toBe(before);
-    const kept = JSON.parse(storage.get(UNSENT_STORAGE_KEY) ?? "[]");
+    const kept = JSON.parse(storage.get(ACCOUNT_KEY) ?? "[]");
     expect(kept[0].name).toBe("dictation.session_ended");
   });
 
@@ -235,10 +245,11 @@ describe("TelemetryRelay", () => {
     try {
       const fetchImpl = vi.fn().mockRejectedValue(new TypeError("offline"));
       const relay = new TelemetryRelay({ fetchImpl, storage: () => memory });
+      relay.setAccount(ACCOUNT);
       relay.emit({ name: "dictation.session_ended" });
       relay.flushOnHide();
       await vi.advanceTimersByTimeAsync(0);
-      const kept = JSON.parse(storage.get(UNSENT_STORAGE_KEY) ?? "[]");
+      const kept = JSON.parse(storage.get(ACCOUNT_KEY) ?? "[]");
       expect(kept.map((e: { name: string }) => e.name)).toEqual([
         "dictation.session_ended",
       ]);
@@ -279,6 +290,7 @@ describe("TelemetryRelay", () => {
           removeItem: (k: string) => void storage.delete(k),
         }) as Storage,
     });
+    relay.setAccount(ACCOUNT);
     const big = { a: "x".repeat(400) };
     for (let i = 0; i < 49; i++)
       relay.emit({ name: "live_draft.save_failed", attributes: big });
@@ -298,7 +310,7 @@ describe("TelemetryRelay", () => {
       (fetchImpl.mock.calls[0][1] as RequestInit).body
     ).length;
     expect(inFlight + hideBytes).toBeLessThanOrEqual(60_000);
-    expect(storage.has("hmcts-telemetry-unsent")).toBe(true); // the rest is kept
+    expect(storage.has(ACCOUNT_KEY)).toBe(true); // the rest is kept
     finish(response(202));
     await flushing;
   });
@@ -320,5 +332,264 @@ describe("TelemetryRelay", () => {
     const last = fetchImpl.mock.calls.at(-1)?.[1] as RequestInit;
     expect(last.keepalive).toBe(false);
     expect(relay.pending).toBe(0);
+  });
+});
+
+describe("unsent events on a shared computer", () => {
+  function memoryStorage() {
+    const data = new Map<string, string>();
+    return {
+      data,
+      storage: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      } as Storage,
+    };
+  }
+
+  /** A page whose sends are refused (signed out), so page hide keeps its events. */
+  async function keptBy(account: string | null, local: Storage) {
+    const relay = new TelemetryRelay({
+      fetchImpl: vi.fn().mockResolvedValue({ ok: false, status: 401 }),
+      flushDelayMs: 1,
+      storage: () => local,
+    });
+    relay.setAccount(account);
+    relay.emit({ name: "dictation.paused" });
+    await relay.flush(); // refused: signed out
+    relay.flushOnHide();
+    return relay;
+  }
+
+  it("are only sent by the same account's pages", async () => {
+    const { data, storage } = memoryStorage();
+    await keptBy("judge-a", storage);
+    expect(data.has(unsentStorageKey("judge-a"))).toBe(true);
+
+    const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+    const other = new TelemetryRelay({ fetchImpl, storage: () => storage });
+    other.setAccount("judge-b");
+    expect(other.pending).toBe(0); // judge A's events are not sent under B's session
+    expect(data.has(unsentStorageKey("judge-a"))).toBe(true);
+
+    const same = new TelemetryRelay({ fetchImpl, storage: () => storage });
+    same.setAccount("judge-a");
+    expect(same.pending).toBe(1);
+    expect(data.has(unsentStorageKey("judge-a"))).toBe(false);
+  });
+
+  it("are not kept before the account is known", async () => {
+    const { data, storage } = memoryStorage();
+    await keptBy(null, storage);
+    expect(data.size).toBe(0);
+  });
+
+  it("kept before accounts, whose they are unknown, are dropped, not sent", () => {
+    const { data, storage } = memoryStorage();
+    data.set(
+      UNSENT_STORAGE_KEY,
+      JSON.stringify([{ name: "dictation.paused" }])
+    );
+    const relay = new TelemetryRelay({ storage: () => storage });
+    relay.setAccount("judge-b");
+    expect(relay.pending).toBe(0);
+    expect(data.has(UNSENT_STORAGE_KEY)).toBe(false);
+  });
+});
+
+describe("events of one account never go under another's session", () => {
+  function memory() {
+    const data = new Map<string, string>();
+    return {
+      data,
+      storage: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      } as Storage,
+    };
+  }
+  const kept = (data: Map<string, string>, account: string) =>
+    JSON.parse(data.get(unsentStorageKey(account)) ?? "[]").map(
+      (e: { name: string }) => e.name
+    );
+
+  it("keeps the previous account's waiting events for it when the account changes", () => {
+    const { data, storage } = memory();
+    const fetchImpl = vi.fn();
+    const relay = new TelemetryRelay({
+      fetchImpl,
+      flushDelayMs: 60_000,
+      storage: () => storage,
+    });
+    relay.setAccount("judge-a");
+    relay.emit({ name: "dictation.paused" });
+
+    relay.setAccount("judge-b");
+
+    expect(relay.pending).toBe(0);
+    expect(kept(data, "judge-a")).toEqual(["dictation.paused"]);
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("keeps a batch in flight when the account changes for its own account if it fails", async () => {
+    const { data, storage } = memory();
+    let answer: (response: Response) => void = () => undefined;
+    const fetchImpl = vi.fn(
+      () => new Promise<Response>((resolve) => (answer = resolve))
+    );
+    const relay = new TelemetryRelay({
+      fetchImpl,
+      flushDelayMs: 60_000,
+      storage: () => storage,
+    });
+    relay.setAccount("judge-a");
+    relay.emit({ name: "dictation.paused" });
+    const flushing = relay.flush();
+
+    relay.setAccount("judge-b");
+    answer({ ok: false, status: 503 } as Response);
+    await flushing;
+
+    expect(relay.pending).toBe(0); // not queued under judge-b
+    expect(kept(data, "judge-a")).toEqual(["dictation.paused"]);
+  });
+
+  it("holds delivery and restoring until the account is confirmed, again after the page is shown", async () => {
+    vi.useFakeTimers();
+    try {
+      const { data, storage } = memory();
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+      const relay = new TelemetryRelay({
+        fetchImpl,
+        flushDelayMs: 10,
+        storage: () => storage,
+        confirmAccount: true,
+      });
+      relay.emit({ name: "dictation.paused" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).not.toHaveBeenCalled(); // who is signed in is not known yet
+
+      relay.setAccount("judge-a");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+
+      // Shown again: judge-a's kept events wait, and so do new ones.
+      data.set(
+        unsentStorageKey("judge-a"),
+        JSON.stringify([{ name: "dictation.resumed" }])
+      );
+      relay.suspendUntilAccountConfirmed();
+      relay.restoreUnsent();
+      relay.emit({ name: "speech.first_result" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      expect(data.has(unsentStorageKey("judge-a"))).toBe(true);
+
+      relay.setAccount("judge-b"); // someone else signed in from another tab
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1); // judge-a's never sent as judge-b
+      expect(kept(data, "judge-a")).toEqual([
+        "dictation.resumed",
+        "speech.first_result",
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps, rather than sends, events hidden away before the account is confirmed", () => {
+    const { data, storage } = memory();
+    const fetchImpl = vi.fn();
+    const relay = new TelemetryRelay({
+      fetchImpl,
+      storage: () => storage,
+      confirmAccount: true,
+    });
+    relay.setAccount("judge-a");
+    relay.suspendUntilAccountConfirmed();
+    relay.emit({ name: "dictation.paused" });
+
+    relay.flushOnHide();
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(kept(data, "judge-a")).toEqual(["dictation.paused"]);
+  });
+});
+
+describe("the app's relay holds until a lookup names the account", () => {
+  function memory() {
+    const data = new Map<string, string>();
+    return {
+      data,
+      storage: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      } as Storage,
+    };
+  }
+  function setVisibility(state: "hidden" | "visible") {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => state,
+    });
+  }
+
+  it("sends nothing while the lookup finds no account (signed out, or no answer)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+      const relay = new TelemetryRelay({
+        fetchImpl,
+        flushDelayMs: 10,
+        confirmAccount: true,
+      });
+      relay.emit({ name: "dictation.paused" });
+      relay.finishAccountCheck(relay.startAccountCheck(), null);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).not.toHaveBeenCalled();
+
+      relay.finishAccountCheck(relay.startAccountCheck(), "judge-a");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps, rather than sends, retries and new events while the page is hidden", async () => {
+    vi.useFakeTimers();
+    try {
+      const { data, storage } = memory();
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+      const relay = new TelemetryRelay({
+        fetchImpl,
+        flushDelayMs: 10,
+        storage: () => storage,
+        confirmAccount: true,
+      });
+      relay.finishAccountCheck(relay.startAccountCheck(), "judge-a");
+      relay.emit({ name: "dictation.paused" });
+      await vi.advanceTimersByTimeAsync(100); // refused: queued for a slow retry
+      expect(relay.pending).toBe(1);
+
+      // Hidden: the lifecycle flushes, then holds (as installRelayLifecycle does).
+      setVisibility("hidden");
+      relay.suspendUntilAccountConfirmed();
+      relay.emit({ name: "dictation.resumed" });
+      await vi.advanceTimersByTimeAsync(120_000); // past the retry
+      expect(fetchImpl).toHaveBeenCalledTimes(1); // nothing more sent while hidden
+      expect(relay.pending).toBe(0);
+      expect(
+        JSON.parse(data.get(unsentStorageKey("judge-a")) ?? "[]").map(
+          (e: { name: string }) => e.name
+        )
+      ).toEqual(["dictation.paused", "dictation.resumed"]);
+    } finally {
+      Reflect.deleteProperty(document, "visibilityState");
+      vi.useRealTimers();
+    }
   });
 });

@@ -32,6 +32,7 @@ function recorder() {
     flush: async () => undefined,
     flushOnHide: () => undefined,
     restoreUnsent: () => undefined,
+    suspendUntilAccountConfirmed: () => undefined,
   } as unknown as TelemetryRelay;
   return {
     events,
