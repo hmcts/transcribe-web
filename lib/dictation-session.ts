@@ -184,6 +184,10 @@ export interface DictationSessionTelemetry {
    * Counts are kept, so the outcome still reflects the whole dictation; the
    * running Speech session counts only what follows. */
   continueAsNewSession(): void;
+  /** Run before anything is sent, started, stopped or ended (trackDictationPage):
+   * a frozen page that wakes may find its end was sent elsewhere, and must carry on
+   * under a new journey before it sends anything, not at its next heartbeat. */
+  setReconciler(reconcile: (() => void) | null): void;
   /** The running session's journey ID, sent with the submission so the server can
    * relate it to the transcription it creates. */
   currentSessionId(): string | null;
@@ -283,6 +287,8 @@ export function createDictationSessionTelemetry(
   /** The last session on this page ended with a submission. */
   let submittedOnPage = false;
   const endListeners = new Set<() => void>();
+  let reconciler: (() => void) | null = null;
+  const reconcile = () => reconciler?.();
 
   /** Start a session if none is running. Only a recording request does this. */
   const start = (): SessionState => {
@@ -310,9 +316,10 @@ export function createDictationSessionTelemetry(
   const emit = (
     name: string,
     attributes?: RelayEvent["attributes"],
-    durationMs?: number,
-    state: SessionState | null = session
+    durationMs?: number
   ) => {
+    reconcile();
+    const state = session;
     relay.emit({
       name,
       attributes,
@@ -326,6 +333,7 @@ export function createDictationSessionTelemetry(
   /** Stop the running Speech session if `key` is it; else it was already
    * stopped (or never counted), and nothing is sent. */
   const stopSpeech = (key: SpeechSessionKey, reason: SpeechStopReason) => {
+    reconcile();
     if (speech === null || speech.key !== key) return;
     relay.emit(speechStopEvent(session, speech, reason, now()));
     speech = null;
@@ -367,6 +375,7 @@ export function createDictationSessionTelemetry(
     },
 
     speechSessionStarted({ key, sessionId, sessionIndex, reconnectAttempt }) {
+      reconcile();
       const state = session;
       if (state) state.speechSessions += 1;
       speech = { key, sessionId, sessionIndex, startedAt: now(), segments: 0 };
@@ -534,6 +543,7 @@ export function createDictationSessionTelemetry(
     },
 
     sessionEnded(reason) {
+      reconcile();
       // A submitted draft is deleted, and a restore belongs to the page it was made
       // on: either way later sessions start without restored content. Reset before
       // the early return, so a restore submitted without recording is cleared too.
@@ -597,6 +607,10 @@ export function createDictationSessionTelemetry(
         speech.segments = 0;
       }
       session = { ...session, id: newId(), startedAt: at };
+    },
+
+    setReconciler(next) {
+      reconciler = next;
     },
 
     currentSessionId() {
@@ -809,13 +823,18 @@ export function trackDictationPage(
     set(endKey, JSON.stringify(storedEnd(pending)));
     return get(endKey) !== null;
   };
+  /** Another page sent the stored end while this one was frozen, and it is still
+   * hidden: carry on under a new journey (as when it comes back) and store its end,
+   * before anything else is sent, so no event or Speech stop repeats the old one. */
+  const reconcile = () => {
+    if (!storedPending || get(endKey) !== null) return;
+    telemetry.continueAsNewSession();
+    storedPending = storePending();
+  };
   const heartbeat = () => {
     set(aliveKey, String(now()));
     if (!storedPending) return;
-    // Another page sent the stored end while this one was frozen, and it is
-    // still hidden: carry on under a new journey first (as when it comes back),
-    // so neither the end stored next nor a later Speech stop repeats the old.
-    if (get(endKey) === null) telemetry.continueAsNewSession();
+    reconcile();
     // Still dictating while hidden: keep the stored end current (counts and
     // duration), in case the page is killed.
     storedPending = storePending();
@@ -832,6 +851,7 @@ export function trackDictationPage(
     storedPending = false;
   };
 
+  telemetry.setReconciler(reconcile);
   heartbeat();
   const heartbeatTimer = setInterval(heartbeat, HEARTBEAT_INTERVAL_MS);
 
@@ -871,6 +891,7 @@ export function trackDictationPage(
     document.removeEventListener("visibilitychange", onVisibilityChange);
     window.removeEventListener("pagehide", onPageHide);
     endHere("left_page");
+    telemetry.setReconciler(null);
     stopListening();
     void relay.flush();
   };

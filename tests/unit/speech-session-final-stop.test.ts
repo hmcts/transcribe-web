@@ -223,6 +223,84 @@ describe("the final Speech session stop", () => {
     }
   });
 
+  it("reconciles a woken page before a cancellation that comes before its next heartbeat", () => {
+    vi.useFakeTimers();
+    try {
+      const local = storage();
+      const clock = { now: 1_000_000 };
+      const page = dictating(clock);
+      const stopPage = trackDictationPage(
+        page.telemetry,
+        page.relay,
+        () => local,
+        () => clock.now
+      );
+      clock.now += 60_000;
+      setVisibility("hidden"); // stores a stop of 60 s
+      clock.now += 10 * 60_000; // frozen
+      const other = recorder();
+      const stopOther = trackDictationPage(
+        createDictationSessionTelemetry(other.relay, () => clock.now),
+        other.relay,
+        () => local,
+        () => clock.now
+      );
+      const [sent] = other.named("speech.session_stopped");
+      expect(sent.durationMs).toBe(60_000);
+
+      // Wakes still hidden; the SDK reports a cancellation before any heartbeat.
+      page.telemetry.speechCanceled({
+        sessionIndex: 1,
+        reason: "Error",
+        collapsesInWindow: 1,
+      });
+      page.telemetry.speechSessionStopped({
+        key: speechKey(1),
+        reason: "collapsed",
+      });
+      const [canceled] = page.named("speech.canceled");
+      const [stop] = page.named("speech.session_stopped");
+      expect(stop.durationMs).toBe(0); // the earlier and the frozen time are not counted again
+      expect(stop.journey?.id).not.toBe(sent.journey?.id);
+      expect(canceled.journey?.id).toBe(stop.journey?.id);
+      stopOther();
+      stopPage();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not end a journey twice when a woken page submits before its next heartbeat", () => {
+    const local = storage();
+    const clock = { now: 1_000_000 };
+    const page = dictating(clock);
+    const stopPage = trackDictationPage(
+      page.telemetry,
+      page.relay,
+      () => local,
+      () => clock.now
+    );
+    setVisibility("hidden");
+    clock.now += 10 * 60_000; // frozen
+    const other = recorder();
+    const stopOther = trackDictationPage(
+      createDictationSessionTelemetry(other.relay, () => clock.now),
+      other.relay,
+      () => local,
+      () => clock.now
+    );
+    const [sent] = other.named("dictation.session_ended");
+
+    page.telemetry.sessionEnded("submitted"); // a submission completing while hidden
+    const [ended] = page.named("dictation.session_ended");
+    expect(ended.journey?.id).not.toBe(sent.journey?.id);
+    expect(page.named("speech.session_stopped")[0].journey?.id).toBe(
+      ended.journey?.id
+    );
+    stopOther();
+    stopPage();
+  });
+
   it("ignores a stop from another hook, or a late stop after a reconnect", () => {
     const clock = { now: 1_000 };
     const { telemetry, named } = dictating(clock);
