@@ -47,6 +47,11 @@ import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
  * DIAAT-345: a new jurisdiction is a draft only its admins see. Moved to test,
  * its testers see it too; live, every member. It leaves draft only when it is
  * ready, and the editor lists what is missing.
+ *
+ * All of that needs an API that knows stages. If the web is deployed first, the
+ * old API would ignore the stage (and display name, service, tester) and make a
+ * "draft" visible to every member, so until the API reports stages the panel
+ * offers none of it and works as it did before.
  */
 
 const message = (error: unknown) =>
@@ -91,6 +96,9 @@ export function JurisdictionsPanel() {
   }, [load]);
 
   const current = jurisdictions.find((j) => j.code === selected) ?? null;
+  // The API reports every jurisdiction's stage once it enforces stages.
+  const stagesSupported =
+    jurisdictions.length > 0 && jurisdictions.every((j) => j.stage !== undefined);
 
   if (loading) {
     return (
@@ -162,15 +170,15 @@ export function JurisdictionsPanel() {
                   </button>
                 </TableCell>
                 <TableCell>
-                  {j.display_name || j.name}
-                  {j.service && (
+                  {(stagesSupported && j.display_name) || j.name}
+                  {stagesSupported && j.service && (
                     <span className="block text-xs text-muted-foreground">{j.service}</span>
                   )}
                 </TableCell>
                 <TableCell>{j.member_count}</TableCell>
                 <TableCell className="space-x-1">
                   <Badge variant={j.enabled ? "default" : "secondary"}>
-                    {j.enabled ? stageNote(j.stage) ?? "Live" : "Disabled"}
+                    {j.enabled ? (stagesSupported && stageNote(j.stage)) || "Live" : "Disabled"}
                   </Badge>
                   {j.auto_enrol && <Badge variant="outline">New users join</Badge>}
                 </TableCell>
@@ -186,6 +194,7 @@ export function JurisdictionsPanel() {
           jurisdiction={creating ? null : current}
           existingCodes={jurisdictions.map((j) => j.code)}
           wordingKeys={wordingKeys}
+          stagesSupported={stagesSupported}
           onDiscard={async () => {
             await refresh();
             setEditorGeneration((g) => g + 1);
@@ -198,7 +207,12 @@ export function JurisdictionsPanel() {
         />
       )}
       {current && !creating && (
-        <MembersEditor key={current.code} code={current.code} onChanged={refresh} />
+        <MembersEditor
+          key={current.code}
+          code={current.code}
+          onChanged={refresh}
+          stagesSupported={stagesSupported}
+        />
       )}
     </div>
   );
@@ -208,12 +222,15 @@ function JurisdictionEditor({
   jurisdiction,
   existingCodes,
   wordingKeys,
+  stagesSupported,
   onSaved,
   onDiscard,
 }: {
   jurisdiction: AdminJurisdiction | null;
   existingCodes: string[];
   wordingKeys: Record<string, string>;
+  /** False: an API before DIAAT-345, which would ignore the stage. */
+  stagesSupported: boolean;
   onSaved: (code: string) => Promise<void>;
   /** Reopen from the server's copy (after a 409, say). */
   onDiscard: () => Promise<void>;
@@ -265,9 +282,8 @@ function JurisdictionEditor({
     try {
       const saved = await saveJurisdiction(code, {
         name,
-        display_name: displayName,
-        service,
-        stage,
+        // Only to an API that knows them: an older one would ignore them.
+        ...(stagesSupported ? { display_name: displayName, service, stage } : {}),
         enabled,
         auto_enrol: autoEnrol,
         settings: {
@@ -327,6 +343,8 @@ function JurisdictionEditor({
             placeholder="Employment Tribunal"
           />
         </div>
+        {stagesSupported && (
+          <>
         <div className="space-y-1">
           <Label htmlFor="jurisdiction-display-name">Display name</Label>
           <Input
@@ -375,6 +393,8 @@ function JurisdictionEditor({
               : "A new jurisdiction starts as a draft. Add its admins, then switch it on."}
           </p>
         </div>
+          </>
+        )}
         <div className="space-y-1">
           <Label htmlFor="jurisdiction-template">Template</Label>
           <Select value={template} onValueChange={setTemplate}>
@@ -403,6 +423,13 @@ function JurisdictionEditor({
           />
         </div>
       </div>
+
+      {!stagesSupported && !jurisdiction && (
+        <p className="text-sm text-muted-foreground">
+          It is live for its members as soon as it is enabled: setting one up as a draft
+          needs the latest API.
+        </p>
+      )}
 
       {jurisdiction?.stage === "draft" && (jurisdiction.problems?.length ?? 0) > 0 && (
         <div
@@ -475,7 +502,16 @@ function CheckboxField({
   );
 }
 
-function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Promise<void> }) {
+function MembersEditor({
+  code,
+  onChanged,
+  stagesSupported,
+}: {
+  code: string;
+  onChanged: () => Promise<void>;
+  /** False: an API before DIAAT-345, with no test group. */
+  stagesSupported: boolean;
+}) {
   const [members, setMembers] = useState<AdminJurisdictionMember[]>([]);
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<AdminJurisdictionMember["role"]>("judge");
@@ -501,7 +537,12 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
     setBusy(true);
     try {
       const existing = members.find((m) => m.email === email.trim().toLowerCase());
-      const added = await addJurisdictionMember(code, email.trim(), role, tester);
+      const added = await addJurisdictionMember(
+        code,
+        email.trim(),
+        role,
+        stagesSupported ? tester : undefined
+      );
       toast.success(
         existing
           ? `${added.email} is now ${added.role === "admin" ? "an admin" : "a judge"} in ${code}`
@@ -592,9 +633,11 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             </SelectContent>
           </Select>
         </div>
-        <div className="flex h-9 items-center">
-          <CheckboxField id="member-tester" label="Tester" checked={tester} onChange={setTester} />
-        </div>
+        {stagesSupported && (
+          <div className="flex h-9 items-center">
+            <CheckboxField id="member-tester" label="Tester" checked={tester} onChange={setTester} />
+          </div>
+        )}
         <Button type="submit" disabled={busy || !email.trim()}>
           <Plus className="mr-1 h-4 w-4" />
           Add member
@@ -609,7 +652,7 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
             <TableRow>
               <TableHead>Email</TableHead>
               <TableHead>Role</TableHead>
-              <TableHead>Tester</TableHead>
+              {stagesSupported && <TableHead>Tester</TableHead>}
               <TableHead>Signed in</TableHead>
               <TableHead className="w-40" />
             </TableRow>
@@ -619,14 +662,16 @@ function MembersEditor({ code, onChanged }: { code: string; onChanged: () => Pro
               <TableRow key={m.email}>
                 <TableCell className="font-medium">{m.email}</TableCell>
                 <TableCell>{m.role === "admin" ? "Admin" : "Judge"}</TableCell>
-                <TableCell>
-                  <Checkbox
-                    checked={m.tester ?? false}
-                    disabled={busy}
-                    onCheckedChange={(value) => void setTesterOf(m, value === true)}
-                    aria-label={`${m.email} is a tester`}
-                  />
-                </TableCell>
+                {stagesSupported && (
+                  <TableCell>
+                    <Checkbox
+                      checked={m.tester ?? false}
+                      disabled={busy}
+                      onCheckedChange={(value) => void setTesterOf(m, value === true)}
+                      aria-label={`${m.email} is a tester`}
+                    />
+                  </TableCell>
+                )}
                 <TableCell>
                   {m.pending ? <Badge variant="outline">Not yet</Badge> : "Yes"}
                 </TableCell>

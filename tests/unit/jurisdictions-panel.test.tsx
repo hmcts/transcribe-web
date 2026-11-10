@@ -22,6 +22,7 @@ const IAC: api.AdminJurisdiction = {
   settings: { template: "iac_decision", features: { hearing_recordings: true } },
   member_count: 12,
   version: "2026-10-01T09:00:00",
+  stage: "live",
 };
 const ET: api.AdminJurisdiction = {
   code: "ET",
@@ -31,7 +32,10 @@ const ET: api.AdminJurisdiction = {
   settings: { wording: { "help.subtitle": "Employment Tribunal" }, template: null },
   member_count: 0,
   version: "2026-10-31T09:00:00",
+  stage: "live",
 };
+/** As an API before DIAAT-345 returns it: no stage. */
+const beforeStages = ({ stage: _, ...j }: api.AdminJurisdiction): api.AdminJurisdiction => j;
 
 const request = vi.mocked(apiClient.request);
 
@@ -492,6 +496,39 @@ describe("JurisdictionsPanel", () => {
     );
     const posts = request.mock.calls.filter(([, o]) => o?.method === "POST").map(([, o]) => JSON.parse(String(o?.body)));
     expect(posts.at(-1)).toEqual({ email: "lead@example.test", role: "admin", tester: false });
+  });
+
+  it("offers no stages, display name or testers while the API cannot enforce them", async () => {
+    // Web deployed before the API: the old API would ignore the stage and make a
+    // "draft" visible to every member.
+    serve({
+      jurisdictions: [beforeStages(IAC), beforeStages(ET)],
+      members: [{ email: "a@example.test", role: "judge", pending: false }],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await screen.findByText("a@example.test");
+    expect(screen.queryByLabelText("Who sees it")).toBeNull();
+    expect(screen.queryByLabelText("Display name")).toBeNull();
+    expect(screen.queryByLabelText("Tester")).toBeNull();
+    expect(screen.queryByRole("checkbox", { name: "a@example.test is a tester" })).toBeNull();
+    await user.type(screen.getByLabelText("Sign-in email"), "b@example.test");
+    await user.click(screen.getByRole("button", { name: /Add member/ }));
+    await screen.findByText("b@example.test");
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ email: "b@example.test", role: "judge" });
+
+    await user.click(screen.getByRole("button", { name: /Add jurisdiction/ }));
+    expect(screen.getByText(/live for its members as soon as it is enabled/)).toBeTruthy();
+    await user.type(screen.getByLabelText("Code"), "SSCS");
+    await user.type(screen.getByLabelText("Name"), "Social Security");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("Saved SSCS"));
+    const body = JSON.parse(String(request.mock.calls.find(([, o]) => o?.method === "PUT")?.[1]?.body));
+    expect(Object.keys(body)).not.toContain("stage");
+    expect(Object.keys(body)).not.toContain("display_name");
   });
 
   it("offers a retry when the list cannot be loaded", async () => {
