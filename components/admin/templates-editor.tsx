@@ -408,6 +408,13 @@ function TemplateFieldsEditor({
   }
 
   async function replaceFile(file: File) {
+    if (
+      unsaved &&
+      !window.confirm(`Discard your unsaved changes to ${template.name}?`)
+    ) {
+      if (fileInput.current) fileInput.current.value = "";
+      return;
+    }
     setBusy(true);
     try {
       const replaced = await uploadTemplate(code, file, {
