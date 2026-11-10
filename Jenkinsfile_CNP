@@ -1,6 +1,7 @@
 #!groovy
 
 @Library("Infrastructure@2.5.2")
+import uk.gov.hmcts.contino.GithubAPI
 
 def type = "nodejs"
 def product = "transcribe"
@@ -23,11 +24,28 @@ static LinkedHashMap<String, Object> secret(String secretName, String envVar) {
   ]
 }
 
+// The transcribe-api image a PR preview runs (values.preview.template.yaml): master's
+// latest, or a transcribe-api PR's own image when this PR is labelled api-pr:<n>.
+def apiImageTag() {
+  for (label in new GithubAPI(this).getLabelsbyPattern(env.BRANCH_NAME, "api-pr:")) {
+    def apiPr = label.minus("api-pr:").trim()
+    if (!(apiPr ==~ /\d+/)) {
+      error "Label '${label}': expected api-pr:<transcribe-api PR number>"
+    }
+    return "pr-${apiPr}"
+  }
+  return "latest"
+}
+
 // docs:
 // 1. https://github.com/hmcts/cnp-jenkins-library
 // 2. https://hmcts.github.io/ways-of-working/common-pipeline/common-pipeline.html#common-pipeline
 withPipeline(type, product, component) {
   loadVaultSecrets(secrets)
+
+  onPR {
+    env.TRANSCRIBE_API_IMAGE_TAG = apiImageTag()
+  }
 
   // AKS only. There is no App Service deployment for this product.
   disableLegacyDeployment()

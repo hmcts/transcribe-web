@@ -59,6 +59,18 @@ yarn install && yarn build && yarn start
 
 The backend serves both surfaces: `/api/*` (dictation) and `/api/v1/*` (recording).
 
+## Preview environments
+
+Every PR build deploys a preview to the CFT preview cluster at `https://transcribe-web-pr-<n>.preview.platform.hmcts.net` (HMCTS VPN needed).
+
+- Keeping it: CNP uninstalls the release at the end of each build. Add the GitHub label `enable_keep_helm` to keep it running after the build. Labels are read when the build starts, so rebuild after adding one.
+- Deleting it: hmcts/cnp-pr-cleanup-aks deletes the release when the PR is closed or merged. Removing the label uninstalls it at the end of the next build.
+- API: the preview brings its own transcribe-api, deployed in the same Helm release (the `transcribe-api` chart dependency, on only in `values.preview.template.yaml`) with no ingress of its own. Web reaches it through its in-cluster Service.
+  - By default it runs `transcribe/api:latest`, the last `master` build of transcribe-api. The image is pulled again on every build, so a kept preview picks up a newer api on its next build.
+  - To test against a transcribe-api PR, add the label `api-pr:<n>` (its PR number) and rebuild. That runs the api PR's `pr-<n>` image, but still this repo's pinned api chart version. The api PR must have built at least once. Once it closes, its image is untagged and the preview's api stops starting: remove the label and rebuild.
+- Sign-in: there is none. Web runs with `AUTH_ENABLED=false` (per-PR hostnames cannot be Entra redirect URIs), so it sends the api no token. The api runs with `ENVIRONMENT=preview` and `AUTH_PREVIEW_USER_ENABLED=true`, so every token-less call is a fixed preview user holding every app role.
+- Data is throwaway: Postgres and Azurite run in the release, and Speech is mocked (`SPEECH_BACKEND=mock`). The preview cluster shuts down every night, which wipes both. Postgres and Azurite otherwise survive pushes, except that changing the api image (adding or removing `api-pr:<n>`) recreates Azurite: blobs go while database rows stay.
+
 ## Sign-in
 
 On CNP there is no App Service Easy Auth, so this app runs the Entra ID login
