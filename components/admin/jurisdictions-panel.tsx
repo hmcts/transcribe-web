@@ -3,6 +3,7 @@
 import { Loader2, Plus, Save, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { TemplatesEditor } from "@/components/admin/templates-editor";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -214,6 +215,7 @@ export function JurisdictionsPanel() {
           stagesSupported={stagesSupported}
         />
       )}
+      {current && !creating && <TemplatesEditor key={`templates:${current.code}`} code={current.code} />}
     </div>
   );
 }

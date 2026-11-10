@@ -79,6 +79,14 @@ import {
   SPEECH_NO_CONTENT_EARLIER_ALERT,
 } from "@/lib/speech-alerts";
 import cn from "@/lib/utils";
+import { TemplateForm } from "@/components/audio/dictation/template-form";
+import {
+  type AvailableTemplate,
+  fetchAvailableTemplates,
+  missingValues,
+  type TemplateValues,
+  valuesToSend,
+} from "@/lib/templates-api";
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -115,9 +123,10 @@ const RECORD_TRANSCRIPT_PANEL_ID = "record-transcript-panel";
 const RECORD_NOTES_PANEL_ID = "record-notes-panel";
 
 export default function RecordPage() {
-  // DIAAT-333: without the decision template (DIAAT-323 adds others), the judge
-  // dictates into the general section and copies the text out: no hearing form,
-  // no section tabs, no submission.
+  // DIAAT-333: without the decision template, the judge dictates into the general
+  // section and copies the text out: no hearing form, no section tabs, no
+  // submission. Unless (DIAAT-344) the jurisdiction has uploaded templates: then
+  // the chosen one's form, and a submission, but still no IAC sections.
   const { current, wording, hasDecisionTemplate } = useJurisdiction();
   const jurisdictionCode = current?.code;
   const jurisdictionName = current?.name;
@@ -162,6 +171,19 @@ export default function RecordPage() {
   const [contentFailed, setContentFailed] = useState(false);
   const legalWordingPending =
     hasDecisionTemplate && !legalIssuesFallback && !documentContent;
+  // DIAAT-344: a jurisdiction without the decision template may have uploaded
+  // templates; the judge chooses one and fills its own Hearing Details form.
+  const [templates, setTemplates] = useState<AvailableTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
+  const [templateValues, setTemplateValues] = useState<TemplateValues>({});
+  const [templateErrors, setTemplateErrors] = useState<Record<string, string>>(
+    {}
+  );
+  const chosenTemplate =
+    templates.find((t) => t.id === templateId) ?? templates[0] ?? null;
+  const hasTemplateForm = !hasDecisionTemplate && chosenTemplate !== null;
+  // A form to fill and a hearing to submit, rather than text to copy out.
+  const hasHearingForm = hasDecisionTemplate || hasTemplateForm;
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
   const [speechDemoKey, setSpeechDemoKey] = useState(0);
@@ -306,14 +328,39 @@ export default function RecordPage() {
   useEffect(() => {
     if (previousLayoutModeRef.current === layoutMode) return;
 
-    if (layoutMode === "mobile" && hasDecisionTemplate) {
+    if (layoutMode === "mobile" && hasHearingForm) {
       setActiveView("form");
     } else {
       setActiveView("transcript");
     }
 
     previousLayoutModeRef.current = layoutMode;
-  }, [layoutMode, hasDecisionTemplate]);
+  }, [layoutMode, hasHearingForm]);
+
+  useEffect(() => {
+    if (hasDecisionTemplate) {
+      setTemplates([]);
+      return;
+    }
+    let live = true;
+    fetchAvailableTemplates()
+      .then((list) => {
+        if (!live) return;
+        setTemplates(list);
+        setTemplateId((id) =>
+          list.some((t) => t.id === id) ? id : (list[0]?.id ?? "")
+        );
+      })
+      .catch((error) => {
+        // Without them the page works as before: dictate, then copy the text out.
+        console.error("Failed to load templates", error);
+        if (live) setTemplates([]);
+      });
+    return () => {
+      live = false;
+    };
+    // A switch of jurisdiction reloads the page (providers/jurisdiction.tsx).
+  }, [hasDecisionTemplate]);
 
   const contentRequest = useRef(0);
   const loadContent = useCallback(async () => {
@@ -646,35 +693,72 @@ export default function RecordPage() {
   }, [sectionedTranscript, editorContent]);
 
   const handleSubmitHearing = useCallback(async () => {
-    if (legalWordingPending) {
-      toast.error(
-        contentFailed
-          ? `Legal wording for ${jurisdictionName ?? "this jurisdiction"} could not be loaded, reload and try again.`
-          : `Legal wording for ${jurisdictionName ?? "this jurisdiction"} hasn't loaded yet, reload and try again.`,
-        { action: { label: "Try again", onClick: () => void loadContent() } }
-      );
-      return;
-    }
-    const validation = getDictationFormSchema(asksLegalIssues).safeParse(formData);
-    if (!validation.success) {
-      const fieldErrors: Partial<Record<keyof DictationFormValues, string>> =
-        {};
-      const messages: string[] = [];
-      validation.error.issues.forEach(({ path, message }) => {
-        const key = path[0] as keyof DictationFormValues | undefined;
-        if (key) {
-          fieldErrors[key] = message;
-          messages.push(message);
-        }
-      });
-      setFormErrors(fieldErrors);
-      toast.error(
-        `Please review the highlighted fields: ${messages.slice(0, 3).join("; ")}`
-      );
-      return;
-    }
+    let buildBody: () => string;
+    if (!hasDecisionTemplate) {
+      // DIAAT-344: the chosen template, filled with the judge's values.
+      if (!chosenTemplate) return;
+      const missing = missingValues(chosenTemplate, templateValues);
+      setTemplateErrors(missing);
+      if (Object.keys(missing).length > 0) {
+        toast.error(
+          `Please review the highlighted fields: ${Object.values(missing).slice(0, 3).join("; ")}`
+        );
+        return;
+      }
+      buildBody = () =>
+        JSON.stringify({
+          template_id: chosenTemplate.id,
+          values: valuesToSend(chosenTemplate, templateValues),
+          messages: sectionedTranscript,
+          notes: normalizeOptionalEditorText(editorContent),
+        });
+    } else {
+      if (legalWordingPending) {
+        toast.error(
+          contentFailed
+            ? `Legal wording for ${jurisdictionName ?? "this jurisdiction"} could not be loaded, reload and try again.`
+            : `Legal wording for ${jurisdictionName ?? "this jurisdiction"} hasn't loaded yet, reload and try again.`,
+          { action: { label: "Try again", onClick: () => void loadContent() } }
+        );
+        return;
+      }
+      const validation = getDictationFormSchema(asksLegalIssues).safeParse(formData);
+      if (!validation.success) {
+        const fieldErrors: Partial<Record<keyof DictationFormValues, string>> =
+          {};
+        const messages: string[] = [];
+        validation.error.issues.forEach(({ path, message }) => {
+          const key = path[0] as keyof DictationFormValues | undefined;
+          if (key) {
+            fieldErrors[key] = message;
+            messages.push(message);
+          }
+        });
+        setFormErrors(fieldErrors);
+        toast.error(
+          `Please review the highlighted fields: ${messages.slice(0, 3).join("; ")}`
+        );
+        return;
+      }
 
-    setFormErrors({});
+      setFormErrors({});
+      const formValues = validation.data;
+      buildBody = () =>
+        JSON.stringify(
+          (asksLegalIssues
+            ? liveTranscriptionSubmissionPayloadSchema
+            : liveTranscriptionSubmissionPayloadWithoutLegalIssuesSchema
+          ).parse({
+            // No legal issues where there is no legal wording, whatever a
+            // restored draft still carries.
+            form_data: asksLegalIssues
+              ? formValues
+              : { ...formValues, legalIssues: [] },
+            messages: sectionedTranscript,
+            notes: normalizeOptionalEditorText(editorContent),
+          })
+        );
+    }
 
     const submissionPromise = (async () => {
       // OBS-4: the submission's outcome and timing, in the dictation session.
@@ -688,20 +772,7 @@ export default function RecordPage() {
         const authToken = await getAuthToken();
         dictationSessionId = dictationSessionTelemetry.currentSessionId();
 
-        const body = JSON.stringify(
-          (asksLegalIssues
-            ? liveTranscriptionSubmissionPayloadSchema
-            : liveTranscriptionSubmissionPayloadWithoutLegalIssuesSchema
-          ).parse({
-            // No legal issues where there is no legal wording, whatever a
-            // restored draft still carries.
-            form_data: asksLegalIssues
-              ? validation.data
-              : { ...validation.data, legalIssues: [] },
-            messages: sectionedTranscript,
-            notes: normalizeOptionalEditorText(editorContent),
-          })
-        );
+        const body = buildBody();
 
         let response: Response;
         try {
@@ -727,9 +798,14 @@ export default function RecordPage() {
           const errorBody = await response.json().catch(() => null);
           const errorResult =
             submissionErrorResponseSchema.safeParse(errorBody);
+          // A refusal with a code (e.g. values that do not fit the template)
+          // carries its message inside detail.
+          const detailMessage = errorBody?.detail?.message;
           const message = errorResult.success
             ? errorResult.data.error
-            : "Failed to save submission.";
+            : typeof detailMessage === "string" && detailMessage
+              ? detailMessage
+              : "Failed to save submission.";
           throw new Error(message);
         }
 
@@ -792,6 +868,9 @@ export default function RecordPage() {
     contentFailed,
     jurisdictionName,
     loadContent,
+    hasDecisionTemplate,
+    chosenTemplate,
+    templateValues,
   ]);
 
   // Only "healthy" counts as recording. `isRecordingActive` is intent; a
@@ -990,6 +1069,29 @@ export default function RecordPage() {
     </div>
   );
 
+  // The decision's form, or the chosen template's (DIAAT-344).
+  const hearingForm = hasDecisionTemplate ? (
+    <DictationForm
+      initialValues={formData}
+      onFormStateChange={setFormData}
+      externalErrors={formErrors}
+      documentContent={documentContent}
+      legalIssuesFallback={legalIssuesFallback}
+    />
+  ) : chosenTemplate ? (
+    <TemplateForm
+      templates={templates}
+      templateId={chosenTemplate.id}
+      onTemplateChange={(id) => {
+        setTemplateId(id);
+        setTemplateErrors({});
+      }}
+      values={templateValues}
+      onValuesChange={setTemplateValues}
+      errors={templateErrors}
+    />
+  ) : null;
+
   const hasNotesContent =
     normalizeOptionalEditorText(editorContent) !==
     normalizeOptionalEditorText(defaultNotes);
@@ -1075,7 +1177,7 @@ export default function RecordPage() {
                   onValueChange={handleWorkspaceViewChange}
                 >
                   <TabsList className="inline-flex h-10 rounded-md border border-border bg-background">
-                    {hasDecisionTemplate && (
+                    {hasHearingForm && (
                       <TabsTrigger
                         value="form"
                         className="px-3 text-xs sm:text-sm"
@@ -1108,7 +1210,7 @@ export default function RecordPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              {hasDecisionTemplate ? (
+              {hasHearingForm ? (
                 <Button
                   onClick={handleSubmitHearing}
                   disabled={isSubmitting}
@@ -1132,12 +1234,12 @@ export default function RecordPage() {
                 <div
                   className={cn(
                     "grid h-full min-h-0 min-w-0",
-                    hasDecisionTemplate
+                    hasHearingForm
                       ? "grid-cols-[360px_minmax(0,1fr)] xl:grid-cols-[420px_minmax(0,1fr)] 2xl:grid-cols-[480px_minmax(0,1fr)]"
                       : "grid-cols-1"
                   )}
                 >
-                  {hasDecisionTemplate && (
+                  {hasHearingForm && (
                     <aside className="relative h-full min-h-0 bg-muted/40">
                       <div
                         aria-hidden="true"
@@ -1149,13 +1251,7 @@ export default function RecordPage() {
                           ref={formScrollContainerRef}
                           className="min-h-0 flex-1 overflow-y-auto px-1"
                         >
-                          <DictationForm
-                            initialValues={formData}
-                            onFormStateChange={setFormData}
-                            externalErrors={formErrors}
-                            documentContent={documentContent}
-                            legalIssuesFallback={legalIssuesFallback}
-                          />
+                          {hearingForm}
                         </div>
                       </div>
                     </aside>
@@ -1236,20 +1332,14 @@ export default function RecordPage() {
 
               {layoutMode === "mobile" && (
                 <div className="h-full min-w-0">
-                  {hasDecisionTemplate && (
+                  {hasHearingForm && (
                     <section
                       className={
                         activeView === "form" ? "h-full" : "hidden h-full"
                       }
                     >
                       <div className="h-full overflow-y-auto px-4 py-6">
-                        <DictationForm
-                          initialValues={formData}
-                          onFormStateChange={setFormData}
-                          externalErrors={formErrors}
-                          documentContent={documentContent}
-                          legalIssuesFallback={legalIssuesFallback}
-                        />
+                        {hearingForm}
                       </div>
                     </section>
                   )}

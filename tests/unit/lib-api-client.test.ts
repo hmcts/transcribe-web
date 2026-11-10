@@ -182,6 +182,31 @@ describe("apiClient.request — HTTP errors", () => {
     });
   });
 
+  it("passes on what a refusal lists as missing (DIAAT-344)", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockResolvedValue({
+        detail: {
+          code: "template_not_ready",
+          message: "The template cannot be saved yet.",
+          problems: ["The box “Costs” (Costs) has no field linked to it."],
+        },
+      }),
+    });
+
+    const result = await apiClient.request("/admin/jurisdictions/ET/templates/t1", { method: "PUT" });
+
+    expect(result).toMatchObject({
+      error: "The template cannot be saved yet.",
+      status: 400,
+      code: "template_not_ready",
+      problems: ["The box “Costs” (Costs) has no field linked to it."],
+    });
+  });
+
   it("has no code for a refusal that gives none", async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
