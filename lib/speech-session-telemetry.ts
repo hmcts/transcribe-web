@@ -14,7 +14,10 @@
  * Neither Sentry nor PostHog is used.
  */
 
-import { dictationSessionTelemetry } from "@/lib/dictation-session";
+import {
+  dictationSessionTelemetry,
+  type SpeechSessionKey,
+} from "@/lib/dictation-session";
 import type { SpeechCancellationInfo } from "@/lib/speech-session-health";
 
 export interface SpeechSessionTelemetry {
@@ -29,6 +32,8 @@ export interface SpeechSessionTelemetry {
     durationMs: number;
   }): void;
   sessionStarted(input: {
+    /** Made by the hook for this session; given back when it stops. */
+    key: SpeechSessionKey;
     /** Speech SDK session ID (`SessionEventArgs.sessionId`). */
     sessionId?: string;
     sessionIndex: number;
@@ -41,16 +46,15 @@ export interface SpeechSessionTelemetry {
   segmentCaptured(input?: { stoppedSession?: boolean }): void;
   /** The user stopped recording, whether or not a session was connected. */
   paused(): void;
+  /** "paused": the user stopped it; "collapsed": it ended without the user
+   * asking. Its length and segments are counted by the dictation session. */
   sessionStopped(input: {
-    sessionId?: string;
-    sessionIndex: number;
-    durationMs: number;
-    segmentsCaptured: number;
-    /** False when the session ended without the user asking it to. */
-    userInitiated: boolean;
+    key: SpeechSessionKey;
+    reason: "paused" | "collapsed";
   }): void;
-  /** The hook unmounted: stop the running Speech session, if any (not a pause). */
-  tornDown(): void;
+  /** The hook unmounted while recording (`key`: its running Speech session, if
+   * any): stop it (not a pause). */
+  tornDown(input: { key: SpeechSessionKey | null }): void;
   sessionCanceled(input: {
     sessionId?: string;
     sessionIndex: number;
@@ -74,8 +78,9 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
     dictationSessionTelemetry.tokenFetched(input);
   },
 
-  sessionStarted({ sessionId, sessionIndex, reconnectAttempt }) {
+  sessionStarted({ key, sessionId, sessionIndex, reconnectAttempt }) {
     dictationSessionTelemetry.speechSessionStarted({
+      key,
       sessionId,
       sessionIndex,
       reconnectAttempt,
@@ -94,24 +99,12 @@ export const speechSessionTelemetry: SpeechSessionTelemetry = {
     dictationSessionTelemetry.recordingPaused();
   },
 
-  sessionStopped({
-    sessionId,
-    sessionIndex,
-    durationMs,
-    segmentsCaptured,
-    userInitiated,
-  }) {
-    dictationSessionTelemetry.speechSessionStopped({
-      sessionId,
-      sessionIndex,
-      durationMs,
-      segmentsCaptured,
-      userInitiated,
-    });
+  sessionStopped(input) {
+    dictationSessionTelemetry.speechSessionStopped(input);
   },
 
-  tornDown() {
-    dictationSessionTelemetry.speechSessionTornDown();
+  tornDown(input) {
+    dictationSessionTelemetry.speechSessionTornDown(input);
   },
 
   sessionCanceled({

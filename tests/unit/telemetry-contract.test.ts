@@ -45,6 +45,17 @@ import {
 } from "@/lib/telemetry-relay";
 import { SAMPLES } from "./analytics-samples";
 
+/** One key per Speech session index, as the hook would give each session. */
+const speechKeys = new Map<number, symbol>();
+function speechKey(sessionIndex: number): symbol {
+  let key = speechKeys.get(sessionIndex);
+  if (!key) {
+    key = Symbol(`speech-session-${sessionIndex}`);
+    speechKeys.set(sessionIndex, key);
+  }
+  return key;
+}
+
 interface AttributeSpec {
   type: "str" | "int" | "float" | "bool";
   allowed_values: string[] | null;
@@ -195,6 +206,7 @@ describe("every event this app sends is accepted whole", () => {
       t.tokenFetched({ ok: false, status: 503, durationMs: 80 });
       t.tokenFetched({ ok: false, durationMs: 80 }); // network
       t.speechSessionStarted({
+        key: speechKey(1),
         sessionId: sdk,
         sessionIndex: 1,
         reconnectAttempt: 0,
@@ -220,13 +232,7 @@ describe("every event this app sends is accepted whole", () => {
           });
         }
       }
-      t.speechSessionStopped({
-        sessionId: sdk,
-        sessionIndex: 1,
-        durationMs: 5_000,
-        segmentsCaptured: 1,
-        userInitiated: false,
-      });
+      t.speechSessionStopped({ key: speechKey(1), reason: "collapsed" });
       t.speechUnhealthy({
         collapsesInWindow: 3,
         windowSeconds: 120,
@@ -236,20 +242,16 @@ describe("every event this app sends is accepted whole", () => {
       t.noSpeechWarning({ elapsedSeconds: 60 });
       t.recordingRequested({ sessionIndex: 2, reconnectAttempt: 1 });
       t.speechSessionStarted({
+        key: speechKey(2),
         sessionId: sdk,
         sessionIndex: 2,
         reconnectAttempt: 1,
       });
       t.recordingPaused();
-      t.speechSessionStopped({
-        sessionId: sdk,
-        sessionIndex: 2,
-        durationMs: 3_000,
-        segmentsCaptured: 0,
-        userInitiated: true,
-      });
+      t.speechSessionStopped({ key: speechKey(2), reason: "paused" });
       t.recordingRequested({ sessionIndex: 3, reconnectAttempt: 0 }); // resume
       t.speechSessionStarted({
+        key: speechKey(3),
         sessionId: sdk,
         sessionIndex: 3,
         reconnectAttempt: 0,
@@ -298,11 +300,12 @@ describe("every event this app sends is accepted whole", () => {
     // Speech stopped by the hook unmounting (teardown).
     t.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
     t.speechSessionStarted({
+      key: speechKey(1),
       sessionId: sdk,
       sessionIndex: 1,
       reconnectAttempt: 0,
     });
-    t.speechSessionTornDown();
+    t.speechSessionTornDown({ key: speechKey(1) });
     // An empty dictation ends as a failure.
     t.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
     t.sessionEnded("left_page");

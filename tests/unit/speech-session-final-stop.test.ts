@@ -17,6 +17,17 @@ import {
 } from "@/lib/dictation-session";
 import type { RelayEvent, TelemetryRelay } from "@/lib/telemetry-relay";
 
+/** One key per Speech session index, as the hook would give each session. */
+const speechKeys = new Map<number, symbol>();
+function speechKey(sessionIndex: number): symbol {
+  let key = speechKeys.get(sessionIndex);
+  if (!key) {
+    key = Symbol(`speech-session-${sessionIndex}`);
+    speechKeys.set(sessionIndex, key);
+  }
+  return key;
+}
+
 const SDK_SESSION = "0123456789abcdef0123456789abcdef";
 
 function recorder() {
@@ -62,6 +73,7 @@ function dictating(clock: { now: number }) {
   const telemetry = createDictationSessionTelemetry(rec.relay, () => clock.now);
   telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
   telemetry.speechSessionStarted({
+    key: speechKey(1),
     sessionId: SDK_SESSION,
     sessionIndex: 1,
     reconnectAttempt: 0,
@@ -100,27 +112,18 @@ describe("the final Speech session stop", () => {
     clock.now += 10_000;
     telemetry.sessionEnded("submitted");
     // The recognizer is still up until the page navigates: a late collapse.
-    telemetry.speechSessionStopped({
-      sessionId: SDK_SESSION,
-      sessionIndex: 1,
-      durationMs: 12_000,
-      segmentsCaptured: 2,
-      userInitiated: false,
-    });
-    telemetry.speechSessionTornDown();
+    telemetry.speechSessionStopped({ key: speechKey(1), reason: "collapsed" });
+    telemetry.speechSessionTornDown({ key: speechKey(1) });
     expect(named("speech.session_stopped")).toHaveLength(1);
 
     const paused = dictating(clock);
     paused.telemetry.recordingPaused();
     paused.telemetry.speechSessionStopped({
-      sessionId: SDK_SESSION,
-      sessionIndex: 1,
-      durationMs: 5_000,
-      segmentsCaptured: 2,
-      userInitiated: true,
+      key: speechKey(1),
+      reason: "paused",
     });
     paused.telemetry.sessionEnded("submitted");
-    paused.telemetry.speechSessionTornDown();
+    paused.telemetry.speechSessionTornDown({ key: speechKey(1) });
     expect(paused.named("speech.session_stopped")).toHaveLength(1);
     expect(
       paused.named("speech.session_stopped")[0].attributes?.[
@@ -169,6 +172,100 @@ describe("the final Speech session stop", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("does not count the time again when a frozen page stays hidden after its end was sent", () => {
+    vi.useFakeTimers();
+    try {
+      const local = storage();
+      const clock = { now: 1_000_000 };
+      const page = dictating(clock);
+      const stopPage = trackDictationPage(
+        page.telemetry,
+        page.relay,
+        () => local,
+        () => clock.now
+      );
+      clock.now += 60_000;
+      setVisibility("hidden"); // stores a stop of 60 s with 2 segments
+      clock.now += 10 * 60_000; // frozen
+      const other = recorder();
+      const stopOther = trackDictationPage(
+        createDictationSessionTelemetry(other.relay, () => clock.now),
+        other.relay,
+        () => local,
+        () => clock.now
+      );
+      expect(other.named("speech.session_stopped")[0]).toMatchObject({
+        durationMs: 60_000,
+        attributes: { "dictation.segments_captured": 2 },
+      });
+
+      vi.advanceTimersByTime(30_000); // wakes, still hidden: only a heartbeat
+      clock.now += 30_000;
+      page.telemetry.segmentCaptured();
+      clock.now += 5_000;
+      // The Speech session then collapses (or is paused) on this page.
+      page.telemetry.speechSessionStopped({
+        key: speechKey(1),
+        reason: "collapsed",
+      });
+      const [stop] = page.named("speech.session_stopped");
+      expect(stop.durationMs).toBe(35_000);
+      expect(stop.attributes?.["dictation.segments_captured"]).toBe(1);
+      expect(stop.journey?.id).not.toBe(
+        other.named("speech.session_stopped")[0].journey?.id
+      );
+      stopOther();
+      stopPage();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a stop from another hook, or a late stop after a reconnect", () => {
+    const clock = { now: 1_000 };
+    const { telemetry, named } = dictating(clock);
+    clock.now += 10_000;
+    // A remounted Dictation's hook numbers its sessions from 1 again.
+    telemetry.speechSessionStopped({
+      key: Symbol("another hook's session 1"),
+      reason: "collapsed",
+    });
+    expect(named("speech.session_stopped")).toHaveLength(0);
+
+    telemetry.sessionEnded("submitted");
+    const next = Symbol("speech-session-2");
+    telemetry.recordingRequested({ sessionIndex: 2, reconnectAttempt: 0 });
+    telemetry.speechSessionStarted({
+      key: next,
+      sessionIndex: 2,
+      reconnectAttempt: 0,
+    });
+    // Session 1's own stop arrives after session 2 started: not sent again.
+    telemetry.speechSessionStopped({ key: speechKey(1), reason: "collapsed" });
+    clock.now += 4_000;
+    telemetry.speechSessionStopped({ key: next, reason: "paused" });
+    expect(named("speech.session_stopped").map((e) => e.durationMs)).toEqual([
+      10_000, 4_000,
+    ]);
+  });
+
+  it("treats a start after the hook unmounted as a resume, without a pause", () => {
+    const clock = { now: 1_000 };
+    const { telemetry, named } = dictating(clock);
+    clock.now += 10_000;
+    telemetry.speechSessionTornDown({ key: speechKey(1) }); // Dictation remounted
+    expect(named("speech.session_stopped")[0].attributes).toMatchObject({
+      "speech.stop_reason": "teardown",
+      "dictation.user_initiated": false,
+    });
+    telemetry.recordingRequested({ sessionIndex: 1, reconnectAttempt: 0 });
+    clock.now += 2_000;
+    telemetry.firstText({ sessionIndex: 1 });
+    expect(named("dictation.paused")).toHaveLength(0);
+    expect(named("dictation.resumed")).toHaveLength(1);
+    expect(named("dictation.resume_first_result")[0].durationMs).toBe(2_000);
   });
 
   it("counts only the time after a frozen page's end was sent elsewhere", () => {
