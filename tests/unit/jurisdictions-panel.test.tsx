@@ -498,6 +498,25 @@ describe("JurisdictionsPanel", () => {
     expect(posts.at(-1)).toEqual({ email: "lead@example.test", role: "admin", tester: false });
   });
 
+  it("keeps a tester in the test group when their role is changed", async () => {
+    serve({ jurisdictions: [ET], members: [{ email: "lead@example.test", role: "admin", tester: true, pending: false }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await screen.findByText("lead@example.test");
+    await user.type(screen.getByLabelText("Sign-in email"), "lead@example.test");
+    await user.click(screen.getByRole("button", { name: /Add member/ }));
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("lead@example.test is now a judge in ET"));
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ email: "lead@example.test", role: "judge" });
+    expect(
+      (screen.getByRole("checkbox", { name: "lead@example.test is a tester" }) as HTMLButtonElement).getAttribute(
+        "aria-checked"
+      )
+    ).toBe("true");
+  });
+
   it("offers no stages, display name or testers while the API cannot enforce them", async () => {
     // Web deployed before the API: the old API would ignore the stage and make a
     // "draft" visible to every member.

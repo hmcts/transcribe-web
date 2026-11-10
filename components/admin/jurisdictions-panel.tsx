@@ -541,7 +541,9 @@ function MembersEditor({
         code,
         email.trim(),
         role,
-        stagesSupported ? tester : undefined
+        // Changing an existing member's role keeps them in or out of the test group
+        // unless Tester is ticked (the members list takes someone out of it).
+        stagesSupported && (tester || !existing) ? tester : undefined
       );
       toast.success(
         existing
