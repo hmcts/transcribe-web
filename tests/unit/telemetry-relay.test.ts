@@ -517,3 +517,79 @@ describe("events of one account never go under another's session", () => {
     expect(kept(data, "judge-a")).toEqual(["dictation.paused"]);
   });
 });
+
+describe("the app's relay holds until a lookup names the account", () => {
+  function memory() {
+    const data = new Map<string, string>();
+    return {
+      data,
+      storage: {
+        getItem: (k: string) => data.get(k) ?? null,
+        setItem: (k: string, v: string) => void data.set(k, v),
+        removeItem: (k: string) => void data.delete(k),
+      } as Storage,
+    };
+  }
+  function setVisibility(state: "hidden" | "visible") {
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => state,
+    });
+  }
+
+  it("sends nothing while the lookup finds no account (signed out, or no answer)", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: true, status: 202 });
+      const relay = new TelemetryRelay({
+        fetchImpl,
+        flushDelayMs: 10,
+        confirmAccount: true,
+      });
+      relay.emit({ name: "dictation.paused" });
+      relay.finishAccountCheck(relay.startAccountCheck(), null);
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).not.toHaveBeenCalled();
+
+      relay.finishAccountCheck(relay.startAccountCheck(), "judge-a");
+      await vi.advanceTimersByTimeAsync(100);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps, rather than sends, retries and new events while the page is hidden", async () => {
+    vi.useFakeTimers();
+    try {
+      const { data, storage } = memory();
+      const fetchImpl = vi.fn().mockResolvedValue({ ok: false, status: 401 });
+      const relay = new TelemetryRelay({
+        fetchImpl,
+        flushDelayMs: 10,
+        storage: () => storage,
+        confirmAccount: true,
+      });
+      relay.finishAccountCheck(relay.startAccountCheck(), "judge-a");
+      relay.emit({ name: "dictation.paused" });
+      await vi.advanceTimersByTimeAsync(100); // refused: queued for a slow retry
+      expect(relay.pending).toBe(1);
+
+      // Hidden: the lifecycle flushes, then holds (as installRelayLifecycle does).
+      setVisibility("hidden");
+      relay.suspendUntilAccountConfirmed();
+      relay.emit({ name: "dictation.resumed" });
+      await vi.advanceTimersByTimeAsync(120_000); // past the retry
+      expect(fetchImpl).toHaveBeenCalledTimes(1); // nothing more sent while hidden
+      expect(relay.pending).toBe(0);
+      expect(
+        JSON.parse(data.get(unsentStorageKey("judge-a")) ?? "[]").map(
+          (e: { name: string }) => e.name
+        )
+      ).toEqual(["dictation.paused", "dictation.resumed"]);
+    } finally {
+      Reflect.deleteProperty(document, "visibilityState");
+      vi.useRealTimers();
+    }
+  });
+});

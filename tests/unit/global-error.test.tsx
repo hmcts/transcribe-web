@@ -52,4 +52,22 @@ describe("global error page", () => {
     expect(relay.confirmTelemetryAccount).toHaveBeenCalled();
     await waitFor(() => expect(relay.flush).toHaveBeenCalledTimes(2));
   });
+
+  it("looks the account up again and sends when the page is shown again", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    render(<GlobalError error={new Error("x")} />);
+    await waitFor(() => expect(relay.flush).toHaveBeenCalled());
+    relay.confirmTelemetryAccount.mockClear();
+    relay.flush.mockClear();
+
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => "visible",
+    });
+    document.dispatchEvent(new Event("visibilitychange"));
+    Reflect.deleteProperty(document, "visibilityState");
+
+    expect(relay.confirmTelemetryAccount).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(relay.flush).toHaveBeenCalledTimes(1));
+  });
 });

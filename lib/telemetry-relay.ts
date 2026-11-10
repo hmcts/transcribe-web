@@ -29,9 +29,13 @@
  *   the account is known nothing is kept or restored.
  * - Accounts: events belong to the account they were made under. When it changes,
  *   its events still waiting (and a batch in flight, if it fails) are kept for it,
- *   not sent under the new one. The app's relay (confirmAccount) holds delivery and
- *   restoring until the account is confirmed, and again whenever the page is shown,
- *   since another tab may have signed someone else in on the shared session.
+ *   not sent under the new one. The app's relay (confirmAccount) sends and restores
+ *   only once a lookup has named the account signed in (startAccountCheck and
+ *   finishAccountCheck: only the latest lookup counts; no account confirms
+ *   nothing). It holds again once the page is hidden, after the hide flush (another
+ *   tab may sign someone else in on the shared session), until the next lookup when
+ *   the page is shown: meanwhile its events, and retries, are kept for this page's
+ *   account rather than sent.
  * - Never throws and never blocks the UI.
  */
 
@@ -119,8 +123,8 @@ export interface TelemetryRelayOptions {
   flushDelayMs?: number;
   now?: () => number;
   storage?: () => Storage | null;
-  /** Send nothing until setAccount confirms who is signed in, and again after
-   * suspendUntilAccountConfirmed (the page shown again). */
+  /** Send nothing until a lookup names who is signed in (setAccount with an account),
+   * and again after suspendUntilAccountConfirmed (the page hidden or shown again). */
   confirmAccount?: boolean;
 }
 
@@ -146,6 +150,8 @@ export class TelemetryRelay {
   private keepaliveInFlight = 0;
   /** The signed-in account: events kept on page hide are its own (null: unknown). */
   private account: string | null = null;
+  /** The latest lookup of who is signed in: an earlier one's answer is stale. */
+  private accountCheck = 0;
   /** Whether events may be sent under the session: the account is the one signed in. */
   private accountConfirmed: boolean;
   private readonly confirmAccount: boolean;
@@ -265,7 +271,17 @@ export class TelemetryRelay {
 
   async flush(): Promise<void> {
     if (this.inFlight || this.queue.length === 0) return;
-    if (!this.accountConfirmed) return; // setAccount schedules a flush
+    if (!this.accountConfirmed) {
+      // Hidden, the page may be killed before the account is confirmed again: keep
+      // the events for this page's account instead. setAccount schedules a flush.
+      if (
+        typeof document !== "undefined" &&
+        document.visibilityState === "hidden"
+      ) {
+        this.persist(this.queue.splice(0));
+      }
+      return;
+    }
     const owner = this.account;
     if (this.now() < this.retryAt) {
       this.schedule(0);
@@ -390,22 +406,36 @@ export class TelemetryRelay {
     }
   }
 
-  /** The signed-in account (null when unknown or signed out), confirmed: delivery
-   * resumes. A change keeps the previous account's waiting events for it (they are
-   * never sent under the new one); the account's own kept events are restored. */
+  /** The account signed in (null when unknown or signed out). An account confirms
+   * delivery; for a confirmAccount relay, no account confirms nothing. A change keeps
+   * the previous account's waiting events for it (they are never sent under the new
+   * one); the account's own kept events are restored. */
   setAccount(account: string | null): void {
     const previous = this.account;
     if (previous && previous !== account)
       this.persistFor(previous, this.queue.splice(0));
     this.account = account;
-    this.accountConfirmed = true;
+    this.accountConfirmed = !this.confirmAccount || account !== null;
     if (account) this.restoreUnsent();
     if (this.queue.length > 0) this.schedule(0);
   }
 
-  /** The page is shown again: hold delivery and restoring until setAccount confirms
-   * who is signed in (another tab may have signed someone else in). Only for a
-   * relay made with confirmAccount. */
+  /** A lookup of who is signed in starts: delivery holds until it answers, and only
+   * the latest lookup's answer counts (an earlier one may name someone else). */
+  startAccountCheck(): number {
+    this.accountCheck += 1;
+    this.suspendUntilAccountConfirmed();
+    return this.accountCheck;
+  }
+
+  /** The answer to lookup ``check``: applied unless a later lookup has started. */
+  finishAccountCheck(check: number, account: string | null): void {
+    if (check === this.accountCheck) this.setAccount(account);
+  }
+
+  /** Hold delivery and restoring until a lookup confirms who is signed in again (the
+   * page hidden or shown: another tab may sign someone else in). Only for a relay
+   * made with confirmAccount. */
   suspendUntilAccountConfirmed(): void {
     if (this.confirmAccount) this.accountConfirmed = false;
   }
@@ -475,8 +505,13 @@ export function installRelayLifecycle(
   relay.restoreUnsent();
   window.addEventListener("pagehide", () => relay.flushOnHide());
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") relay.flushOnHide();
-    else {
+    if (document.visibilityState === "hidden") {
+      relay.flushOnHide();
+      // Until it is shown again and the account looked up, retries and new events
+      // are kept for this page's account, not sent (another tab may sign someone
+      // else in meanwhile).
+      relay.suspendUntilAccountConfirmed();
+    } else {
       // Another tab may have signed someone else in meanwhile: the provider
       // confirms the account before anything is sent or restored.
       relay.suspendUntilAccountConfirmed();

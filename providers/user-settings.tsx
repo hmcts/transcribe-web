@@ -33,17 +33,17 @@ export function UserSettingsProvider({
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load user settings on mount
+    // Load user settings on mount. The same lookup tells the telemetry relay who
+    // is signed in (lib/telemetry-relay.ts), numbered with the later lookups below
+    // so a slow answer cannot replace a newer one.
+    const check = telemetryRelay.startAccountCheck();
     getCurrentUser()
-      .then((u) => setUser(u))
+      .then((u) => {
+        setUser(u);
+        telemetryRelay.finishAccountCheck(check, u?.id ? String(u.id) : null);
+      })
       .finally(() => setLoading(false));
   }, []);
-
-  // Unsent telemetry is kept per account, so another user's is never sent under
-  // this session (lib/telemetry-relay.ts).
-  useEffect(() => {
-    telemetryRelay.setAccount(user?.id ? String(user.id) : null);
-  }, [user?.id]);
   // Shown again: someone else may have signed in from another tab meanwhile. The
   // relay holds its telemetry (installRelayLifecycle) until this says who it is.
   useEffect(() => {

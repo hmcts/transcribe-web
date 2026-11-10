@@ -29,6 +29,17 @@ export default function GlobalError({
     void confirmTelemetryAccount().then(() => telemetryRelay.flush());
   }, [error]);
 
+  // The relay holds again whenever this page is hidden and shown: look the account
+  // up again then, and send what is kept (there is no provider here to do it).
+  useEffect(() => {
+    const onShown = () => {
+      if (document.visibilityState !== "visible") return;
+      void confirmTelemetryAccount().then(() => telemetryRelay.flush());
+    };
+    document.addEventListener("visibilitychange", onShown);
+    return () => document.removeEventListener("visibilitychange", onShown);
+  }, []);
+
   return (
     // eslint-disable-next-line jsx-a11y/html-has-lang
     <html>
