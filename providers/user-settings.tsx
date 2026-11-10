@@ -48,7 +48,8 @@ export function UserSettingsProvider({
   // relay holds its telemetry (installRelayLifecycle) until this says who it is.
   useEffect(() => {
     const onShown = () => {
-      if (document.visibilityState === "visible") void confirmTelemetryAccount();
+      if (document.visibilityState === "visible")
+        void confirmTelemetryAccount();
     };
     document.addEventListener("visibilitychange", onShown);
     return () => document.removeEventListener("visibilitychange", onShown);
