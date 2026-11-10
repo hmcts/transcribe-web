@@ -381,6 +381,48 @@ describe("TemplatesEditor", () => {
     });
   });
 
+  it("allows no edits while a save is under way, which the saved copy would drop", async () => {
+    serve([UPLOADED]);
+    const fake = request.getMockImplementation();
+    let finish: () => void = () => undefined;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if (options?.method === "PUT")
+          await new Promise<void>((resolve) => (finish = resolve));
+        return fake?.(endpoint, options) as ReturnType<
+          typeof apiClient.request
+        >;
+      }
+    );
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const label = () =>
+      within(screen.getByRole("region", { name: /Fields of/ })).getByLabelText(
+        "Label of box Reference"
+      );
+
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    expect(label().matches(":disabled")).toBe(true);
+    expect(
+      within(fields)
+        .getByRole("combobox", { name: "Type of Reference" })
+        .matches(":disabled")
+    ).toBe(true);
+    expect(
+      (
+        within(fields).getByRole("button", {
+          name: "Save",
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true);
+    finish();
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Saved ET judgment")
+    );
+    await waitFor(() => expect(label().matches(":disabled")).toBe(false));
+  });
+
   it("deletes a template only once confirmed", async () => {
     serve([UPLOADED]);
     const user = userEvent.setup();

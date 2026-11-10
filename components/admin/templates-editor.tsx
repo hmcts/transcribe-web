@@ -383,229 +383,237 @@ function TemplateFieldsEditor({
       <h4 id="template-fields-heading" className="font-semibold">
         Fields of {template.name}
       </h4>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1">
-          <Label htmlFor="template-name">Name judges choose it by</Label>
-          <Input
-            id="template-name"
-            value={name}
-            maxLength={200}
-            onChange={(e) => setName(e.target.value)}
+      {/* Nothing can be edited while a save, a new file or a delete is under way:
+          the editor then reopens from the server's copy, which would drop it. */}
+      <fieldset
+        disabled={busy}
+        aria-busy={busy}
+        className="m-0 min-w-0 space-y-4 border-0 p-0"
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor="template-name">Name judges choose it by</Label>
+            <Input
+              id="template-name"
+              value={name}
+              maxLength={200}
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="template-service">Service (where it applies)</Label>
+            <Input
+              id="template-service"
+              value={service}
+              maxLength={200}
+              onChange={(e) => setService(e.target.value)}
+            />
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="template-enabled"
+            checked={enabled}
+            onCheckedChange={(value) => setEnabled(value === true)}
           />
+          <Label htmlFor="template-enabled">Available to judges</Label>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="template-service">Service (where it applies)</Label>
-          <Input
-            id="template-service"
-            value={service}
-            maxLength={200}
-            onChange={(e) => setService(e.target.value)}
-          />
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        <Checkbox
-          id="template-enabled"
-          checked={enabled}
-          onCheckedChange={(value) => setEnabled(value === true)}
-        />
-        <Label htmlFor="template-enabled">Available to judges</Label>
-      </div>
 
-      {problems.length > 0 && (
-        <div
-          role="region"
-          aria-labelledby="template-problems"
-          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
-        >
-          <p id="template-problems" className="font-medium">
-            Before it can be saved:
-          </p>
-          <ul className="mt-1 list-disc pl-5">
-            {problems.map((p) => (
-              <li key={p}>{p}</li>
-            ))}
-          </ul>
-        </div>
-      )}
+        {problems.length > 0 && (
+          <div
+            role="region"
+            aria-labelledby="template-problems"
+            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
+          >
+            <p id="template-problems" className="font-medium">
+              Before it can be saved:
+            </p>
+            <ul className="mt-1 list-disc pl-5">
+              {problems.map((p) => (
+                <li key={p}>{p}</li>
+              ))}
+            </ul>
+          </div>
+        )}
 
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Field label</TableHead>
-            <TableHead>Field type</TableHead>
-            <TableHead>Required</TableHead>
-            <TableHead>Configuration</TableHead>
-            <TableHead className="w-24">
-              <span className="sr-only">Order</span>
-            </TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {fields.map((f, index) => {
-            const box = template.boxes.find((b) => b.key === f.tag);
-            const asked = f.type !== "benchnotes" && f.type !== "dictated";
-            return (
-              <TableRow key={f.tag}>
-                <TableCell className="align-top">
-                  <Input
-                    aria-label={`Label of box ${f.tag}`}
-                    value={f.label}
-                    maxLength={200}
-                    onChange={(e) => update(f.tag, { label: e.target.value })}
-                  />
-                  <span className="mt-1 block text-xs text-muted-foreground">
-                    Box {f.tag}
-                    {box && box.count > 1 ? `, ${box.count} places` : ""}
-                  </span>
-                </TableCell>
-                <TableCell className="align-top">
-                  <Select
-                    value={f.type}
-                    onValueChange={(v) =>
-                      update(f.tag, { type: v as TemplateFieldType })
-                    }
-                  >
-                    <SelectTrigger aria-label={`Type of ${f.label || f.tag}`}>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {FIELD_TYPES.map((t) => (
-                        <SelectItem key={t.value} value={t.value}>
-                          {t.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </TableCell>
-                <TableCell className="align-top">
-                  {asked ? (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Field label</TableHead>
+              <TableHead>Field type</TableHead>
+              <TableHead>Required</TableHead>
+              <TableHead>Configuration</TableHead>
+              <TableHead className="w-24">
+                <span className="sr-only">Order</span>
+              </TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {fields.map((f, index) => {
+              const box = template.boxes.find((b) => b.key === f.tag);
+              const asked = f.type !== "benchnotes" && f.type !== "dictated";
+              return (
+                <TableRow key={f.tag}>
+                  <TableCell className="align-top">
+                    <Input
+                      aria-label={`Label of box ${f.tag}`}
+                      value={f.label}
+                      maxLength={200}
+                      onChange={(e) => update(f.tag, { label: e.target.value })}
+                    />
+                    <span className="mt-1 block text-xs text-muted-foreground">
+                      Box {f.tag}
+                      {box && box.count > 1 ? `, ${box.count} places` : ""}
+                    </span>
+                  </TableCell>
+                  <TableCell className="align-top">
                     <Select
-                      value={f.required ? "required" : "optional"}
+                      value={f.type}
                       onValueChange={(v) =>
-                        update(f.tag, { required: v === "required" })
+                        update(f.tag, { type: v as TemplateFieldType })
                       }
                     >
-                      <SelectTrigger
-                        aria-label={`Is ${f.label || f.tag} required`}
-                      >
+                      <SelectTrigger aria-label={`Type of ${f.label || f.tag}`}>
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="required">Required</SelectItem>
-                        <SelectItem value="optional">Optional</SelectItem>
+                        {FIELD_TYPES.map((t) => (
+                          <SelectItem key={t.value} value={t.value}>
+                            {t.label}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">
-                      Not asked
-                    </span>
-                  )}
-                </TableCell>
-                <TableCell className="align-top">
-                  <FieldConfiguration
-                    field={f}
-                    options={ownValue(optionText, f.tag) ?? ""}
-                    onOptions={(text) =>
-                      setOptionText((all) => ({ ...all, [f.tag]: text }))
-                    }
-                    onSource={(source) => update(f.tag, { source })}
-                  />
-                </TableCell>
-                <TableCell className="align-top">
-                  <div className="flex gap-1">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      disabled={index === 0}
-                      aria-label={`Move ${f.label || f.tag} up`}
-                      onClick={() => move(index, -1)}
-                    >
-                      <ArrowUp className="h-4 w-4" aria-hidden />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      disabled={index === fields.length - 1}
-                      aria-label={`Move ${f.label || f.tag} down`}
-                      onClick={() => move(index, 1)}
-                    >
-                      <ArrowDown className="h-4 w-4" aria-hidden />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+                  </TableCell>
+                  <TableCell className="align-top">
+                    {asked ? (
+                      <Select
+                        value={f.required ? "required" : "optional"}
+                        onValueChange={(v) =>
+                          update(f.tag, { required: v === "required" })
+                        }
+                      >
+                        <SelectTrigger
+                          aria-label={`Is ${f.label || f.tag} required`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="required">Required</SelectItem>
+                          <SelectItem value="optional">Optional</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    ) : (
+                      <span className="text-sm text-muted-foreground">
+                        Not asked
+                      </span>
+                    )}
+                  </TableCell>
+                  <TableCell className="align-top">
+                    <FieldConfiguration
+                      field={f}
+                      options={ownValue(optionText, f.tag) ?? ""}
+                      onOptions={(text) =>
+                        setOptionText((all) => ({ ...all, [f.tag]: text }))
+                      }
+                      onSource={(source) => update(f.tag, { source })}
+                    />
+                  </TableCell>
+                  <TableCell className="align-top">
+                    <div className="flex gap-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={index === 0}
+                        aria-label={`Move ${f.label || f.tag} up`}
+                        onClick={() => move(index, -1)}
+                      >
+                        <ArrowUp className="h-4 w-4" aria-hidden />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled={index === fields.length - 1}
+                        aria-label={`Move ${f.label || f.tag} down`}
+                        onClick={() => move(index, 1)}
+                      >
+                        <ArrowDown className="h-4 w-4" aria-hidden />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
 
-      {unlinked.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-sm font-medium">Boxes with no field yet</p>
-          <ul className="space-y-1">
-            {unlinked.map((b) => (
-              <li key={b.key} className="flex items-center gap-2 text-sm">
-                <span>
-                  {b.label} (box {b.key})
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => linkBox(b.key)}
-                >
-                  Link a field
-                </Button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button onClick={() => void save()} disabled={busy}>
-          <Save className="mr-1 h-4 w-4" aria-hidden />
-          Save
-        </Button>
-        <input
-          ref={fileInput}
-          id={`template-replace-${template.id}`}
-          type="file"
-          accept={DOCX_ACCEPT}
-          aria-label="New file for this template"
-          hidden
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            if (file) void replaceFile(file);
-          }}
-        />
-        <Button
-          variant="outline"
-          disabled={busy}
-          onClick={() => fileInput.current?.click()}
-        >
-          <Upload className="mr-1 h-4 w-4" aria-hidden />
-          Upload a new file
-        </Button>
-        {confirmDelete ? (
-          <Button
-            variant="destructive"
-            disabled={busy}
-            onClick={() => void remove()}
-          >
-            Confirm delete
-          </Button>
-        ) : (
-          <Button
-            variant="ghost"
-            disabled={busy}
-            onClick={() => setConfirmDelete(true)}
-          >
-            <Trash2 className="mr-1 h-4 w-4" aria-hidden />
-            Delete template
-          </Button>
+        {unlinked.length > 0 && (
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Boxes with no field yet</p>
+            <ul className="space-y-1">
+              {unlinked.map((b) => (
+                <li key={b.key} className="flex items-center gap-2 text-sm">
+                  <span>
+                    {b.label} (box {b.key})
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => linkBox(b.key)}
+                  >
+                    Link a field
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
-      </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => void save()} disabled={busy}>
+            <Save className="mr-1 h-4 w-4" aria-hidden />
+            Save
+          </Button>
+          <input
+            ref={fileInput}
+            id={`template-replace-${template.id}`}
+            type="file"
+            accept={DOCX_ACCEPT}
+            aria-label="New file for this template"
+            hidden
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) void replaceFile(file);
+            }}
+          />
+          <Button
+            variant="outline"
+            disabled={busy}
+            onClick={() => fileInput.current?.click()}
+          >
+            <Upload className="mr-1 h-4 w-4" aria-hidden />
+            Upload a new file
+          </Button>
+          {confirmDelete ? (
+            <Button
+              variant="destructive"
+              disabled={busy}
+              onClick={() => void remove()}
+            >
+              Confirm delete
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              disabled={busy}
+              onClick={() => setConfirmDelete(true)}
+            >
+              <Trash2 className="mr-1 h-4 w-4" aria-hidden />
+              Delete template
+            </Button>
+          )}
+        </div>
+      </fieldset>
     </section>
   );
 }
