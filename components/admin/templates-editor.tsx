@@ -217,7 +217,7 @@ export function TemplatesEditor({ code }: { code: string }) {
 
       {current && (
         <TemplateFieldsEditor
-          key={`${current.id}:${generation}`}
+          key={`${current.id}:${current.version}:${generation}`}
           code={code}
           template={current}
           onChanged={async (id) => {
