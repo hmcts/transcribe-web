@@ -1,4 +1,5 @@
 import { apiClient } from "@/lib/api-client";
+import type { JurisdictionStage } from "@/lib/jurisdiction-api";
 
 /** /api/admin/jurisdictions (transcribe-api, DIAAT-356): SystemAdministrator only. */
 
@@ -11,6 +12,13 @@ export interface JurisdictionSettingsData {
 export interface AdminJurisdiction {
   code: string;
   name: string;
+  /** What users see, e.g. "Employment Tribunals (ET)"; null: the name (DIAAT-345). */
+  display_name?: string | null;
+  /** The service it is for, where that applies. */
+  service?: string | null;
+  stage?: JurisdictionStage;
+  /** What stops it being switched on (out of draft), in plain words. */
+  problems?: string[];
   enabled: boolean;
   auto_enrol: boolean;
   settings: JurisdictionSettingsData;
@@ -22,9 +30,17 @@ export interface AdminJurisdiction {
 export interface AdminJurisdictionMember {
   email: string;
   role: "judge" | "admin";
+  /** In the test group: sees the jurisdiction while it is in test (DIAAT-345). */
+  tester?: boolean;
   /** Added by email; joins when they first sign in. */
   pending: boolean;
 }
+
+export const STAGES: { value: JurisdictionStage; label: string }[] = [
+  { value: "draft", label: "Draft: only its admins see it" },
+  { value: "test", label: "Test: its admins and testers see it" },
+  { value: "live", label: "Live: every member sees it" },
+];
 
 export const MEMBER_ROLES = ["judge", "admin"] as const;
 
@@ -52,14 +68,18 @@ export async function fetchWordingKeys(): Promise<Record<string, string>> {
 }
 
 /** Create or update; flags left undefined are unchanged. `version`: the one edited,
- * "" for a new jurisdiction (refused if the code exists). */
+ * "" for a new jurisdiction (refused if the code exists). Moving it out of draft is
+ * refused, with what is missing, until it is ready. */
 export function saveJurisdiction(
   code: string,
   body: {
     name: string;
+    display_name?: string;
+    service?: string;
     settings: JurisdictionSettingsData;
     enabled?: boolean;
     auto_enrol?: boolean;
+    stage?: JurisdictionStage;
     version: string;
   }
 ): Promise<AdminJurisdiction> {
@@ -70,12 +90,18 @@ export function fetchJurisdictionMembers(code: string): Promise<AdminJurisdictio
   return request(`/admin/jurisdictions/${encodeURIComponent(code)}/members`, { cache: "no-store" });
 }
 
+/** Add someone, or change their role or whether they test it (`tester` undefined:
+ * unchanged). */
 export function addJurisdictionMember(
   code: string,
   email: string,
-  role: AdminJurisdictionMember["role"]
+  role: AdminJurisdictionMember["role"],
+  tester?: boolean
 ): Promise<AdminJurisdictionMember> {
-  return request(`/admin/jurisdictions/${encodeURIComponent(code)}/members`, json("POST", { email, role }));
+  return request(
+    `/admin/jurisdictions/${encodeURIComponent(code)}/members`,
+    json("POST", { email, role, tester })
+  );
 }
 
 export async function removeJurisdictionMember(code: string, email: string): Promise<void> {

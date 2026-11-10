@@ -12,6 +12,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { StageNote } from "@/components/jurisdiction/choose-jurisdiction";
 import { JurisdictionSwitchError } from "@/lib/jurisdiction-switch";
 import { useJurisdiction } from "@/providers/jurisdiction";
 
@@ -76,6 +77,7 @@ export function JurisdictionSwitcher({ className }: { className?: string }) {
             <DropdownMenuItem key={jurisdiction.code} disabled>
               <Check className="mr-2 size-4" aria-hidden="true" />
               {jurisdiction.name}
+              <StageNote stage={jurisdiction.stage} />
               <span className="sr-only"> (current)</span>
             </DropdownMenuItem>
           ) : (
@@ -85,6 +87,7 @@ export function JurisdictionSwitcher({ className }: { className?: string }) {
             >
               <span className="mr-2 size-4" aria-hidden="true" />
               {jurisdiction.name}
+              <StageNote stage={jurisdiction.stage} />
             </DropdownMenuItem>
           )
         )}
