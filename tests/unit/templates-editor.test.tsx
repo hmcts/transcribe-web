@@ -416,11 +416,112 @@ describe("TemplatesEditor", () => {
         }) as HTMLButtonElement
       ).disabled
     ).toBe(true);
+    // Nor can another template be opened, or one uploaded, meanwhile.
+    expect(
+      screen.getByRole("button", { name: "ET judgment" }).matches(":disabled")
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: /Upload a Word template/ })
+        .matches(":disabled")
+    ).toBe(true);
     finish();
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("Saved ET judgment")
     );
     await waitFor(() => expect(label().matches(":disabled")).toBe(false));
+  });
+
+  it("keeps unsaved edits when the open template is chosen again, and asks before leaving them", async () => {
+    const second: AdminTemplate = { ...UPLOADED, id: "t2", name: "Reasons" };
+    serve([UPLOADED, second]);
+    const confirm = vi.spyOn(window, "confirm");
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const label = () =>
+      within(screen.getByRole("region", { name: /Fields of/ })).getByLabelText(
+        "Label of box Reference"
+      ) as HTMLInputElement;
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      " number"
+    );
+    await user.click(screen.getByRole("button", { name: "ET judgment" })); // the open one
+    expect(label().value).toBe("Reference number");
+    expect(confirm).not.toHaveBeenCalled();
+
+    confirm.mockReturnValueOnce(false);
+    await user.click(screen.getByRole("button", { name: "Reasons" }));
+    expect(confirm).toHaveBeenCalledWith(
+      "Discard your unsaved changes to ET judgment?"
+    );
+    expect(
+      screen.getByRole("region", { name: "Fields of ET judgment" })
+    ).toBeTruthy();
+    expect(label().value).toBe("Reference number");
+
+    confirm.mockReturnValueOnce(true);
+    await user.click(screen.getByRole("button", { name: "Reasons" }));
+    expect(
+      screen.getByRole("region", { name: "Fields of Reasons" })
+    ).toBeTruthy();
+    confirm.mockRestore();
+  });
+
+  it("applies a save from the API's answer, with no reload to go stale", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const name = within(fields).getByLabelText("Name judges choose it by");
+    await user.clear(name);
+    await user.type(name, "Judgment");
+    const gets = () =>
+      request.mock.calls.filter(([, o]) => (o?.method ?? "GET") === "GET")
+        .length;
+    const before = gets();
+
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByRole("region", { name: "Fields of Judgment" })
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Judgment" })).toBeTruthy(); // the list too
+    expect(gets()).toBe(before);
+  });
+
+  it("ties the options hint to its list even when the box's tag has spaces", async () => {
+    const spaced: AdminTemplate = {
+      ...UPLOADED,
+      boxes: [
+        {
+          key: "Party 1 Title",
+          label: "Party 1 title",
+          kind: "dropdown",
+          options: ["Claimant"],
+          count: 1,
+        },
+      ],
+      fields: [
+        field("Party 1 Title", {
+          label: "Party 1 title",
+          type: "dropdown",
+          options: ["Claimant"],
+        }),
+      ],
+    };
+    serve([spaced]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const ids =
+      within(fields)
+        .getByLabelText("Options for Party 1 title")
+        .getAttribute("aria-describedby")
+        ?.split(" ") ?? [];
+    expect(ids).toHaveLength(1);
+    expect(document.getElementById(ids[0])?.textContent).toBe(
+      "One option per line, in order."
+    );
   });
 
   it("deletes a template only once confirmed", async () => {

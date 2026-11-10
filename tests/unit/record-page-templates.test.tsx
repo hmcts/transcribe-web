@@ -4,7 +4,10 @@ import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
-import type { AvailableTemplate } from "@/lib/templates-api";
+import {
+  type AvailableTemplate,
+  TemplateRefusedError,
+} from "@/lib/templates-api";
 
 // DIAAT-344: in a jurisdiction without the decision template, a judge chooses one of
 // its uploaded templates and fills that template's own Hearing Details form, then
@@ -344,6 +347,92 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     const raw = String(fetchMock.mock.calls[0][1].body);
     expect(raw).toContain(
       '"values":{"__proto__":"1/2026","constructor":"Allowed"}'
+    );
+  });
+
+  it("warns before the tab is closed with answers, which drafts do not keep", async () => {
+    const user = userEvent.setup();
+    await renderPage([JUDGMENT]);
+    await screen.findByText("Hearing details");
+    const leave = () => {
+      const event = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(event);
+      return event.defaultPrevented;
+    };
+    expect(leave()).toBe(false);
+
+    await user.type(screen.getByLabelText(/Case number/), "1");
+    expect(leave()).toBe(true);
+  });
+
+  it("says when the templates could not be loaded, and tries again", async () => {
+    const user = userEvent.setup();
+    mockFetchTemplates.mockRejectedValueOnce(
+      new TemplateRefusedError("Server error", [], 500)
+    );
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+
+    expect(
+      await screen.findByText(/templates could not be loaded/)
+    ).toBeTruthy();
+    expect(screen.queryByText("Hearing details")).toBeNull();
+    mockFetchTemplates.mockResolvedValue([JUDGMENT]);
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(await screen.findByText("Hearing details")).toBeTruthy();
+    await waitFor(() =>
+      expect(screen.queryByText(/templates could not be loaded/)).toBeNull()
+    );
+  });
+
+  it("works as before, without saying anything, against an API with no templates", async () => {
+    mockFetchTemplates.mockRejectedValue(
+      new TemplateRefusedError("Not Found", [], 404)
+    );
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+    await waitFor(() => expect(mockFetchTemplates).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: /copy text/i })).toBeTruthy();
+    expect(screen.queryByText(/templates could not be loaded/)).toBeNull();
+  });
+
+  it("ties each field's error to it even when its tag has spaces", async () => {
+    const user = userEvent.setup();
+    await renderPage([
+      {
+        ...JUDGMENT,
+        fields: [
+          {
+            tag: "Case Number",
+            label: "Case number",
+            type: "text",
+            required: true,
+            options: [],
+          },
+        ],
+      },
+    ]);
+    await screen.findByText("Hearing details");
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    await screen.findByText("Case number is required");
+
+    const ids =
+      screen
+        .getByLabelText(/Case number/)
+        .getAttribute("aria-describedby")
+        ?.split(" ") ?? [];
+    expect(ids).toHaveLength(1);
+    expect(document.getElementById(ids[0])?.textContent).toBe(
+      "Case number is required"
     );
   });
 

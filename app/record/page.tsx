@@ -85,9 +85,12 @@ import {
   fetchAvailableTemplates,
   hasAnswers,
   missingValues,
+  TemplateRefusedError,
   type TemplateValues,
   valuesToSend,
 } from "@/lib/templates-api";
+
+const TEMPLATES_FAILED_TOAST = "templates-failed";
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -343,30 +346,48 @@ export default function RecordPage() {
     previousLayoutModeRef.current = layoutMode;
   }, [layoutMode, hasHearingForm]);
 
-  useEffect(() => {
+  // An answer still on its way is for a page left behind or an earlier attempt.
+  const templatesRequest = useRef(0);
+  const loadTemplates = useCallback(async () => {
     if (hasDecisionTemplate) {
       setTemplates([]);
       return;
     }
-    let live = true;
-    fetchAvailableTemplates()
-      .then((list) => {
-        if (!live) return;
-        setTemplates(list);
-        setTemplateId((id) =>
-          list.some((t) => t.id === id) ? id : (list[0]?.id ?? "")
-        );
-      })
-      .catch((error) => {
-        // Without them the page works as before: dictate, then copy the text out.
-        console.error("Failed to load templates", error);
-        if (live) setTemplates([]);
-      });
-    return () => {
-      live = false;
-    };
-    // A switch of jurisdiction reloads the page (providers/jurisdiction.tsx).
+    const request = ++templatesRequest.current;
+    try {
+      const list = await fetchAvailableTemplates();
+      if (request !== templatesRequest.current) return;
+      toast.dismiss(TEMPLATES_FAILED_TOAST);
+      setTemplates(list);
+      setTemplateId((id) =>
+        list.some((t) => t.id === id) ? id : (list[0]?.id ?? "")
+      );
+    } catch (error) {
+      if (request !== templatesRequest.current) return;
+      // An API from before DIAAT-344 has no templates: the page works as before,
+      // dictate and copy the text out.
+      if (error instanceof TemplateRefusedError && error.status === 404) return;
+      // Anything else is not "no templates": say so, with a way to try again. The
+      // page still lets the judge dictate and copy the text out meanwhile.
+      console.error("Failed to load templates", error);
+      toast.error(
+        "This jurisdiction's templates could not be loaded, so Hearing details is not shown.",
+        {
+          id: TEMPLATES_FAILED_TOAST,
+          duration: Number.POSITIVE_INFINITY,
+          action: { label: "Try again", onClick: () => void loadTemplates() },
+        }
+      );
+    }
   }, [hasDecisionTemplate]);
+
+  useEffect(() => {
+    void loadTemplates();
+    return () => {
+      // A switch of jurisdiction reloads the page (providers/jurisdiction.tsx).
+      templatesRequest.current += 1;
+    };
+  }, [loadTemplates]);
 
   const contentRequest = useRef(0);
   const loadContent = useCallback(async () => {
@@ -579,7 +600,9 @@ export default function RecordPage() {
     const hasContent =
       sectionedTranscript.background.length > 0 ||
       sectionedTranscript.evidence.length > 0 ||
-      sectionedTranscript.facts.length > 0;
+      sectionedTranscript.facts.length > 0 ||
+      // DIAAT-344: a template's answers are not in the draft, so nothing restores them.
+      hasAnswers(templateValues);
     if (!hasContent) return;
     const handler = (e: BeforeUnloadEvent) => {
       // Switching jurisdiction (DIAAT-332) saved the draft first: nothing is lost.
@@ -589,7 +612,7 @@ export default function RecordPage() {
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [sectionedTranscript]);
+  }, [sectionedTranscript, templateValues]);
 
   const handleCitationClick = useCallback((citationIndex: number) => {
     void citationIndex;

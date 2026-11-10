@@ -8,7 +8,7 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,11 +66,21 @@ function statusOf(template: AdminTemplate): string {
   return template.enabled ? "Available to judges" : "Off";
 }
 
+/** What the open field list reports: a change under way, or edits not saved. */
+interface EditorState {
+  busy: boolean;
+  unsaved: boolean;
+}
+
+const IDLE: EditorState = { busy: false, unsaved: false };
+
+const byName = (a: AdminTemplate, b: AdminTemplate) =>
+  a.name.localeCompare(b.name);
+
 export function TemplatesEditor({ code }: { code: string }) {
   const [templates, setTemplates] = useState<AdminTemplate[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
-  // Bumped to reopen the field list from the server's copy.
-  const [generation, setGeneration] = useState(0);
+  const [editor, setEditor] = useState<EditorState>(IDLE);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -97,6 +107,29 @@ export function TemplatesEditor({ code }: { code: string }) {
     void load();
   }, [load]);
 
+  /** A template saved, given a new file or added: from the API's answer, not a
+   * reload (which could fail and leave a stale version in the editor). */
+  const applySaved = useCallback((saved: AdminTemplate) => {
+    setTemplates((all) =>
+      [...all.filter((t) => t.id !== saved.id), saved].sort(byName)
+    );
+    setSelected(saved.id);
+  }, []);
+
+  /** Leave the open field list: at once if nothing would be lost, else if the
+   * admin agrees to discard their edits. */
+  function mayLeaveEditor(): boolean {
+    if (!editor.unsaved) return true;
+    const name =
+      templates.find((t) => t.id === selected)?.name ?? "this template";
+    return window.confirm(`Discard your unsaved changes to ${name}?`);
+  }
+
+  function choose(id: string) {
+    if (id === selected || !mayLeaveEditor()) return;
+    setSelected(id);
+  }
+
   async function upload(file: File) {
     setUploading(true);
     try {
@@ -104,9 +137,7 @@ export function TemplatesEditor({ code }: { code: string }) {
       toast.success(
         `Uploaded ${added.name}: check its fields, then make it available to judges.`
       );
-      await load();
-      setSelected(added.id);
-      setGeneration((g) => g + 1);
+      applySaved(added);
     } catch (err) {
       toast.error(message(err));
     } finally {
@@ -141,8 +172,10 @@ export function TemplatesEditor({ code }: { code: string }) {
           />
           <Button
             size="sm"
-            disabled={uploading}
-            onClick={() => fileInput.current?.click()}
+            disabled={uploading || editor.busy}
+            onClick={() => {
+              if (mayLeaveEditor()) fileInput.current?.click();
+            }}
           >
             {uploading ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />
@@ -185,11 +218,9 @@ export function TemplatesEditor({ code }: { code: string }) {
                   <button
                     type="button"
                     aria-current={t.id === selected ? "true" : undefined}
-                    className="underline-offset-2 hover:underline"
-                    onClick={() => {
-                      setSelected(t.id);
-                      setGeneration((g) => g + 1);
-                    }}
+                    className="underline-offset-2 hover:underline disabled:no-underline disabled:opacity-60"
+                    disabled={uploading || editor.busy}
+                    onClick={() => choose(t.id)}
                   >
                     {t.name}
                   </button>
@@ -219,16 +250,14 @@ export function TemplatesEditor({ code }: { code: string }) {
 
       {current && (
         <TemplateFieldsEditor
-          key={`${current.id}:${current.version}:${generation}`}
+          key={`${current.id}:${current.version}`}
           code={code}
           template={current}
-          onChanged={async (id) => {
-            await load();
-            setSelected(id);
-          }}
-          onDeleted={async () => {
+          onStateChange={setEditor}
+          onSaved={applySaved}
+          onDeleted={(id) => {
+            setTemplates((all) => all.filter((t) => t.id !== id));
             setSelected(null);
-            await load();
           }}
         />
       )}
@@ -239,13 +268,18 @@ export function TemplatesEditor({ code }: { code: string }) {
 function TemplateFieldsEditor({
   code,
   template,
-  onChanged,
+  onStateChange,
+  onSaved,
   onDeleted,
 }: {
   code: string;
   template: AdminTemplate;
-  onChanged: (id: string) => Promise<void>;
-  onDeleted: () => Promise<void>;
+  /** Busy or unsaved: the list stops other changes while busy, and asks before
+   * dropping unsaved edits. */
+  onStateChange: (state: EditorState) => void;
+  /** The API's copy after a save or a new file: the editor reopens from it. */
+  onSaved: (saved: AdminTemplate) => void;
+  onDeleted: (id: string) => void;
 }) {
   const [name, setName] = useState(template.name);
   const [service, setService] = useState(template.service ?? "");
@@ -266,7 +300,13 @@ function TemplateFieldsEditor({
   const unlinked = template.boxes.filter((b) => !linked.has(b.key));
   const form = JSON.stringify({ name, service, enabled, fields, optionText });
   const [savedForm] = useState(form);
-  useJurisdictionSwitchGuard({ busy, unsaved: form !== savedForm });
+  const unsaved = form !== savedForm;
+  useJurisdictionSwitchGuard({ busy, unsaved });
+  useEffect(() => {
+    onStateChange({ busy, unsaved });
+  }, [busy, unsaved, onStateChange]);
+  // Closed (another template, or deleted): nothing of it is busy or unsaved.
+  useEffect(() => () => onStateChange(IDLE), [onStateChange]);
 
   function update(tag: string, change: Partial<TemplateField>) {
     setFields((all) =>
@@ -327,7 +367,7 @@ function TemplateFieldsEditor({
       });
       setRefused(null);
       toast.success(`Saved ${saved.name}`);
-      await onChanged(saved.id);
+      onSaved(saved);
     } catch (err) {
       if (err instanceof TemplateRefusedError && err.problems.length > 0) {
         setRefused(err.problems);
@@ -352,7 +392,7 @@ function TemplateFieldsEditor({
           ? `Uploaded ${file.name}. Link its new boxes before judges can use it again.`
           : `Uploaded ${file.name}`
       );
-      await onChanged(replaced.id);
+      onSaved(replaced);
     } catch (err) {
       toast.error(message(err));
     } finally {
@@ -366,7 +406,7 @@ function TemplateFieldsEditor({
     try {
       await deleteTemplate(code, template.id);
       toast.success(`Deleted ${template.name}`);
-      await onDeleted();
+      onDeleted(template.id);
     } catch (err) {
       toast.error(message(err));
       setBusy(false);
@@ -630,8 +670,9 @@ function FieldConfiguration({
   onSource: (source: BenchNotesSource) => void;
 }) {
   const name = field.label || field.tag;
+  // Not from the tag, which can hold spaces (an ID reference list would split it).
+  const hintId = useId();
   if (LIST_TYPES.includes(field.type)) {
-    const hintId = `options-hint-${field.tag}`;
     return (
       <div className="space-y-1">
         <span className="text-sm">Configured list</span>

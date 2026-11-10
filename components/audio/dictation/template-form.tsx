@@ -1,6 +1,7 @@
 "use client";
 
 import { RefreshCcwIcon } from "lucide-react";
+import { useId } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { DatePicker } from "@/components/ui/date-picker";
@@ -28,9 +29,6 @@ import {
  * of the jurisdiction's templates, and fills the fields its admin set up, in their
  * order. BenchNotes fills the rest (the jurisdiction, the year, the judgment).
  */
-
-const fieldId = (tag: string) => `template-field-${tag}`;
-const errorId = (tag: string) => `${fieldId(tag)}-error`;
 
 function RequiredIndicator() {
   return (
@@ -128,11 +126,13 @@ function TemplateFieldInput({
   error?: string;
   onChange: (value: TemplateValue | undefined) => void;
 }) {
-  const id = fieldId(field.tag);
+  // Not from the tag, which can hold spaces (an ID reference list would split it).
+  const id = useId();
+  const errorId = `${id}-error`;
   const labelId = `${id}-label`;
   const a11y = {
-    "aria-describedby": error ? errorId(field.tag) : undefined,
-    "aria-errormessage": error ? errorId(field.tag) : undefined,
+    "aria-describedby": error ? errorId : undefined,
+    "aria-errormessage": error ? errorId : undefined,
     "aria-invalid": error ? true : undefined,
     "aria-required": field.required ? true : undefined,
   } as const;
@@ -144,7 +144,7 @@ function TemplateFieldInput({
   );
   const message = error && (
     <p
-      id={errorId(field.tag)}
+      id={errorId}
       className="mt-1 text-xs font-medium text-red-600 dark:text-red-400"
     >
       {error}
@@ -156,7 +156,7 @@ function TemplateFieldInput({
     return (
       <fieldset
         aria-labelledby={labelId}
-        aria-describedby={error ? errorId(field.tag) : undefined}
+        aria-describedby={error ? errorId : undefined}
         aria-invalid={error ? true : undefined}
         className="space-y-3"
       >
@@ -164,8 +164,8 @@ function TemplateFieldInput({
           {field.label}
           {field.required && <RequiredIndicator />}
         </legend>
-        {field.options.map((option) => {
-          const optionId = `${id}-${option.value}`;
+        {field.options.map((option, index) => {
+          const optionId = `${id}-option-${index}`;
           return (
             <div key={option.value} className="flex items-start gap-3">
               <Checkbox
