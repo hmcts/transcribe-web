@@ -224,7 +224,10 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
     const target = landingAfterSwitch(window.location.pathname, (p) =>
       granted.has(p)
     );
-    setTabContext(contextOf(me.active));
+    // The tab keeps its old context until the document really reloads (the new page adopts the
+    // session's: AccessProvider.load). The recorder's "leave this page?" prompt can be cancelled; a
+    // tab that had already taken the new context would then autosave its old page's work into it.
+    // Left as it is, such a tab is refused by the API (409 context_changed) and asks to reload.
     reloadAt(target);
   }, []);
 

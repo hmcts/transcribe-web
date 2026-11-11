@@ -119,6 +119,7 @@ describe("switching context", () => {
     });
     try {
       await openSwitcher();
+      const before = getTabContext();
       await chooseJudge();
 
       await waitFor(() => expect(assign).toHaveBeenCalledWith("/"));
@@ -129,7 +130,10 @@ describe("switching context", () => {
         (screen.getByRole("button", { name: /Switch or leave/ }) as HTMLButtonElement).disabled
       ).toBe(true);
       expect(api.postContext).toHaveBeenCalledWith({ jurisdiction: "ET", role: "Judge" });
-      expect(getTabContext()).toEqual({ jurisdiction: "ET", role: "Judge" });
+      // The tab keeps its old context until the document really reloads: the recorder's "leave this
+      // page?" prompt can be cancelled, and a tab that had taken the new context would then autosave
+      // its old page's work into it. Such a tab is refused by the API (409) and asks to reload.
+      expect(getTabContext()).toEqual(before);
       expect(isLeavingForJurisdictionSwitch()).toBe(true);
     } finally {
       unregister();

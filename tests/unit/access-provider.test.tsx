@@ -223,10 +223,9 @@ describe("a user who must choose (DIAAT-390)", () => {
         role: "JurisdictionAdministrator",
       });
       expect(order).toEqual(["saved", "saved"]);
-      expect(getTabContext()).toEqual({
-        jurisdiction: "IAC",
-        role: "JurisdictionAdministrator",
-      });
+      // Chosen with the server, but this tab takes the context only when it has reloaded (a cancelled
+      // reload must not leave it saving into the new one): it had none, and still has none.
+      expect(getTabContext()).toBeNull();
     } finally {
       unregister();
     }
