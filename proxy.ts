@@ -3,6 +3,7 @@ import { isPreviewSignInEnabled } from "@/lib/auth/preview-mode";
 import { isDictationEnabledAtRuntime } from "@/lib/flags/proxy-flags";
 import {
   DICTATION_BASE_PATH,
+  DICTATION_UPLOAD_PATH,
   isPathActive,
   SPEECH_DEMO_PATH,
 } from "@/lib/navigation";
@@ -139,6 +140,7 @@ export async function proxy(request: NextRequest) {
   // deploy-time value decides (lib/flags/proxy-flags.ts).
   if (
     (isPathActive(pathname, DICTATION_BASE_PATH) ||
+      isPathActive(pathname, DICTATION_UPLOAD_PATH) ||
       isPathActive(pathname, SPEECH_DEMO_PATH)) &&
     !(await isDictationEnabledAtRuntime(request.headers.get("cookie")))
   ) {

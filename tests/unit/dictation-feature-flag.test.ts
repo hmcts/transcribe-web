@@ -70,6 +70,7 @@ describe("proxy Dictation gate (DIAAT-366, DIAAT-392)", () => {
         "/record",
         "/record?mode=mic",
         "/record/anything",
+        "/upload", // the dictation upload: the API refuses it too with dictation off (403 dictation_disabled)
         "/speech-demo",
       ])("redirects %s to the home page", async (path) => {
         vi.stubEnv(FLAG, "false");
@@ -80,7 +81,6 @@ describe("proxy Dictation gate (DIAAT-366, DIAAT-392)", () => {
         "/",
         "/recording",
         "/recording/jobs/abc",
-        "/upload",
         "/help",
       ])("leaves %s alone", async (path) => {
         vi.stubEnv(FLAG, "false");
@@ -125,6 +125,7 @@ describe("proxy Dictation gate (DIAAT-366, DIAAT-392)", () => {
       vi.stubEnv(FLAG, "true");
       runtimeFlag({ dictation_enabled: false });
       expect(await location("/record")).toBe("https://transcribe.example/");
+      expect(await location("/upload")).toBe("https://transcribe.example/");
       expect(await location("/speech-demo")).toBe("https://transcribe.example/");
     });
 
