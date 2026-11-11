@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { refusalCodeIn, reportXhrRefusal, watchRefusals } from "@/lib/access/refusals";
+import { probeForRefusal, refusalCodeIn, reportXhrRefusal, watchRefusals } from "@/lib/access/refusals";
 import { watchContextChanged } from "@/lib/access/context-changed";
 
 // DIAAT-373: one watcher on fetch for the API's refusals that are about who the
@@ -112,6 +112,44 @@ describe("reportXhrRefusal", () => {
     reportXhrRefusal(xhr(403, JSON.stringify({ detail: "no code" })));
     reportXhrRefusal(xhr(403, "<Error><Code>AuthorizationFailure</Code></Error>"));
     reportXhrRefusal({ status: 409, get responseText(): string { throw new Error("not text"); } } as XMLHttpRequest);
+
+    expect(listener).not.toHaveBeenCalled();
+    stop();
+  });
+});
+
+describe("probeForRefusal", () => {
+  const original = window.fetch;
+  afterEach(() => {
+    window.fetch = original;
+  });
+
+  it("asks for the first byte, so a refusal of an <audio> source reaches the listeners", async () => {
+    const fetchMock = vi.fn(
+      async () => new Response(JSON.stringify({ detail: { code: "context_changed", message: "m" } }), { status: 409 })
+    );
+    window.fetch = fetchMock as unknown as typeof fetch;
+    const listener = vi.fn();
+    const stop = watchRefusals(listener);
+
+    await probeForRefusal("/api/audio/job-1?jurisdiction=ET");
+    await vi.waitFor(() => expect(listener).toHaveBeenCalledExactlyOnceWith("context_changed", 409));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/audio/job-1?jurisdiction=ET",
+      expect.objectContaining({ headers: { Range: "bytes=0-0" } })
+    );
+    stop();
+  });
+
+  it("says nothing when the failure was not a refusal, or the network is down", async () => {
+    window.fetch = vi.fn(async () => new Response("", { status: 404 })) as unknown as typeof fetch;
+    const listener = vi.fn();
+    const stop = watchRefusals(listener);
+    await probeForRefusal("/api/audio/job-1");
+
+    window.fetch = vi.fn(async () => Promise.reject(new Error("down"))) as unknown as typeof fetch;
+    await expect(probeForRefusal("/api/audio/job-1")).resolves.toBeUndefined();
 
     expect(listener).not.toHaveBeenCalled();
     stop();

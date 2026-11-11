@@ -55,6 +55,26 @@ export function reportXhrRefusal(xhr: XMLHttpRequest): void {
   }
 }
 
+/**
+ * An `<audio>` element loads its source natively, so a refusal of that request (409 `context_changed`
+ * after another tab switched, 403 `user_deactivated`) never passes through `fetch` and the watcher below
+ * cannot see it: the element only says it failed. Ask again with `fetch` for the first byte, so
+ * the refusal, if that is what it was, reaches the listeners. The answer is not used otherwise.
+ */
+export async function probeForRefusal(url: string): Promise<void> {
+  if (typeof window === "undefined") return;
+  try {
+    const response = await window.fetch(url, {
+      headers: { Range: "bytes=0-0" },
+      cache: "no-store",
+    });
+    // Not read: only the status and code matter, and the watcher has read a copy of a refusal.
+    await response.body?.cancel().catch(() => undefined);
+  } catch {
+    // The network is down: nothing to learn.
+  }
+}
+
 function install(): void {
   if (installed || typeof window === "undefined") return;
   const original = window.fetch;

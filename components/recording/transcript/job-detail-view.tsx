@@ -12,6 +12,7 @@ import { NeedsReviewPanel } from "@/components/recording/transcript/needs-review
 import { TranscriptAccuracy } from "@/components/recording/transcript/transcript-accuracy";
 import { TranscriptSegment } from "@/components/recording/transcript/transcript-segment";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
+import { probeForRefusal } from "@/lib/access/refusals";
 import { apiPath } from "@/lib/recording/base-path";
 import { RECORDING_HOME } from "@/lib/recording/routes";
 import type { TranscriptionJob } from "@/lib/recording/types";
@@ -99,7 +100,12 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     const onLoadedMetadata = () => setAudioDuration(el.duration);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
-    const onError = () => setAudioAvailable(false);
+    const onError = () => {
+      setAudioAvailable(false);
+      // The element only says it failed: if the API refused because the tab's context is stale or
+      // the account was deactivated, ask again with fetch so the stale-tab or account notice shows.
+      void probeForRefusal(el.currentSrc || el.src);
+    };
 
     el.addEventListener("timeupdate", onTimeUpdate);
     el.addEventListener("loadedmetadata", onLoadedMetadata);
