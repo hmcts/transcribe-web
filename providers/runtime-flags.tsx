@@ -44,10 +44,16 @@ export function RuntimeFlagsProvider({
   const signedIn = me !== null;
   const [flags, setFlags] = useState<RuntimeFlags | null>(null);
 
+  // The reads started so far. Only the latest may update the flags: an earlier read (the first
+  // one, or one when the tab came back into view) can finish after the reload that followed a
+  // save, and would put the old value back.
+  const latestRead = useRef(0);
+
   const reload = useCallback(async () => {
+    const read = ++latestRead.current;
     const next = await fetchRuntimeFlags();
     // A failed read keeps what was last known, then the deploy default.
-    if (next) setFlags(next);
+    if (next && read === latestRead.current) setFlags(next);
   }, []);
 
   useEffect(() => {

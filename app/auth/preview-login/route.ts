@@ -80,7 +80,9 @@ export async function GET(request: NextRequest) {
   const sessionId = newSessionId();
   await writeSession(sessionId, withToken(base, minted));
 
-  const response = NextResponse.redirect(new URL(returnTo, request.url));
+  // On the public origin: behind Caddy the request arrives on the internal 127.0.0.1:3001,
+  // and a redirect built from its URL would send the browser there (as the Entra callback does).
+  const response = NextResponse.redirect(new URL(returnTo, config.appUrl));
   response.cookies.set(
     SESSION_COOKIE,
     sessionId,

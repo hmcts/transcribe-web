@@ -163,8 +163,12 @@ export const config = {
       // request the proxy runs on, and passes at most
       // experimental.proxyClientMaxBodySize (10 MB) of it on; /api/upload
       // streams recordings of up to 200 MB to the API instead, and checks the
-      // session itself (app/api/upload/route.ts).
-      source: "/((?!_next/static|_next/image|favicon.ico|api/upload$).*)",
+      // session itself (app/api/upload/route.ts). /api/upload-audio is the
+      // dictation upload: deployed, Caddy sends it straight to the API; in local
+      // development the dev proxy (app/api/[...path]/route.ts) streams it, and
+      // must not be buffered first either.
+      source:
+        "/((?!_next/static|_next/image|favicon.ico|api/upload(?:-audio)?$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },

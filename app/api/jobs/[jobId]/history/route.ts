@@ -1,27 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
-import {
-  CONTEXT_CHANGED,
-  CONTEXT_REQUIRED,
-  USER_DEACTIVATED,
-} from "@/lib/access/refusals";
 import { BackendApiError, getJobHistory } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+import { identityRefusalResponse } from "@/lib/recording/identity-refusal";
 
 interface RouteContext {
   params: Promise<{ jobId: string }>;
-}
-
-const IDENTITY_REFUSALS = new Set([
-  CONTEXT_CHANGED,
-  CONTEXT_REQUIRED,
-  USER_DEACTIVATED,
-]);
-
-function isIdentityRefusal(err: BackendApiError): boolean {
-  return (
-    err.status === 401 ||
-    (err.code !== undefined && IDENTITY_REFUSALS.has(err.code))
-  );
 }
 
 function numberParam(value: string | null): number | undefined {
@@ -50,15 +33,10 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
     );
     return NextResponse.json(history);
   } catch (err) {
-    // Refusals about who the user is, not about this recording: passed on with their
-    // status and code, so the browser's refusal watcher can show the stale-tab or account
-    // notice (a 409 `context_changed`, a 403 `context_required` or `user_deactivated`, a 401).
-    if (err instanceof BackendApiError && isIdentityRefusal(err)) {
-      return NextResponse.json(
-        { detail: { code: err.code, message: "Your access has changed." } },
-        { status: err.status }
-      );
-    }
+    // Refusals about who the user is, not about this recording: passed on with their status and
+    // code, so the browser can show the stale-tab or account notice.
+    const refusal = identityRefusalResponse(err);
+    if (refusal) return refusal;
     // Anything else the API refuses (403) or cannot find (404) is, to this user, a
     // recording that is not there.
     if (

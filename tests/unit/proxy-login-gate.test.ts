@@ -113,3 +113,19 @@ describe("proxy login gate", () => {
     });
   });
 });
+
+describe("the proxy matcher", () => {
+  it("skips the two upload routes, which stream large bodies and must not be buffered by Next.js", async () => {
+    const { config } = await import("@/proxy");
+    const [{ source }] = config.matcher as { source: string }[];
+    const runsOn = (path: string) => new RegExp(`^${source}$`).test(path);
+
+    expect(runsOn("/api/upload")).toBe(false);
+    expect(runsOn("/api/upload-audio")).toBe(false);
+    // Anything else, including a path that only starts like them, still goes through the proxy.
+    expect(runsOn("/api/upload-audio/extra")).toBe(true);
+    expect(runsOn("/api/uploads")).toBe(true);
+    expect(runsOn("/api/jobs")).toBe(true);
+    expect(runsOn("/admin")).toBe(true);
+  });
+});

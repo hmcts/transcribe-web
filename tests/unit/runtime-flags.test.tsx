@@ -124,6 +124,24 @@ describe("the dictation flag in the UI", () => {
     expect(await screen.findByText("dictation off")).toBeTruthy();
   });
 
+  it("ignores a read that was superseded: a late first answer cannot put back a value an administrator just changed", async () => {
+    vi.stubEnv(ENV, "true");
+    let answerFirst!: (value: unknown) => void;
+    request.mockReturnValueOnce(new Promise((resolve) => (answerFirst = resolve)) as never); // the first read: slow
+    mount();
+    await waitFor(() => expect(request).toHaveBeenCalledTimes(1));
+
+    // The administrator switches dictation off; the reload after the save answers first.
+    request.mockResolvedValueOnce({ data: { dictation_enabled: false } });
+    document.dispatchEvent(new Event("visibilitychange"));
+    expect(await screen.findByText("dictation off")).toBeTruthy();
+
+    // Then the slow first read finishes, with the old value.
+    answerFirst({ data: { dictation_enabled: true } });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(screen.getByText("dictation off")).toBeTruthy();
+  });
+
   it("does not ask before it knows who the user is", async () => {
     access = { me: null };
     mount();

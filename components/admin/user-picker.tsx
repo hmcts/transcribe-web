@@ -135,7 +135,8 @@ export function UserPicker({
             <li key={user.id}>
               <button
                 type="button"
-                className="flex w-full flex-col px-3 py-2 text-left hover:bg-muted focus-visible:bg-muted"
+                disabled={disabled}
+                className="flex w-full flex-col px-3 py-2 text-left hover:bg-muted focus-visible:bg-muted disabled:opacity-50"
                 onClick={() => onChange({ user, email: user.email })}
               >
                 <span>{user.email}</span>

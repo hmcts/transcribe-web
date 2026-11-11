@@ -93,6 +93,11 @@ describe("isPreviewSignInEnabled", () => {
 });
 
 describe("GET /auth/preview-login", () => {
+  // Deployed, APP_URL is the public origin the browser uses.
+  beforeEach(() => {
+    vi.stubEnv("APP_URL", "https://transcribe-web-pr-1.preview.example");
+  });
+
   it("signs in with no Authorization header and no persona, sets the cookie and goes where it was going", async () => {
     api.mockResolvedValue(json(mintBody()));
     const { GET } = await import("@/app/auth/preview-login/route");
@@ -109,9 +114,17 @@ describe("GET /auth/preview-login", () => {
     expect(res.headers.get("location")).toBe(
       "https://transcribe-web-pr-1.preview.example/recording?tab=2"
     );
+    // Behind Caddy the request arrives on the internal origin: the redirect still goes to the public one.
+    api.mockResolvedValue(json(mintBody())); // a Response body can be read once
+    const internal = await GET(
+      new NextRequest("http://127.0.0.1:3001/auth/preview-login?returnTo=%2Frecording")
+    );
+    expect(internal.headers.get("location")).toBe(
+      "https://transcribe-web-pr-1.preview.example/recording"
+    );
     const cookie = res.cookies.get("transcribe_session");
     expect(cookie?.httpOnly).toBe(true);
-    expect(cookie?.secure).toBe(false); // APP_URL is not set here; the flag follows it
+    expect(cookie?.secure).toBe(true); // APP_URL is https: the flag follows it
     const store = await import("@/lib/auth/session-store");
     expect(await store.readSession(cookie?.value ?? "")).toMatchObject({
       previewUser: true,
