@@ -154,7 +154,7 @@ export default function Header() {
           </span>
         </Link>
 
-        <nav className="hidden items-center gap-2 md:flex">
+        <nav className="hidden items-center gap-2 lg:flex">
           {!hideNavLinks && canAdmin && (
             <Link
               href="/admin"
@@ -232,7 +232,7 @@ export default function Header() {
             <Button
               variant="ghost"
               size="icon"
-              className="size-10 md:hidden"
+              className="size-10 lg:hidden"
               aria-label="Open navigation menu"
             >
               <Menu className="size-5" />

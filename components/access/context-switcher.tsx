@@ -95,7 +95,12 @@ export function ContextSwitcher({ className }: { className?: string }) {
             aria-label={`Working in ${here.where} as ${here.as.toLowerCase()}. Switch or leave`}
           >
             <Building2 className="mr-1 size-5" />
-            <span className="text-base">{busy ? "Switching..." : label}</span>
+            <span
+              className="text-base lg:max-w-[16rem] lg:truncate"
+              title={label}
+            >
+              {busy ? "Switching..." : label}
+            </span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-72">
