@@ -292,10 +292,10 @@ yarn dev                              # NODE_ENV=development; `yarn build && yar
 
 ## Running against the real API
 
-Checked end to end in a browser, as every persona, against transcribe-api branch
-`authz/p5-review-fixes` (head `c30118d`, the API after its review-fix pass: new
-refusal codes, `sess_exp`, `{code,message}` 401/409). Two terminals, plus Docker for
-Postgres.
+Checked end to end in a browser, as every persona, against the DIAAT-373 branch of
+transcribe-api (`feat/DIAAT-373-authorisation`: the API with its review-fix pass,
+new refusal codes, `sess_exp`, `{code,message}` 401/409). Two terminals, plus Docker
+for Postgres.
 
 **0. Postgres.** The API's `docker compose up -d postgres azurite` serves port 5432.
 On the development machine the bridge to the host does not work, and the Postgres
@@ -325,7 +325,7 @@ docker exec transcribe-postgres-hostnet psql -U transcribe -p 5433 -d postgres -
 `APP_JWT_SIGNING_KEY` must be set there too):
 
 ```bash
-cd /home/oleg/code_repos/transcribe-api            # branch authz/p5-review-fixes
+cd /home/oleg/code_repos/transcribe-api            # branch feat/DIAAT-373-authorisation
 set -a; . ./.env; set +a                          # alembic reads the environment, not .env
 .venv/bin/alembic upgrade head
 .venv/bin/python scripts-seed-personas.py          # idempotent: adds what is missing, deletes nothing
@@ -342,7 +342,7 @@ and run the main checkout's interpreter with `PYTHONPATH=<worktree>/src` instead
 **2. Web, terminal 2** (port 3000):
 
 ```bash
-cd /home/oleg/code_repos/transcribe-web            # branch authz/p8-web-final
+cd /home/oleg/code_repos/transcribe-web            # branch feat/DIAAT-373-authorisation
 cat > .env.local <<'EOF'
 AUTH_ENABLED=false
 NEXT_PUBLIC_DEV_LOGIN=true
@@ -539,3 +539,22 @@ change whose token chain ended re-mints and repeats once) and `dev-mock-api.test
 `tests/unit/dictation-form-data.test.ts` ("sets hearingDate to today's date") compares
 the local date with the UTC date and fails between 00:00 and 01:00 in CET/CEST; it is
 not related to this work.
+
+## Landing it: order, branches and PR previews
+
+* **Trunk-based.** `master` is the only long-lived branch of both repositories: this
+  work is one branch, `feat/DIAAT-373-authorisation`, cut from `master`, and its PR goes
+  into `master` (there is no `develop`).
+* **Push order: the API first.** The web needs the API's new schema and endpoints (the
+  role tables, migration `0009`, `/api/me/permissions` and the `/api/admin/*` routes). The
+  README's rule applies: a feature that needs a schema change waits until its additive
+  migration is on transcribe-api `master`. So the transcribe-api PR merges first, and
+  this one after it.
+* **PR previews** run with `AUTH_ENABLED=false`: the web sends the API no token and the
+  API (`ENVIRONMENT=preview`, `AUTH_PREVIEW_USER_ENABLED=true`) answers every token-less
+  call as a fixed preview user. The web changes nothing for that: it reads
+  `GET /api/me/permissions` like anywhere else and draws what the preview user's
+  permissions allow. It needs that user to come back `ready` with a context, because
+  choosing or switching context goes through this app's `/auth/*` routes, which need a
+  session a preview does not have. The persona login stays refused in a production
+  build, which a preview is.
