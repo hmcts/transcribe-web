@@ -69,8 +69,10 @@ local dev proxy does the same, so the token cannot be fetched by hand either.
 ## Working context, per session and per tab
 
 * The choice of (jurisdiction, role) is remembered for the session on the
-  server. There is no default: after sign-in a user with one pair goes straight
-  in (the API selects it), a user with several sees "choose where and as what"
+  server. There is no default: after sign-in a user given one pair goes straight
+  in (the API selects it; a jurisdiction administrator is given one, and is also
+  offered Judge and Legal text manager in their own jurisdiction, which they can
+  switch to from the header), a user given several sees "choose where and as what"
   (`status: "choose"`), a user with none sees the "no access yet" page
   (`status: "no_access"`). A system administrator with no assignments is
   `ready` with system pages only.
