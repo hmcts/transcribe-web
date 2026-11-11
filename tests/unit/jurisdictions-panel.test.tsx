@@ -93,6 +93,8 @@ function serve({ jurisdictions = [IAC], admins = [] as Holder[] } = {}) {
       adminList.splice(index, 1);
       return { data: undefined, status: 204 };
     }
+    // DIAAT-344: the open jurisdiction's templates (none here).
+    if (/^\/admin\/jurisdictions\/\w+\/templates$/.test(endpoint) && method === "GET") return { data: [] };
     throw new Error(`Unexpected ${method} ${endpoint}`);
   });
   return {
@@ -119,6 +121,83 @@ describe("JurisdictionsPanel", () => {
     expect(screen.getByRole("button", { name: "ET" })).toBeTruthy();
     expect(screen.getByText("12")).toBeTruthy();
     expect(screen.queryByText(/New users join/i)).toBeNull();
+  });
+
+  // DIAAT-345: stages. An API that reports them gets the stage controls; one that does not
+  // is left as it was, because it would ignore them and make a "draft" visible to everyone.
+  describe("stages (DIAAT-345)", () => {
+    const STAGED: api.AdminJurisdiction = {
+      ...ET,
+      display_name: "Employment Tribunals (ET)",
+      service: "England and Wales",
+      stage: "draft",
+      problems: ["It has no template yet"],
+    };
+    const LIVE: api.AdminJurisdiction = { ...IAC, stage: "live" };
+
+    it("says Draft, Test or Live beside each jurisdiction, with its display name and service", async () => {
+      serve({ jurisdictions: [STAGED, { ...LIVE, stage: "test" }] });
+      render(<JurisdictionsPanel />);
+
+      expect(await screen.findByText("Employment Tribunals (ET)")).toBeTruthy();
+      expect(screen.getByText("England and Wales")).toBeTruthy();
+      expect(screen.getByText("Test")).toBeTruthy();
+      expect(screen.queryByText("Draft")).not.toBeNull();
+    });
+
+    it("shows who sees a draft, and what stops it being switched on", async () => {
+      serve({ jurisdictions: [STAGED, LIVE] });
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "ET" }));
+
+      expect(screen.getByLabelText("Display name")).toBeTruthy();
+      expect(screen.getByText("Who sees it")).toBeTruthy();
+      expect(screen.getByText("It has no template yet")).toBeTruthy();
+    });
+
+    it("sends the stage, display name and service with a save", async () => {
+      serve({ jurisdictions: [STAGED, LIVE] });
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "ET" }));
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+      expect(JSON.parse(String(put?.[1]?.body))).toMatchObject({
+        display_name: "Employment Tribunals (ET)",
+        service: "England and Wales",
+        stage: "draft",
+      });
+    });
+
+    it("offers none of it, and sends none of it, to an API that does not report stages", async () => {
+      serve({ jurisdictions: [IAC] });
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "IAC" }));
+      expect(screen.queryByLabelText("Display name")).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Save" }));
+
+      await waitFor(() => expect(toast.success).toHaveBeenCalled());
+      const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+      expect(JSON.parse(String(put?.[1]?.body))).not.toHaveProperty("stage");
+    });
+  });
+
+  it("shows the templates of the jurisdiction that is open (DIAAT-344)", async () => {
+    serve({ jurisdictions: [IAC] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "IAC" }));
+
+    expect(await screen.findByRole("heading", { name: "Templates of IAC" })).toBeTruthy();
+    expect(request).toHaveBeenCalledWith("/admin/jurisdictions/IAC/templates", undefined);
   });
 
   it("adds the ET with its wording, no template and no hearing recordings", async () => {

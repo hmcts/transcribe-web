@@ -68,7 +68,11 @@ const wording = (overrides: Record<string, unknown> = {}) => ({
 const asDt = () => jurisdictionContextValue(DT, [DT]);
 
 function respondWith(body: unknown) {
-  request.mockImplementation(async () => ({ data: body, status: 200 }));
+  request.mockImplementation(async (endpoint: string) => ({
+    // The Templates tab (DIAAT-344) reads a list of templates, whatever else a test serves.
+    data: /\/templates$/.test(endpoint) ? [] : body,
+    status: 200,
+  }));
 }
 
 describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () => {
@@ -328,9 +332,17 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
 
   it("opens on the first tab the role has, and does not load legal wording for a role without it", async () => {
     mockPersona = ME.jurisdictionAdministrator;
+    respondWith([]); // no templates yet: what the Templates tab reads
     render(<AdminPage />);
 
-    expect(await screen.findByRole("heading", { name: "Templates" })).toBeTruthy();
+    // The Templates tab (DIAAT-344) shows the active jurisdiction's templates.
+    expect(
+      await screen.findByRole("heading", { name: /Templates/ })
+    ).toBeTruthy();
+    expect(request).toHaveBeenCalledWith(
+      "/admin/jurisdictions/DT/templates",
+      undefined
+    );
     expect(request).not.toHaveBeenCalledWith(
       "/admin/document-content",
       undefined

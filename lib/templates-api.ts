@@ -1,7 +1,7 @@
 /**
  * A jurisdiction's uploaded Word templates (DIAAT-344).
  *
- * In the admin area a SystemAdministrator uploads a template, gets a field for each of
+ * In the admin area an administrator who may manage templates uploads one, gets a field for each of
  * its fill-in boxes and links them; judges then choose an enabled template on the
  * recording page and fill its Hearing Details form.
  *

@@ -67,7 +67,8 @@ function serve(initial: PendingAccessRequest[] = [R1, R2]) {
       queue = queue.filter((r) => r.id !== decision[1]);
       return { data: { ...R1, id: decision[1], status: decision[2] === "approve" ? "approved" : "rejected" } };
     }
-    // The Admin page's other panels.
+    // The Admin page's other panels (the Jurisdictions tab stays mounted, DIAAT-344).
+    if (endpoint === "/admin/jurisdictions/wording-keys") return { data: { keys: {} } };
     return { data: [] };
   });
 }
