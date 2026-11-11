@@ -91,7 +91,10 @@ export function UserPicker({
   }, [typed, picked]);
 
   return (
-    <div className="space-y-1">
+    // A fixed width (the input plus the Change button), so the hint text
+    // wrapping differently once someone is picked does not resize this block
+    // and make whatever sits beside it jump.
+    <div className="w-[23rem] max-w-full space-y-1">
       <Label htmlFor={id}>{label}</Label>
       <div className="flex items-center gap-2">
         <Input
