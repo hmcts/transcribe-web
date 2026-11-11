@@ -154,6 +154,23 @@ describe("proxy Dictation gate (DIAAT-366, DIAAT-392)", () => {
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
+    it.each([401, 403])(
+      "does not keep one browser's refused session (%s) for everyone else: the next user's read is made",
+      async (status) => {
+        vi.stubEnv(FLAG, "true");
+        let answer: Response = new Response("{}", { status });
+        const fetchImpl = vi.fn(async () => answer);
+        const deps = { fetchImpl: fetchImpl as unknown as typeof fetch, now: () => 1_000_000 };
+
+        // An expired session fills the shared cache first: the env value stands for that request ...
+        expect(await isDictationEnabledAtRuntime("transcribe_session=expired", deps)).toBe(true);
+        // ... but a valid user straight after gets their own read, and the runtime flag wins.
+        answer = new Response(JSON.stringify({ dictation_enabled: false }));
+        expect(await isDictationEnabledAtRuntime("transcribe_session=valid", deps)).toBe(false);
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+      }
+    );
+
     it("reads it again once the answer has expired, so a change applies without a redeploy", async () => {
       vi.stubEnv(FLAG, "true");
       let now = 1_000_000;
