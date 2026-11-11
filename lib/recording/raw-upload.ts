@@ -11,6 +11,7 @@ import {
   UPLOAD_HEADERS,
   type UploadTypeAllowlist,
 } from "./upload-contract";
+import { identityRefusalResponse } from "@/lib/recording/identity-refusal";
 
 // Reading a file the browser sent as a raw request body, for the route
 // handlers that forward uploads to the API (app/api/upload and
@@ -57,6 +58,10 @@ export function tooLarge() {
  * find the failure in its logs by: never the API's own error detail.
  */
 export function backendFailed(err: unknown, error: string): NextResponse {
+  // A refusal about who the user is (another tab switched context, the account was deactivated)
+  // goes on with its status and code, so the browser shows the stale-tab or account notice.
+  const refusal = identityRefusalResponse(err);
+  if (refusal) return refusal;
   if (!(err instanceof BackendApiError)) {
     return NextResponse.json({ error }, { status: 502 });
   }
