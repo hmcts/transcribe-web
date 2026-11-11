@@ -76,6 +76,22 @@ describe("chart values: transcribe-api in PR previews (DIAAT-399)", () => {
     );
   });
 
+  it("signs the preview user in (DIAAT-399, DIAAT-373), in previews only", () => {
+    const preview = chart("values.preview.template.yaml");
+    expect(preview).toContain("PREVIEW_USER_SIGN_IN: 'true'");
+    expect(preview).toContain("AUTH_ENABLED: 'false'");
+    // The api needs a token key to start; a fixed non-secret one, 32+ characters.
+    const key = preview.match(/^\s+APP_JWT_SIGNING_KEY: (\S+)$/m)?.[1] ?? "";
+    expect(key.length).toBeGreaterThanOrEqual(32);
+    // Normal is gone, and the preview user holds every app role by default.
+    expect(preview).not.toMatch(/\bNormal\b/);
+    expect(preview).not.toMatch(/^\s+(AUTH_PREVIEW_USER_ROLES|AUTH_ACCESS_ROLES):/m);
+    // No other environment sets it.
+    for (const file of ["values.yaml", "values.aat.template.yaml"]) {
+      expect(chart(file), file).not.toContain("PREVIEW_USER_SIGN_IN");
+    }
+  });
+
   // envsubst turns an unset variable into an empty string, so the image tag
   // must always be set by the pipeline.
   it("takes the api image tag from the pipeline, which always sets it", () => {

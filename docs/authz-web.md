@@ -550,11 +550,21 @@ not related to this work.
   README's rule applies: a feature that needs a schema change waits until its additive
   migration is on transcribe-api `master`. So the transcribe-api PR merges first, and
   this one after it.
-* **PR previews** run with `AUTH_ENABLED=false`: the web sends the API no token and the
-  API (`ENVIRONMENT=preview`, `AUTH_PREVIEW_USER_ENABLED=true`) answers every token-less
-  call as a fixed preview user. The web changes nothing for that: it reads
-  `GET /api/me/permissions` like anywhere else and draws what the preview user's
-  permissions allow. It needs that user to come back `ready` with a context, because
-  choosing or switching context goes through this app's `/auth/*` routes, which need a
-  session a preview does not have. The persona login stays refused in a production
-  build, which a preview is.
+* **PR previews** (`lib/auth/preview-mode.ts`) have no Entra: they run with
+  `AUTH_ENABLED=false` and, from the preview chart values only,
+  `PREVIEW_USER_SIGN_IN=true`. Then:
+  * `proxy.ts` sends a page request with no session to `/auth/preview-login?returnTo=…`
+    (a route handler's fetch gets a 401, as with login on), and `/auth/login`, where a
+    401 from the API sends the browser, forwards there too;
+  * `/auth/preview-login` calls `POST /api/auth/session` with **no** Authorization header
+    and no persona (the API, with `ENVIRONMENT=preview` and `AUTH_PREVIEW_USER_ENABLED=true`,
+    signs in its fixed preview user and gives it every role), stores the session like
+    dev login (`previewUser: true`), sets the cookie and goes to a relative `returnTo`;
+  * the session is re-minted the same way, keeping its context, and `/auth/forward`
+    attaches its token for Caddy exactly as with login on (a 401 without a session);
+  * no context is requested: the preview user has several, so the chooser appears, and the
+    header's switcher changes it;
+  * it is impossible with `AUTH_ENABLED=true`, and off unless the variable is set. Every
+    one of these paths asks `isPreviewSignInEnabled()`, a preview session is ended when it
+    stops being true, and `tests/unit/preview-login.test.ts` has a test for each refusal.
+  The persona login stays refused in a production build, which a preview is.

@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { isPreviewSignInEnabled } from "@/lib/auth/preview-mode";
 import { isDictationEnabledAtRuntime } from "@/lib/flags/proxy-flags";
 import {
   DICTATION_BASE_PATH,
@@ -111,15 +112,20 @@ export async function proxy(request: NextRequest) {
   // gated /admin and /recording on top. On CNP there is no Easy Auth, so this
   // is now the only gate and it covers every page, matching what production
   // users experience today. AUTH_ENABLED is false for local development and
-  // preview environments.
-  if (process.env.AUTH_ENABLED === "true" && !isPublicPath(pathname)) {
+  // preview environments; a preview (PREVIEW_USER_SIGN_IN) signs the API's
+  // preview user in instead of sending anyone to Entra.
+  const loginOn = process.env.AUTH_ENABLED === "true";
+  if ((loginOn || isPreviewSignInEnabled()) && !isPublicPath(pathname)) {
     if (!request.cookies.get(SESSION_COOKIE)) {
       // Fetches from the recording area to its own /api/* route handlers get
       // a 401 they can act on, not an HTML redirect.
       if (pathname.startsWith("/api/")) {
         return new NextResponse(null, { status: 401 });
       }
-      const loginUrl = new URL("/auth/login", request.url);
+      const loginUrl = new URL(
+        loginOn ? "/auth/login" : "/auth/preview-login",
+        request.url
+      );
       loginUrl.searchParams.set(
         "returnTo",
         `${request.nextUrl.pathname}${request.nextUrl.search}`

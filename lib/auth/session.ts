@@ -8,6 +8,7 @@ import {
 } from "@/lib/auth/app-token";
 import { getAuthConfig } from "@/lib/auth/config";
 import { isDevLoginEnabled } from "@/lib/auth/dev-mode";
+import { isPreviewSignInEnabled } from "@/lib/auth/preview-mode";
 import { refreshIfNeeded } from "@/lib/auth/oidc";
 import {
   deleteSession,
@@ -63,7 +64,8 @@ export function hasAppAccess(session: Session): boolean {
 /** Mint a token for this session's user, keeping its remembered context. */
 export function mintForSession(session: Session) {
   return mintAppToken({
-    idToken: session.devPersona ? undefined : session.idToken,
+    // A persona or preview-user session has no Entra token: the API gets none.
+    idToken: session.devPersona || session.previewUser ? undefined : session.idToken,
     devPersona: session.devPersona,
     requestedContext: session.context,
   });
@@ -133,6 +135,13 @@ export async function getActiveSession(
   if (session.devPersona) {
     // A persona session means nothing outside local development.
     if (!isDevLoginEnabled()) {
+      await deleteSession(sessionId);
+      return null;
+    }
+    current = session;
+  } else if (session.previewUser) {
+    // A preview session means nothing once preview sign-in is off (or login is on).
+    if (!isPreviewSignInEnabled()) {
       await deleteSession(sessionId);
       return null;
     }

@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getAuthConfig } from "@/lib/auth/config";
+import { isPreviewSignInEnabled } from "@/lib/auth/preview-mode";
 import { bearerForSession, SESSION_COOKIE } from "@/lib/auth/session";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +19,10 @@ export const dynamic = "force-dynamic";
  */
 export async function GET(request: NextRequest) {
   const noStore = { "Cache-Control": "no-store" };
-  if (!getAuthConfig().enabled) {
+  // Login off and no preview sign-in (local development): nothing to attach.
+  // In a PR preview the session's token is attached like anywhere else, and a
+  // request without a session is a 401 (the API refuses a token-less call anyway).
+  if (!getAuthConfig().enabled && !isPreviewSignInEnabled()) {
     return new NextResponse(null, { status: 200, headers: noStore });
   }
   const token = await bearerForSession(

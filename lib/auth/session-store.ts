@@ -29,6 +29,9 @@ export interface Session {
   /** Local development only (AUTH_ENABLED=false, never in production): the
    * persona this session was started as, instead of an Entra sign-in. */
   devPersona?: string;
+  /** PR previews only (PREVIEW_USER_SIGN_IN, never with AUTH_ENABLED=true): signed in
+   * as the API's fixed preview user, with no Entra token. */
+  previewUser?: boolean;
 }
 
 /** State held between sending the user to Entra and their return. */
