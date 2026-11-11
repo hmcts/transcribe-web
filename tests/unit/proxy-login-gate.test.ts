@@ -129,3 +129,35 @@ describe("the proxy matcher", () => {
     expect(runsOn("/admin")).toBe(true);
   });
 });
+
+describe("the proxy redirects on the public origin", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  // Behind Caddy the request arrives on the internal 127.0.0.1:3001; the browser must not be sent there.
+  const internal = (path: string) => new NextRequest(`http://127.0.0.1:3001${path}`);
+
+  it.each([
+    ["login on", { AUTH_ENABLED: "true" }, "/auth/login"],
+    ["a preview", { AUTH_ENABLED: "false", PREVIEW_USER_SIGN_IN: "true" }, "/auth/preview-login"],
+  ])("sends %s to its sign-in on APP_URL", async (_name, env, path) => {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    vi.stubEnv("APP_URL", "https://transcribe.example");
+
+    const res = await proxy(internal("/recording"));
+
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.origin).toBe("https://transcribe.example");
+    expect(location.pathname).toBe(path);
+    expect(location.searchParams.get("returnTo")).toBe("/recording");
+  });
+
+  it("without APP_URL (local development) keeps the request's own origin", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    vi.stubEnv("APP_URL", "");
+
+    const req = internal("/recording");
+    const res = await proxy(req);
+
+    expect(new URL(res.headers.get("location") ?? "").origin).toBe(new URL(req.url).origin);
+  });
+});

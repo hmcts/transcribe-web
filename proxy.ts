@@ -125,7 +125,7 @@ export async function proxy(request: NextRequest) {
       }
       const loginUrl = new URL(
         loginOn ? "/auth/login" : "/auth/preview-login",
-        request.url
+        publicOrigin(request)
       );
       loginUrl.searchParams.set(
         "returnTo",
@@ -144,7 +144,7 @@ export async function proxy(request: NextRequest) {
       isPathActive(pathname, SPEECH_DEMO_PATH)) &&
     !(await isDictationEnabledAtRuntime(request.headers.get("cookie")))
   ) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/", publicOrigin(request)));
   }
 
   const response = NextResponse.next({
@@ -155,6 +155,15 @@ export async function proxy(request: NextRequest) {
   }
 
   return response;
+}
+
+/**
+ * The origin to redirect on: the public one (APP_URL), as the auth routes do. Behind Caddy a request
+ * can arrive on the internal 127.0.0.1:3001, and a redirect built from its URL would send the browser
+ * there. Without APP_URL (local development) it is the request's own.
+ */
+function publicOrigin(request: NextRequest): string {
+  return process.env.APP_URL?.trim() || request.url;
 }
 
 export const config = {
