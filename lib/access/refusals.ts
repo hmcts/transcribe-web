@@ -36,6 +36,25 @@ export type RefusalListener = (code: string, status: number) => void;
 const listeners = new Set<RefusalListener>();
 let installed: { original: typeof fetch; watching: typeof fetch } | null = null;
 
+function notify(status: number, body: unknown): void {
+  const code = refusalCodeIn(body);
+  if (code) for (const listener of [...listeners]) listener(code, status);
+}
+
+/**
+ * Tell the listeners about a refusal that did not come through `fetch`: an upload sent with
+ * `XMLHttpRequest` (for its progress events) is invisible to the fetch watcher, so its failure
+ * handler passes the finished request here. Only 403 and 409 with a `detail.code` count, as above.
+ */
+export function reportXhrRefusal(xhr: XMLHttpRequest): void {
+  if (xhr.status !== 403 && xhr.status !== 409) return;
+  try {
+    notify(xhr.status, JSON.parse(xhr.responseText));
+  } catch {
+    // Not JSON (a storage service's XML error, say), or not readable as text: nothing to say.
+  }
+}
+
 function install(): void {
   if (installed || typeof window === "undefined") return;
   const original = window.fetch;
@@ -46,10 +65,7 @@ function install(): void {
       response
         .clone()
         .json()
-        .then((body) => {
-          const code = refusalCodeIn(body);
-          if (code) for (const listener of [...listeners]) listener(code, status);
-        })
+        .then((body) => notify(status, body))
         .catch(() => undefined);
     }
     return response;

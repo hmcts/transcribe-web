@@ -68,7 +68,7 @@ describe("GET /auth/runtime-flags", () => {
   });
 
   it.each([
-    ["the API refusing", () => api.mockResolvedValue(json({ detail: "no" }, 403))],
+    ["the API failing", () => api.mockResolvedValue(json({ detail: "boom" }, 500))],
     ["a body that is not the flags", () => api.mockResolvedValue(json({ dictation_enabled: "yes" }))],
     ["the API being unreachable", () => api.mockRejectedValue(new Error("ECONNREFUSED"))],
   ])("answers 502 on %s, which the proxy treats as 'use the deploy-time value'", async (_, arrange) => {
@@ -80,6 +80,20 @@ describe("GET /auth/runtime-flags", () => {
 
     expect(res.status).toBe(502);
   });
+
+  it.each([401, 403])(
+    "passes the API's %s on as it is: it refused this session, and the proxy must not keep that for everyone",
+    async (status) => {
+      await seed();
+      api.mockResolvedValue(json({ detail: { code: "user_deactivated" } }, status));
+      const { GET } = await import("@/app/auth/runtime-flags/route");
+
+      const res = await GET(req("transcribe_session=sess-1"));
+
+      expect(res.status).toBe(status);
+      expect((await res.json()).detail.code).toBe("session_refused");
+    }
+  );
 
   it("never puts the token in what it returns", async () => {
     await seed();

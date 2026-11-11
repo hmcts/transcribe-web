@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { refusalCodeIn, watchRefusals } from "@/lib/access/refusals";
+import { refusalCodeIn, reportXhrRefusal, watchRefusals } from "@/lib/access/refusals";
 import { watchContextChanged } from "@/lib/access/context-changed";
 
 // DIAAT-373: one watcher on fetch for the API's refusals that are about who the
@@ -83,5 +83,37 @@ describe("watchRefusals", () => {
     expect(window.fetch).toBe(wrapped);
     stopB();
     expect(window.fetch).toBe(before);
+  });
+});
+
+describe("reportXhrRefusal", () => {
+  // Uploads use XMLHttpRequest (for progress), which the fetch watcher cannot see.
+  const xhr = (status: number, responseText: string) => ({ status, responseText }) as XMLHttpRequest;
+
+  it.each([
+    [403, "context_required"],
+    [403, "user_deactivated"],
+    [409, "context_changed"],
+  ])("tells the listeners about a %s %s from an upload", (status, code) => {
+    const listener = vi.fn();
+    const stop = watchRefusals(listener);
+
+    reportXhrRefusal(xhr(status, JSON.stringify({ detail: { code, message: "m" } })));
+
+    expect(listener).toHaveBeenCalledExactlyOnceWith(code, status);
+    stop();
+  });
+
+  it("says nothing for other statuses, a body with no code, or a body that is not JSON", () => {
+    const listener = vi.fn();
+    const stop = watchRefusals(listener);
+
+    reportXhrRefusal(xhr(500, JSON.stringify({ detail: { code: "context_changed" } })));
+    reportXhrRefusal(xhr(403, JSON.stringify({ detail: "no code" })));
+    reportXhrRefusal(xhr(403, "<Error><Code>AuthorizationFailure</Code></Error>"));
+    reportXhrRefusal({ status: 409, get responseText(): string { throw new Error("not text"); } } as XMLHttpRequest);
+
+    expect(listener).not.toHaveBeenCalled();
+    stop();
   });
 });
