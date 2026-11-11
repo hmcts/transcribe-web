@@ -615,9 +615,9 @@ function AddRolesForm({
             if (ready) void submit();
           }}
         >
-          <div className="flex flex-wrap items-start gap-4">
+          <div className="flex flex-col items-start gap-4">
             <UserPicker id="add-user" value={who} onChange={setWho} disabled={busy} />
-            <div className="space-y-1">
+            <div className="flex flex-col gap-1">
               <Label htmlFor="add-jurisdiction">Jurisdiction</Label>
               <select
                 id="add-jurisdiction"
