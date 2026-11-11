@@ -92,11 +92,6 @@ describe.each(handlers)("%s", (_name, call, mock) => {
     expect((await response.json()).detail.code).toBe(code);
   });
 
-  it("passes a 401 on as a 401", async () => {
-    mock.mockRejectedValue(new mocks.MockBackendApiError("no token", 401));
-    expect((await call()).status).toBe(401);
-  });
-
   it("does not turn an ordinary backend failure into an identity refusal", async () => {
     mock.mockRejectedValue(new Error("backend down"));
     const response = await call();

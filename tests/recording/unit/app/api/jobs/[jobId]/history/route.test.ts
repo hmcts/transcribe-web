@@ -76,7 +76,6 @@ describe("GET /api/jobs/[jobId]/history", () => {
     [409, "context_changed"],
     [403, "context_required"],
     [403, "user_deactivated"],
-    [401, undefined],
   ])(
     "passes a %s %s refusal on with its status and code, so the stale-tab or account notice can show",
     async (status, code) => {

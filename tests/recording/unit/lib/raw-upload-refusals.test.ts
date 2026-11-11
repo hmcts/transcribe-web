@@ -21,8 +21,10 @@ describe("backendFailed", () => {
     expect((await response.json()).detail.code).toBe(code);
   });
 
-  it("passes a 401 on", () => {
-    expect(backendFailed(new BackendApiError("no token", 401), "x").status).toBe(401);
+  it("leaves a plain 401 to the upload route's own mapping (same status, fixed message)", async () => {
+    const response = backendFailed(new BackendApiError("no token", 401), "x");
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({ error: "x" });
   });
 
   it("keeps the fixed message for every other failure", async () => {
