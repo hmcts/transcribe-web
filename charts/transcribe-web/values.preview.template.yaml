@@ -43,10 +43,10 @@ transcribe-api:
       # every app role, so SystemAdministrator too: AUTH_PREVIEW_USER_ROLES is left at its
       # default). Refused at startup unless ENVIRONMENT=preview.
       AUTH_PREVIEW_USER_ENABLED: 'true'
-      # Signs the BenchNotes access token (DIAAT-373); the api does not start without one.
-      # A preview's token proves nothing the preview user does not already have, and its
-      # database is thrown away: a fixed value, not a secret. Same as the api's own preview values.
-      APP_JWT_SIGNING_KEY: preview-only-benchnotes-token-key-not-a-secret-0123456789
+      # No APP_JWT_SIGNING_KEY: in a preview the api signs the BenchNotes access token
+      # (DIAAT-373) with a key it makes for itself at startup, so there is none to commit or
+      # guess (a published key would let anyone forge a token for any user of the preview).
+      # One pod, so one key; its tokens end with the pod and the web signs the preview user in again.
       # Dictation on (the api's default), so a reviewer can try it; prod switches it off.
       DICTATION_ENABLED: 'true'
       APP_URL: https://transcribe-web-pr-${CHANGE_ID}.preview.platform.hmcts.net

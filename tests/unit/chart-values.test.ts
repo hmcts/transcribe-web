@@ -80,9 +80,8 @@ describe("chart values: transcribe-api in PR previews (DIAAT-399)", () => {
     const preview = chart("values.preview.template.yaml");
     expect(preview).toContain("PREVIEW_USER_SIGN_IN: 'true'");
     expect(preview).toContain("AUTH_ENABLED: 'false'");
-    // The api needs a token key to start; a fixed non-secret one, 32+ characters.
-    const key = preview.match(/^\s+APP_JWT_SIGNING_KEY: (\S+)$/m)?.[1] ?? "";
-    expect(key.length).toBeGreaterThanOrEqual(32);
+    // No token key is committed: the api makes its own in a preview, so none can be forged from the chart.
+    expect(preview).not.toMatch(/^\s+APP_JWT_SIGNING_KEY:/m);
     // Normal is gone, and the preview user holds every app role by default.
     expect(preview).not.toMatch(/\bNormal\b/);
     expect(preview).not.toMatch(/^\s+(AUTH_PREVIEW_USER_ROLES|AUTH_ACCESS_ROLES):/m);
