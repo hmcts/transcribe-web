@@ -10,12 +10,18 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TemplatesEditor } from "@/components/admin/templates-editor";
 import { apiClient } from "@/lib/api-client";
-import type { AdminTemplate, TemplateField } from "@/lib/templates-api";
+import type {
+  AdminTemplate,
+  AvailableTemplate,
+  TemplateField,
+} from "@/lib/templates-api";
 
 // DIAAT-344: a SystemAdministrator uploads a jurisdiction's Word template, gets a
 // field for each of its fill-in boxes, and sets their labels, types, whether they are
 // required and their options. Fields cannot be added; saving with a box unlinked says
 // which box.
+// DIAAT-346: before any judge sees it, they preview it with sample details and get the
+// document a judge would; a failed preview says what went wrong in plain words.
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
@@ -100,8 +106,40 @@ const UPLOADED: AdminTemplate = {
   version: "v1",
 };
 
-/** A small fake of the API's template routes. */
-function serve(templates: AdminTemplate[] = [], refuse?: string[]) {
+/** The Hearing Details form the API gives for UPLOADED's preview. */
+const FORM: AvailableTemplate = {
+  id: "t1",
+  name: "ET judgment",
+  service: null,
+  fields: [
+    {
+      tag: "Reference",
+      label: "Reference",
+      type: "text",
+      required: true,
+      options: [],
+    },
+    {
+      tag: "Party1Title",
+      label: "Party1Title",
+      type: "dropdown",
+      required: true,
+      options: [
+        { value: "Claimant", label: "Claimant" },
+        { value: "Respondent", label: "Respondent" },
+      ],
+    },
+  ],
+};
+
+/** A small fake of the API's template routes. ``preview``, ``form``: the answers of
+ * the preview and of its form. */
+function serve(
+  templates: AdminTemplate[] = [],
+  refuse?: string[],
+  preview: Record<string, unknown> = { data: new Blob(["docx"]), status: 200 },
+  form?: Record<string, unknown>
+) {
   let list = [...templates];
   request.mockImplementation(
     async (endpoint: string, options?: RequestInit) => {
@@ -110,11 +148,18 @@ function serve(templates: AdminTemplate[] = [], refuse?: string[]) {
         return { data: list };
       if (
         endpoint.startsWith("/admin/jurisdictions/ET/templates") &&
+        !endpoint.endsWith("/preview") &&
         method === "POST"
       ) {
         list = [UPLOADED];
         return { data: UPLOADED, status: 201 };
       }
+      const part = endpoint.match(
+        /^\/admin\/jurisdictions\/ET\/templates\/(\w+)\/(form|preview)$/
+      );
+      if (part?.[2] === "form" && method === "GET")
+        return form ?? { data: { ...FORM, id: part[1] } };
+      if (part?.[2] === "preview" && method === "POST") return preview;
       const one = endpoint.match(
         /^\/admin\/jurisdictions\/ET\/templates\/(\w+)$/
       );
@@ -602,6 +647,18 @@ describe("TemplatesEditor", () => {
         within(fields).getByRole("button", { name: "Upload a new file" })
       );
       expect(pick).toHaveBeenCalledTimes(2);
+
+      fireEvent.change(
+        document.getElementById("template-replace-t1") as HTMLInputElement,
+        { target: { files: [new File(["x"], "v2.docx")] } }
+      );
+      await waitFor(() =>
+        expect(request).toHaveBeenCalledWith(
+          expect.stringContaining("replace=t1"),
+          expect.anything()
+        )
+      );
+      expect(confirm).toHaveBeenCalledTimes(2); // not asked again for the chosen file
     } finally {
       confirm.mockRestore();
       pick.mockRestore();
@@ -662,5 +719,222 @@ describe("TemplatesEditor", () => {
     expect(
       await screen.findByText("Templates need the latest version of the API.")
     ).toBeTruthy();
+  });
+});
+
+describe("Previewing a template (DIAAT-346)", () => {
+  let saved: { name: string; blob: Blob }[];
+  let click: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    request.mockReset();
+    saved = [];
+    const blobs = new Map<string, Blob>();
+    URL.createObjectURL = vi.fn((blob: Blob) => {
+      const url = `blob:${blobs.size}`;
+      blobs.set(url, blob);
+      return url;
+    });
+    URL.revokeObjectURL = vi.fn();
+    click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        saved.push({
+          name: this.download,
+          blob: blobs.get(this.href) as Blob,
+        });
+      });
+    return () => click.mockRestore();
+  });
+
+  async function openPreview(user: ReturnType<typeof userEvent.setup>) {
+    const fields = await open(user);
+    const preview = within(fields).getByRole("region", {
+      name: "Preview ET judgment",
+    });
+    await user.click(
+      within(preview).getByRole("button", { name: "Fill in sample details" })
+    );
+    await within(preview).findByRole("button", { name: "Download preview" });
+    return { fields, preview };
+  }
+
+  const previews = () =>
+    request.mock.calls.filter(([endpoint]) => endpoint.endsWith("/preview"));
+
+  it("fills the judges' form with sample details and downloads the document a judge would get", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { preview } = await openPreview(user);
+
+    expect(preview.textContent).toContain(
+      "Judges cannot choose this template yet."
+    );
+    const reference = within(preview).getByLabelText(
+      /^Reference/
+    ) as HTMLInputElement;
+    expect(reference.value).toBe("Sample Reference");
+    expect(within(preview).getByRole("combobox").textContent).toContain(
+      "Claimant"
+    );
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste("1234/2026");
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0].name).toBe("Preview - ET judgment.docx");
+    expect(document.querySelector("a[download]")).toBeNull();
+    const [[endpoint, options, as]] = previews();
+    expect(endpoint).toBe("/admin/jurisdictions/ET/templates/t1/preview");
+    expect(as).toEqual({ as: "blob" });
+    expect(JSON.parse(String(options?.body))).toEqual({
+      values: { Reference: "1234/2026", Party1Title: "Claimant" },
+      version: "v1",
+    });
+    expect(within(preview).queryByRole("alert")).toBeNull();
+  });
+
+  it.each([
+    [
+      "the API's problems with the details",
+      {
+        error: "The hearing details do not fit the template.",
+        problems: [
+          "“Party1Title” has a choice that is not one of its options.",
+        ],
+        status: 400,
+      },
+      "“Party1Title” has a choice that is not one of its options.",
+    ],
+    [
+      "the API's own message",
+      {
+        error:
+          "BenchNotes could not fill this Word file, so judges would not get a document from it either.",
+        status: 400,
+      },
+      "BenchNotes could not fill this Word file, so judges would not get a document from it either.",
+    ],
+    [
+      "a page that is not the API's (the firewall's)",
+      { error: "HTTP error! status: 403", status: 403 },
+      "BenchNotes could not make the preview (error 403). Try again, and if it keeps failing, contact the BenchNotes team.",
+    ],
+    [
+      "no answer at all",
+      { error: "Failed to fetch" },
+      "BenchNotes could not be reached to make the preview. Check your connection and try again.",
+    ],
+  ])("says in plain words why it failed: %s", async (_, answer, shown) => {
+    serve([UPLOADED], undefined, answer);
+    const user = userEvent.setup();
+    const { preview } = await openPreview(user);
+
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+
+    const alert = await within(preview).findByRole("alert");
+    expect(alert.textContent).toContain("The preview could not be made.");
+    expect(alert.textContent).toContain(shown);
+    expect(saved).toEqual([]);
+  });
+
+  it("says in plain words why the sample details form could not be opened", async () => {
+    serve([UPLOADED], undefined, undefined, { error: "Failed to fetch" });
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const preview = within(fields).getByRole("region", {
+      name: "Preview ET judgment",
+    });
+
+    await user.click(
+      within(preview).getByRole("button", { name: "Fill in sample details" })
+    );
+
+    const alert = await within(preview).findByRole("alert");
+    expect(alert.textContent).toContain(
+      "BenchNotes could not be reached to make the preview. Check your connection and try again."
+    );
+  });
+
+  it("asks for the required details before making a preview", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { preview } = await openPreview(user);
+
+    await user.clear(within(preview).getByLabelText(/^Reference/));
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+
+    expect(within(preview).getByRole("alert").textContent).toContain(
+      "Fill in the required sample details first."
+    );
+    expect(within(preview).getByText("Reference is required")).toBeTruthy();
+    expect(previews()).toEqual([]);
+  });
+
+  it("waits for edits to be saved, and keeps the sample details through the save", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { fields, preview } = await openPreview(user);
+    const reference = within(preview).getByLabelText(/^Reference/);
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste("1234/2026");
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    expect(preview.textContent).toContain(
+      "Save your changes first: the preview is made from the saved template."
+    );
+    expect(
+      within(preview)
+        .getByRole("button", { name: "Download preview" })
+        .matches(":disabled")
+    ).toBe(true);
+
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    const reopened = await screen.findByRole("region", {
+      name: "Preview ET judgment",
+    });
+    await user.click(
+      await within(reopened).findByRole("button", {
+        name: "Fill in sample details",
+      })
+    );
+    const kept = (await within(reopened).findByLabelText(
+      /^Reference/
+    )) as HTMLInputElement;
+    expect(kept.value).toBe("1234/2026");
+  });
+
+  it("is not offered until every box has a complete field", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        problems: ["The box “Costs” (Costs) has no field linked to it."],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const preview = within(fields).getByRole("region", {
+      name: "Preview ET judgment",
+    });
+
+    expect(preview.textContent).toContain(
+      "Link every box to a field and save before previewing"
+    );
+    expect(
+      within(preview)
+        .getByRole("button", { name: "Fill in sample details" })
+        .matches(":disabled")
+    ).toBe(true);
   });
 });

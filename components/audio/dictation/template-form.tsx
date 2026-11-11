@@ -55,6 +55,7 @@ export function TemplateForm({
   onValuesChange,
   errors,
   onClear,
+  headingLevel = 2,
 }: {
   templates: AvailableTemplate[];
   templateId: string;
@@ -64,15 +65,18 @@ export function TemplateForm({
   errors: Record<string, string>;
   /** Discard every answer (a dropdown or yes/no cannot be unanswered otherwise). */
   onClear: () => void;
+  /** Its heading's level: 5 inside the admin area's preview (DIAAT-346). */
+  headingLevel?: 2 | 5;
 }) {
   const template = templates.find((t) => t.id === templateId) ?? templates[0];
+  const Heading = headingLevel === 5 ? "h5" : "h2";
   const set = (tag: string, value: TemplateValue | undefined) =>
     onValuesChange({ ...values, [tag]: value });
 
   return (
     <form className="space-y-6" noValidate onSubmit={(e) => e.preventDefault()}>
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">Hearing details</h2>
+        <Heading className="text-lg font-semibold">Hearing details</Heading>
         {hasAnswers(values) && (
           <Button type="button" variant="ghost" size="sm" onClick={onClear}>
             <RefreshCcwIcon className="mr-1 h-4 w-4" aria-hidden />

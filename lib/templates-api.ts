@@ -3,7 +3,9 @@
  *
  * In the admin area a SystemAdministrator uploads a template, gets a field for each of
  * its fill-in boxes and links them; judges then choose an enabled template on the
- * recording page and fill its Hearing Details form.
+ * recording page and fill its Hearing Details form. Before then (DIAAT-346) the admin
+ * previews it: fills that form with sample details and downloads the document a judge
+ * would get.
  *
  * The upload goes as the raw request body with Content-Type exactly
  * application/octet-stream and the file's name in X-Upload-Filename, never
@@ -236,4 +238,94 @@ export function valuesToSend(
       return isEmpty(value) ? [] : [[field.tag, value as TemplateValue]];
     })
   );
+}
+
+// The admin's preview (DIAAT-346) ------------------------------------------------------
+
+const templatePath = (code: string, id: string) =>
+  `${base(code)}/${encodeURIComponent(id)}`;
+
+function localDate(day: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${day.getFullYear()}-${pad(day.getMonth() + 1)}-${pad(day.getDate())}`;
+}
+
+/** Sample details to start the preview from: something in every field, which the
+ * admin can change. */
+export function sampleValues(
+  template: AvailableTemplate,
+  today: Date = new Date()
+): TemplateValues {
+  return Object.fromEntries(
+    template.fields.map((field): [string, TemplateValue | undefined] => {
+      const first = field.options[0]?.value;
+      switch (field.type) {
+        case "date":
+          return [field.tag, localDate(today)];
+        case "number":
+          return [field.tag, "1"];
+        case "yes_no":
+          return [field.tag, true];
+        case "dropdown":
+          return [field.tag, first];
+        case "multi_select":
+        case "legal_issues":
+          return [field.tag, first === undefined ? [] : [first]];
+        default:
+          return [field.tag, `Sample ${field.label}`];
+      }
+    })
+  );
+}
+
+/**
+ * A failure of the preview, in plain words (TemplateRefusedError, with ``problems``
+ * when the API lists them), also when it is not the API's own: a network error, or a
+ * page from the firewall.
+ */
+function previewFailure(response: {
+  error?: string;
+  problems?: string[];
+  status?: number;
+}): TemplateRefusedError {
+  const own =
+    response.status !== undefined && !/^HTTP error!/.test(response.error ?? "");
+  return new TemplateRefusedError(
+    own
+      ? (response.error ?? "")
+      : response.status === undefined
+        ? "BenchNotes could not be reached to make the preview. Check your connection and try again."
+        : `BenchNotes could not make the preview (error ${response.status}). Try again, and if it keeps failing, contact the BenchNotes team.`,
+    response.problems,
+    response.status
+  );
+}
+
+/** The template's Hearing Details form as its judges will get it, whether or not
+ * they can choose it yet. */
+export async function fetchTemplateForm(
+  code: string,
+  id: string
+): Promise<AvailableTemplate> {
+  const response = await apiClient.request<AvailableTemplate>(
+    `${templatePath(code, id)}/form`
+  );
+  if (response.error) throw previewFailure(response);
+  return response.data as AvailableTemplate;
+}
+
+/** The template filled with ``values`` as a judge's submission fills it: the .docx a
+ * judge would get, with sample text where the dictation goes. */
+export async function previewTemplate(
+  code: string,
+  id: string,
+  body: { values: Record<string, TemplateValue>; version: string }
+): Promise<Blob> {
+  const response = await apiClient.request<Blob>(
+    `${templatePath(code, id)}/preview`,
+    { method: "POST", body: JSON.stringify(body) },
+    { as: "blob" }
+  );
+  if (response.error) throw previewFailure(response);
+  return response.data as Blob;
 }

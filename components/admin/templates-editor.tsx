@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { TemplatePreview } from "@/components/admin/template-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -46,6 +47,7 @@ import {
   type TemplateField,
   type TemplateFieldType,
   TemplateRefusedError,
+  type TemplateValues,
   uploadTemplate,
 } from "@/lib/templates-api";
 
@@ -53,7 +55,8 @@ import {
  * A jurisdiction's Word templates (DIAAT-344). Uploading one lists its fill-in boxes as
  * fields; the admin sets each field's label, type, whether it is required and its
  * options, and their order, but cannot add one. A template is saved only with every
- * box linked, and only then can judges choose it.
+ * box linked, and only then can judges choose it. Before that (DIAAT-346) the admin
+ * previews it with sample details.
  */
 
 const DOCX_ACCEPT =
@@ -94,6 +97,9 @@ export function TemplatesEditor({
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Each template's sample details for its preview, by id: kept while its field list
+  // reopens after a save, so a fix can be previewed again with the same details.
+  const [samples, setSamples] = useState<Record<string, TemplateValues>>({});
   useJurisdictionSwitchGuard({ busy: uploading, unsaved: false });
   const fileInput = useRef<HTMLInputElement>(null);
   const busy = uploading || editor.busy;
@@ -274,8 +280,13 @@ export function TemplatesEditor({
           onSaved={applySaved}
           onDeleted={(id) => {
             setTemplates((all) => all.filter((t) => t.id !== id));
+            setSamples(({ [id]: _, ...rest }) => rest);
             setSelected(null);
           }}
+          samples={ownValue(samples, current.id) ?? {}}
+          onSamplesChange={(values) =>
+            setSamples((all) => ({ ...all, [current.id]: values }))
+          }
         />
       )}
     </section>
@@ -289,6 +300,8 @@ function TemplateFieldsEditor({
   onStateChange,
   onSaved,
   onDeleted,
+  samples,
+  onSamplesChange,
 }: {
   code: string;
   template: AdminTemplate;
@@ -301,6 +314,9 @@ function TemplateFieldsEditor({
   /** The API's copy after a save or a new file: the editor reopens from it. */
   onSaved: (saved: AdminTemplate) => void;
   onDeleted: (id: string) => void;
+  /** The sample details of its preview (DIAAT-346). */
+  samples: TemplateValues;
+  onSamplesChange: (values: TemplateValues) => void;
 }) {
   const [name, setName] = useState(template.name);
   const [service, setService] = useState(template.service ?? "");
@@ -407,14 +423,8 @@ function TemplateFieldsEditor({
     }
   }
 
+  // Unsaved edits: the button asked before the file was chosen.
   async function replaceFile(file: File) {
-    if (
-      unsaved &&
-      !window.confirm(`Discard your unsaved changes to ${template.name}?`)
-    ) {
-      if (fileInput.current) fileInput.current.value = "";
-      return;
-    }
     setBusy(true);
     try {
       const replaced = await uploadTemplate(code, file, {
@@ -700,6 +710,15 @@ function TemplateFieldsEditor({
           )}
         </div>
       </fieldset>
+
+      <TemplatePreview
+        code={code}
+        template={template}
+        unsaved={unsaved}
+        locked={busy || locked}
+        values={samples}
+        onValuesChange={onSamplesChange}
+      />
     </section>
   );
 }
