@@ -221,8 +221,14 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
 
   const reloadAfter = useCallback((me: MeResponse) => {
     const granted = new Set(me.permissions);
-    const target = landingAfterSwitch(window.location.pathname, (p) =>
-      granted.has(p)
+    // The first choice of a context, on a link (the approval link in an email, say): the page
+    // keeps its query, so the intended tab and request are still there. A switch from one context
+    // to another drops it: what it names belonged to the context that was left.
+    const firstChoice = !meRef.current?.active;
+    const target = landingAfterSwitch(
+      window.location.pathname,
+      (p) => granted.has(p),
+      firstChoice ? window.location.search : ""
     );
     // The tab keeps its old context until the document really reloads (the new page adopts the
     // session's: AccessProvider.load). The recorder's "leave this page?" prompt can be cancelled; a

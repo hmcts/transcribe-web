@@ -187,6 +187,26 @@ describe("loading who the user is", () => {
   });
 });
 
+describe("a user who must choose, on an approval link (DIAAT-396)", () => {
+  it("lands on the link as it was, tab and request included, once they have chosen", async () => {
+    vi.stubGlobal("location", {
+      ...window.location,
+      assign,
+      pathname: "/admin",
+      search: "?tab=approvals&request=r1",
+    });
+    api.fetchMe.mockResolvedValue(ME.choose);
+    api.postContext.mockResolvedValue(ME.multiAsAdministrator);
+    renderProvider();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Immigration and Asylum Chamber as/ })
+    );
+
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/admin?tab=approvals&request=r1"));
+  });
+});
+
 describe("a user who must choose (DIAAT-390)", () => {
   it("is shown every pair, and nothing else, until they choose", async () => {
     api.fetchMe.mockResolvedValue(ME.choose);

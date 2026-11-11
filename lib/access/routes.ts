@@ -49,15 +49,20 @@ export function isPathAllowed(
  * Where to land after a switch: the same list-level page if the new context may
  * use it, else the home page. Pages about one item (a job, a draft) never carry
  * over, as that item belongs to the context that was left.
+ *
+ * `search` (the page's query, with its `?`) is kept with the page when the page stays: pass it for the
+ * first choice of a context, when someone arrived on a link (the approval link in an email, `?tab=approvals&request=...`)
+ * and has nothing to leave behind, and leave it out when switching from one context to another.
  */
 export function landingAfterSwitch(
   pathname: string,
-  can: (permission: Permission) => boolean
+  can: (permission: Permission) => boolean,
+  search = ""
 ): string {
   const rule = ruleFor(pathname);
   const stays =
     rule?.staysAfterSwitch &&
     pathname === rule.prefix &&
     rule.anyOf.some(can);
-  return stays ? pathname : "/";
+  return stays ? `${pathname}${search}` : "/";
 }

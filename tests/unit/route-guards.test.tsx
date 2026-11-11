@@ -107,6 +107,14 @@ describe("where a tab lands after a switch", () => {
     expect(landingAfterSwitch("/recording", judge)).toBe("/recording");
   });
 
+  it("keeps the page's query with a page that stays (an email's approval link), and with nothing else", () => {
+    expect(landingAfterSwitch("/admin", administrator, "?tab=approvals&request=r1")).toBe(
+      "/admin?tab=approvals&request=r1"
+    );
+    expect(landingAfterSwitch("/admin", judge, "?tab=approvals")).toBe("/");
+    expect(landingAfterSwitch("/recording/jobs/abc", judge, "?x=1")).toBe("/");
+  });
+
   it("leaves a page the new context may not use, for the home page", () => {
     expect(landingAfterSwitch("/record", administrator)).toBe("/");
     expect(landingAfterSwitch("/admin", judge)).toBe("/");
