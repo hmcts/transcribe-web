@@ -23,11 +23,16 @@ export async function POST(request: NextRequest) {
   const held = await requireSession(request);
   if (!held) return unauthenticated();
 
-  let body: { jurisdiction?: unknown; role?: unknown };
+  // JSON `null` (or a number, string or array) parses fine but is not a body: treat it
+  // as an empty one, so it is the 400 below and not a 500.
+  let body: { jurisdiction?: unknown; role?: unknown } = {};
   try {
-    body = await request.json();
+    const parsed: unknown = await request.json();
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      body = parsed;
+    }
   } catch {
-    body = {};
+    // No body, or not JSON: the same 400.
   }
   const { jurisdiction, role } = body;
   if (

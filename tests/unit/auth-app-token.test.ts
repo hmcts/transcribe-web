@@ -256,6 +256,79 @@ describe("minting again near expiry", () => {
     expect(headersOf(api.mock.calls[0]).get("authorization")).toBe("Bearer entra-id-token-2");
   });
 
+  it("keeps the chosen context and the BenchNotes token when Entra refreshes the ID token", async () => {
+    // A refresh renews the Entra token only: the session must not forget the context it remembers,
+    // or the next re-mint names none and a user with several roles is sent back to the chooser.
+    await seed({
+      idTokenExpiresAt: Date.now() + 30_000,
+      appTokenExpiresAt: Date.now() + 300_000,
+      context: { jurisdiction: "IAC", role: "JurisdictionAdministrator" },
+    });
+    oidc.refreshTokenGrant.mockResolvedValue({
+      id_token: "entra-id-token-2",
+      refresh_token: "refresh-2",
+      claims: () => ({ oid: "oid-1", name: "A", email: "a@localhost.test", exp: Math.floor(Date.now() / 1000) + 3600 }),
+    });
+    const { getActiveSession } = await import("@/lib/auth/session");
+
+    await getActiveSession("sess-1");
+
+    const session = await stored();
+    expect(session?.idToken).toBe("entra-id-token-2");
+    expect(session?.context).toEqual({ jurisdiction: "IAC", role: "JurisdictionAdministrator" });
+    expect(session?.appToken).toBe("app-token-1");
+    expect(api).not.toHaveBeenCalled(); // still plenty of life on the BenchNotes token
+
+    // And the next re-mint, when it is due, still names the context.
+    await seed({
+      ...(session as object),
+      appTokenExpiresAt: Date.now() + 30_000,
+    });
+    api.mockResolvedValue(json(tokenBody("app-token-2", ET)));
+    await getActiveSession("sess-1");
+    expect(headersOf(api.mock.calls[0]).get("x-requested-context")).toBe("IAC:JurisdictionAdministrator");
+  });
+
+  it("does not undo a context switch made while a slower re-mint was in flight", async () => {
+    await seed({ appTokenExpiresAt: Date.now() + 30_000 }); // context ET:Judge, due for a re-mint
+    let release!: (response: Response) => void;
+    api.mockReturnValueOnce(new Promise<Response>((resolve) => (release = resolve)));
+    const { getActiveSession } = await import("@/lib/auth/session");
+
+    const slow = getActiveSession("sess-1"); // starts from context ET:Judge ...
+    await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+    // ... a switch to IAC lands and stores its token and context ...
+    await seed({
+      appToken: "app-token-switched",
+      appTokenExpiresAt: Date.now() + 300_000,
+      context: { jurisdiction: "IAC", role: "JurisdictionAdministrator" },
+    });
+    // ... then the slow re-mint finishes with the old context's token.
+    release(json(tokenBody("app-token-old-context", ET)));
+    const result = await slow;
+
+    const session = await stored();
+    expect(session?.context).toEqual({ jurisdiction: "IAC", role: "JurisdictionAdministrator" });
+    expect(session?.appToken).toBe("app-token-switched");
+    expect(result?.appToken).toBe("app-token-switched");
+  });
+
+  it("does not bring back a session that was signed out while a re-mint was in flight", async () => {
+    await seed({ appTokenExpiresAt: Date.now() + 30_000 });
+    let release!: (response: Response) => void;
+    api.mockReturnValueOnce(new Promise<Response>((resolve) => (release = resolve)));
+    const { getActiveSession } = await import("@/lib/auth/session");
+    const { deleteSession } = await import("@/lib/auth/session-store");
+
+    const slow = getActiveSession("sess-1");
+    await vi.waitFor(() => expect(api).toHaveBeenCalledTimes(1));
+    await deleteSession("sess-1");
+    release(json(tokenBody("app-token-2", ET)));
+    await slow;
+
+    expect(await stored()).toBeNull();
+  });
+
   it("mints once for concurrent requests of one session", async () => {
     await seed({ appTokenExpiresAt: Date.now() + 1_000 });
     api.mockImplementation(async () => {
@@ -344,6 +417,26 @@ describe("POST /auth/context", () => {
     expect(session?.appToken).toBe("app-token-ctx");
     expect(session?.context).toEqual({ jurisdiction: "ET", role: "Judge" });
   });
+
+  it.each([["null", "null"], ["a number", "5"], ["an array", "[]"], ["no body", ""]])(
+    "is a 400, not a 500, for %s as the body",
+    async (_name, raw) => {
+      await seed({ context: null });
+      const { POST } = await import("@/app/auth/context/route");
+
+      const res = await POST(
+        req("/auth/context", { transcribe_session: "sess-1" }, {
+          method: "POST",
+          body: raw || undefined,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+
+      expect(res.status).toBe(400);
+      expect((await res.json()).detail.code).toBe("invalid_context");
+      expect(api).not.toHaveBeenCalled();
+    }
+  );
 
   it("chooses a global role, which has no jurisdiction", async () => {
     await seed({ context: null });

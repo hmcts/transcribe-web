@@ -37,7 +37,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/providers/transcripts", () => ({
-  useTranscripts: () => ({ isLoading: false, transcriptsMetadata: [] }),
+  useTranscripts: () => ({
+    isLoading: false,
+    transcriptsMetadata: [{ id: "t-1" }],
+  }),
 }));
 
 vi.mock("@/providers/user-settings", () => ({
@@ -53,11 +56,11 @@ vi.mock("@/lib/analytics", () => ({
 }));
 
 vi.mock("@/components/meetings-list", () => ({
-  default: () => null,
+  default: () => <div data-testid="meetings-list" />,
 }));
 
 vi.mock("@/components/audio/upload/backup-recovery", () => ({
-  default: () => null,
+  default: () => <div data-testid="backup-recovery" />,
 }));
 
 vi.mock("@/components/audio/upload/backup-uploader", () => ({
@@ -87,6 +90,20 @@ describe("WelcomePage Dictation button (DIAAT-366)", () => {
         .getByRole("link", { name: "Hearing recordings" })
         .getAttribute("href")
     ).toBe("/recording");
+  });
+
+  it("shows the dictation list and backup re-upload when the flag is on", () => {
+    vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "true");
+    render(<WelcomePage />);
+    expect(screen.getByTestId("meetings-list")).toBeTruthy();
+    expect(screen.getByTestId("backup-recovery")).toBeTruthy();
+  });
+
+  it("hides the dictation list and backup re-upload when the flag is off: the API refuses what they do", () => {
+    vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
+    render(<WelcomePage />);
+    expect(screen.queryByTestId("meetings-list")).toBeNull();
+    expect(screen.queryByTestId("backup-recovery")).toBeNull();
   });
 
   it("leaves no empty button row when there is nothing to start", () => {

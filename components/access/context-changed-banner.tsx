@@ -1,7 +1,6 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { setTabContext } from "@/lib/jurisdiction-session";
 
 /**
  * Another tab changed the context (or a role was removed) since this tab
@@ -11,11 +10,11 @@ import { setTabContext } from "@/lib/jurisdiction-session";
  * which could throw away what the user is typing or dictating.
  */
 export function ContextChangedBanner() {
-  const reload = () => {
-    // The reloaded page adopts the session's context.
-    setTabContext(null);
-    window.location.reload();
-  };
+  // The tab keeps its old context until the document really reloads: the recorder's
+  // "leave this page?" prompt can be cancelled, and a tab that has dropped its context
+  // headers would then save into whatever context the other tab chose. The reloaded
+  // page adopts the session's context (AccessProvider.load clears it on startup).
+  const reload = () => window.location.reload();
   return (
     <div
       role="alert"

@@ -139,13 +139,13 @@ function WelcomePage() {
         )}
       </section>
 
-      {canDictate && transcriptsMetadata.length > 0 && (
+      {showDictation && transcriptsMetadata.length > 0 && (
         <section className="-mt-16 rounded-xl border border-border bg-card p-4 shadow-xl">
           <MeetingsList isLoading={isLoading} meetings={transcriptsMetadata} />
         </section>
       )}
 
-      {canDictate && <BackupRecovery onRetryUpload={handleRetryUpload} />}
+      {showDictation && <BackupRecovery onRetryUpload={handleRetryUpload} />}
 
       <section
         className="mb-20 mt-16 rounded-lg border border-border bg-card p-6"

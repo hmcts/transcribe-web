@@ -437,8 +437,10 @@ describe("a tab whose context was changed elsewhere (409 context_changed)", () =
     expect(reload).not.toHaveBeenCalled();
     await userEvent.click(screen.getByRole("button", { name: "Reload this tab" }));
     expect(reload).toHaveBeenCalled();
-    // The reloaded page adopts the session's context.
-    expect(getTabContext()).toBeNull();
+    // The tab keeps its old context until the document really reloads: the recorder's "leave this
+    // page?" prompt can be cancelled, and a tab without its context headers would then save into
+    // the other tab's new context. The reloaded page adopts the session's (load clears it).
+    expect(getTabContext()).toEqual({ jurisdiction: "ET", role: "Judge" });
   });
 
   it("is not triggered by a 409 for anything else", async () => {

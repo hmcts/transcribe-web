@@ -71,6 +71,35 @@ export function mintForSession(session: Session) {
   });
 }
 
+/**
+ * Write a session a refresh or re-mint produced from ``snapshot``, unless someone changed the
+ * stored session since: a context switch or a leave (which store a newer token and context)
+ * must not be undone by a slower refresh that started from the old one. Returns the session
+ * now in force: ``next`` if it was stored, else what the other writer stored.
+ *
+ * Not stored at all (signed out meanwhile): nothing is written, so a refresh cannot bring a
+ * session back, and ``next`` serves this request only.
+ *
+ * Read-then-write, not atomic across replicas: it closes the window from a whole refresh
+ * (a network call) to a few milliseconds, and the loser's next re-mint repeats the context
+ * the session last stored.
+ */
+export async function persistRefreshed(
+  sessionId: string,
+  snapshot: Session,
+  next: Session
+): Promise<Session> {
+  const stored = await readSession(sessionId);
+  if (!stored) return next;
+  const unchanged =
+    stored.appToken === snapshot.appToken &&
+    JSON.stringify(stored.context ?? null) ===
+      JSON.stringify(snapshot.context ?? null);
+  if (!unchanged) return stored;
+  await writeSession(sessionId, next);
+  return next;
+}
+
 /** Re-mints in flight, so concurrent requests of one session mint once. */
 const minting = new Map<string, Promise<Session | null>>();
 
@@ -157,7 +186,7 @@ export async function getActiveSession(
   const withApp = await ensureAppToken(sessionId, current);
   if (!withApp) return null;
   if (withApp !== session) {
-    await writeSession(sessionId, withApp);
+    return persistRefreshed(sessionId, session, withApp);
   }
   return withApp;
 }

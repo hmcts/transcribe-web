@@ -9,6 +9,7 @@ import {
 import {
   getActiveSession,
   mintForSession,
+  persistRefreshed,
   SESSION_COOKIE,
 } from "@/lib/auth/session";
 import { type Session, writeSession } from "@/lib/auth/session-store";
@@ -87,7 +88,8 @@ export async function callWithSessionToken(
     if (!(error instanceof BackendError) || error.status !== 401) throw error;
   }
   const renewed = withToken(held.session, await mintForSession(held.session));
-  await writeSession(held.sessionId, renewed);
-  held.session = renewed;
-  return backendCallWithToken(path, renewed.appToken as string, init);
+  // Unless a switch landed meanwhile: then its token is the one to use.
+  const kept = await persistRefreshed(held.sessionId, held.session, renewed);
+  held.session = kept;
+  return backendCallWithToken(path, kept.appToken as string, init);
 }

@@ -7,10 +7,12 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockGetJobHistory, MockBackendApiError } = vi.hoisted(() => {
   class MockBackendApiError extends Error {
     status: number;
-    constructor(message: string, status: number) {
+    code?: string;
+    constructor(message: string, status: number, code?: string) {
       super(message);
       this.name = "BackendApiError";
       this.status = status;
+      this.code = code;
     }
   }
   return { mockGetJobHistory: vi.fn(), MockBackendApiError };
@@ -62,6 +64,34 @@ describe("GET /api/jobs/[jobId]/history", () => {
 
   it.each([403, 404])("answers a backend %s as for a recording that is not there", async (status) => {
     mockGetJobHistory.mockRejectedValue(new MockBackendApiError("no", status));
+    const { GET } = await import("@/app/api/jobs/[jobId]/history/route");
+
+    const response = await GET(get(), context);
+
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({ error: "Job not found" });
+  });
+
+  it.each([
+    [409, "context_changed"],
+    [403, "context_required"],
+    [403, "user_deactivated"],
+    [401, undefined],
+  ])(
+    "passes a %s %s refusal on with its status and code, so the stale-tab or account notice can show",
+    async (status, code) => {
+      mockGetJobHistory.mockRejectedValue(new MockBackendApiError("refused", status, code));
+      const { GET } = await import("@/app/api/jobs/[jobId]/history/route");
+
+      const response = await GET(get(), context);
+
+      expect(response.status).toBe(status);
+      expect((await response.json()).detail.code).toBe(code);
+    }
+  );
+
+  it("still answers a recording-specific 403 (not the owner) as not found", async () => {
+    mockGetJobHistory.mockRejectedValue(new MockBackendApiError("no", 403, "permission_denied"));
     const { GET } = await import("@/app/api/jobs/[jobId]/history/route");
 
     const response = await GET(get(), context);

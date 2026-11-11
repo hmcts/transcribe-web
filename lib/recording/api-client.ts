@@ -12,6 +12,7 @@ import type {
   Word,
   WordCorrection,
 } from "./types";
+import { refusalCodeIn } from "@/lib/access/refusals";
 import { JURISDICTION_HEADER, ROLE_HEADER } from "@/lib/jurisdiction-session";
 
 // Server-only client for the transcription_svc backend. Never import this
@@ -121,7 +122,10 @@ export class BackendApiError extends Error {
     message: string,
     public status: number,
     // The id the API logged the failure under, from its error body.
-    public requestId?: string
+    public requestId?: string,
+    // The refusal's machine-readable code (`context_changed`, `user_deactivated`, ...),
+    // from `{detail: {code}}`, so a route can pass on the ones the browser must see.
+    public code?: string
   ) {
     super(message);
     this.name = "BackendApiError";
@@ -143,6 +147,14 @@ function requestIdOf(body: string): string | undefined {
     // Not JSON: a proxy's error page, say.
   }
   return undefined;
+}
+
+function refusalCodeOf(body: string): string | undefined {
+  try {
+    return refusalCodeIn(JSON.parse(body));
+  } catch {
+    return undefined;
+  }
 }
 
 function backendUrl(): string {
@@ -202,7 +214,8 @@ async function backendFetch(
     throw new BackendApiError(
       `Backend request to ${path} failed: ${response.status} ${body}`,
       response.status,
-      requestIdOf(body)
+      requestIdOf(body),
+      refusalCodeOf(body)
     );
   }
 
