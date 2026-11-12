@@ -3,22 +3,26 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminPage from "@/app/admin/page";
 import { apiClient } from "@/lib/api-client";
+import type { MeResponse } from "@/lib/access/types";
 import { jurisdictionContextValue, NEUTRAL } from "@/lib/jurisdiction-context";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
+import { ME } from "../access-helpers";
 import { DT, IAC } from "../jurisdiction-helpers";
 
 // DIAAT-342: the admin area edits the legal wording of the jurisdiction the tab
 // works in, says which, and explains each refusal.
 
-let mockContext = jurisdictionContextValue({ ...DT, role: "admin" });
+let mockContext = jurisdictionContextValue(DT);
+// DIAAT-373: which tabs show follows the permissions the API returned.
+let mockPersona: MeResponse = ME.legalTextManager;
+vi.mock("@/providers/access", async () =>
+  (await import("../access-helpers")).mockAccessModule(() => mockPersona)
+);
 vi.mock("@/providers/jurisdiction", () => ({
   useJurisdiction: () => mockContext,
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
-vi.mock("@/lib/admin-access", () => ({
-  getAdminRole: vi.fn().mockResolvedValue(null),
-}));
 vi.mock("@/components/admin/jurisdictions-panel", () => ({
   JurisdictionsPanel: () => <div>Jurisdictions panel</div>,
 }));
@@ -27,7 +31,6 @@ vi.mock("@/components/editor/admin-editor", () => ({
 }));
 
 import { toast } from "sonner";
-import { getAdminRole } from "@/lib/admin-access";
 
 const request = vi.mocked(apiClient.request);
 
@@ -62,11 +65,14 @@ const wording = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-const asDt = (role: "admin" | "judge" = "admin") =>
-  jurisdictionContextValue({ ...DT, role }, [{ ...DT, role }]);
+const asDt = () => jurisdictionContextValue(DT, [DT]);
 
 function respondWith(body: unknown) {
-  request.mockImplementation(async () => ({ data: body, status: 200 }));
+  request.mockImplementation(async (endpoint: string) => ({
+    // The Templates tab (DIAAT-344) reads a list of templates, whatever else a test serves.
+    data: /\/templates$/.test(endpoint) ? [] : body,
+    status: 200,
+  }));
 }
 
 describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () => {
@@ -75,7 +81,7 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
     request.mockReset();
     vi.mocked(toast.success).mockClear();
     vi.mocked(toast.error).mockClear();
-    vi.mocked(getAdminRole).mockResolvedValue(null);
+    mockPersona = ME.legalTextManager;
   });
 
   it("shows which jurisdiction is being edited, and loads only that one's wording", async () => {
@@ -175,16 +181,17 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       "You do not belong to Decision Tribunal, or it is not available to you.",
     ],
     [
-      "jurisdiction_admin_required",
+      "permission_denied",
       403,
-      "Only an admin for Decision Tribunal can change its legal wording.",
+      "Your role cannot change the legal wording of Decision Tribunal.",
     ],
-    ["no_jurisdiction", 403, "You have not been added to a jurisdiction"],
     [
-      "jurisdiction_choice_required",
-      409,
-      "Choose the jurisdiction you are working in",
+      "jurisdiction_not_in_scope",
+      403,
+      "Decision Tribunal is not the jurisdiction you are working in.",
     ],
+    ["no_jurisdiction", 403, "The role you are working as is not tied to one jurisdiction"],
+    ["context_required", 403, "Choose where and as what you are working"],
   ])("explains %s, without offering a retry", async (code, status, text) => {
     request.mockResolvedValue({ error: "raw message", status, code });
     render(<AdminPage />);
@@ -236,15 +243,15 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       await screen.findByRole("button", { name: "Face to face" })
     );
     request.mockResolvedValue({
-      error: "Only an admin for DT can change its legal wording.",
+      error: "Your role does not allow this.",
       status: 403,
-      code: "jurisdiction_admin_required",
+      code: "permission_denied",
     });
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Only an admin for this jurisdiction can change its legal wording."
+        "Your role cannot change the legal wording of this jurisdiction. Switch to a role that can, or ask a legal text manager."
       )
     );
   });
@@ -277,7 +284,7 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
   });
 
   it("keeps the IAC's legal wording editor as it was", async () => {
-    mockContext = jurisdictionContextValue({ ...IAC, role: "judge" });
+    mockContext = jurisdictionContextValue(IAC);
     respondWith(wording({ jurisdiction: { code: "IAC", name: IAC.name } }));
     render(<AdminPage />);
 
@@ -286,22 +293,101 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
     expect(request).toHaveBeenCalledWith("/admin/document-content", undefined);
   });
 
-  it("leaves the Users and Jurisdictions tabs to a system administrator", async () => {
+  it("shows each tab only to a role holding its permission (DIAAT-384)", async () => {
     respondWith(wording());
-    const { unmount } = render(<AdminPage />);
-    await screen.findByText(/Editing the legal wording of/);
-    expect(screen.queryByRole("tab", { name: /Users/ })).toBeNull();
-    expect(screen.queryByRole("tab", { name: /Jurisdictions/ })).toBeNull();
-    unmount();
+    const tabsFor = async (persona: MeResponse) => {
+      mockPersona = persona;
+      const { unmount } = render(<AdminPage />);
+      const names = (await screen.findAllByRole("tab")).map((t) =>
+        (t.textContent ?? "").trim()
+      );
+      unmount();
+      return names;
+    };
 
-    vi.mocked(getAdminRole).mockResolvedValue("SystemAdministrator");
+    expect(await tabsFor(ME.legalTextManager)).toEqual([
+      "Document Content",
+      "Templates",
+    ]);
+    expect(await tabsFor(ME.jurisdictionAdministrator)).toEqual([
+      "Templates",
+      "Users",
+      "Approvals",
+      "Jurisdictions",
+    ]);
+    expect(await tabsFor(ME.jurisdictionSuperAdministrator)).toEqual([
+      "Templates",
+      "Users",
+      "Approvals",
+      "Jurisdictions",
+    ]);
+    // Assigning administrators (jurisdiction_admin.assign) opens Jurisdictions
+    // for them too; the settings in it are for jurisdictions.manage.
+    expect(await tabsFor(ME.sysadminOnly)).toEqual([
+      "Jurisdictions",
+      "Super administrators",
+      "Feature flags",
+    ]);
+  });
+
+  it("opens on the first tab the role has, and does not load legal wording for a role without it", async () => {
+    mockPersona = ME.jurisdictionAdministrator;
+    respondWith([]); // no templates yet: what the Templates tab reads
     render(<AdminPage />);
-    expect(await screen.findByRole("tab", { name: /Users/ })).toBeTruthy();
-    expect(screen.getByRole("tab", { name: /Jurisdictions/ })).toBeTruthy();
+
+    // The Templates tab (DIAAT-344) shows the active jurisdiction's templates.
+    expect(
+      await screen.findByRole("heading", { name: /Templates/ })
+    ).toBeTruthy();
+    expect(request).toHaveBeenCalledWith(
+      "/admin/jurisdictions/DT/templates",
+      undefined
+    );
+    expect(request).not.toHaveBeenCalledWith(
+      "/admin/document-content",
+      undefined
+    );
+  });
+
+  it("opens the working Users panel, which asks the API for the roles and the users (DIAAT-385)", async () => {
+    mockPersona = ME.jurisdictionAdministrator;
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await user.click(await screen.findByRole("tab", { name: /Users/ }));
+
+    expect(await screen.findByRole("heading", { name: "Users" })).toBeTruthy();
+    expect(screen.queryByText(/not available in this screen yet/)).toBeNull();
+    await waitFor(() =>
+      expect(request).toHaveBeenCalledWith("/admin/roles", expect.anything())
+    );
+    expect(request).toHaveBeenCalledWith(
+      expect.stringContaining("/admin/users"),
+      expect.anything()
+    );
+  });
+
+  it("shows the working jurisdictions panel to a role that manages jurisdictions", async () => {
+    mockPersona = ME.jurisdictionSuperAdministrator;
+    const user = userEvent.setup();
+    render(<AdminPage />);
+    await user.click(await screen.findByRole("tab", { name: /Jurisdictions/ }));
+
+    expect(await screen.findByText("Jurisdictions panel")).toBeTruthy();
+  });
+
+  it("says there is nothing to manage for a role with no admin permission", async () => {
+    mockPersona = ME.judge;
+    render(<AdminPage />);
+
+    expect(await screen.findByText(/nothing to manage here/)).toBeTruthy();
+    expect(screen.queryByRole("tab")).toBeNull();
   });
 
   it("keeps the other tabs reachable when the legal wording is refused", async () => {
-    vi.mocked(getAdminRole).mockResolvedValue("SystemAdministrator");
+    mockPersona = {
+      ...ME.legalTextManager,
+      permissions: [...ME.legalTextManager.permissions, "users.manage"],
+    };
     request.mockResolvedValue({
       error: "x",
       status: 403,
@@ -320,7 +406,7 @@ describe("Admin area and switching jurisdiction", () => {
   beforeEach(() => {
     mockContext = asDt();
     request.mockReset();
-    vi.mocked(getAdminRole).mockResolvedValue(null);
+    mockPersona = ME.legalTextManager;
   });
 
   it("allows a switch while nothing is edited", async () => {
@@ -477,7 +563,7 @@ describe("Admin area: saves and deletes while requests are pending", () => {
     mockContext = asDt();
     request.mockReset();
     vi.mocked(toast.success).mockClear();
-    vi.mocked(getAdminRole).mockResolvedValue(null);
+    mockPersona = ME.legalTextManager;
   });
 
   const hearingType = (id: string, title: string) => ({

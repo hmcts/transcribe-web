@@ -11,6 +11,7 @@ import {
   detectSupportedMimeType,
   getExtensionFromMimeType,
 } from "./upload-utils";
+import { reportXhrRefusal } from "@/lib/access/refusals";
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 
 /** The API's own upload route (DIRECT_SDK_ACCESS off), not a storage SAS URL. */
@@ -174,6 +175,9 @@ export default function useAudioUpload({
           if (xhr.status >= 200 && xhr.status < 300) {
             resolve();
           } else {
+            // A refusal about who the user is (another tab switched, the account was deactivated)
+            // shows its notice, as for any call made with fetch.
+            reportXhrRefusal(xhr);
             // Status and request ID for the error report: the ID finds the
             // request in the service's logs (Application Insights or Storage).
             reject(

@@ -1,18 +1,22 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MeResponse } from "@/lib/access/types";
+import { ME } from "../access-helpers";
 
 const mockPush = vi.fn();
 let mockPathname = "/";
 let mockSelectedRecordingMode: string | null = null;
 let mockIsRecording = false;
-let mockRole: "judge" | "admin" = "judge";
+let mockPersona: MeResponse = ME.judge;
 
 // DIAAT-322: these screens as the IAC sees them.
 vi.mock("@/providers/jurisdiction", async () =>
-  (await import("../jurisdiction-helpers")).mockJurisdictionModule(
-    "IAC",
-    () => mockRole
-  )
+  (await import("../jurisdiction-helpers")).mockJurisdictionModule("IAC")
+);
+
+// DIAAT-373: and for whoever the API says the user is working as.
+vi.mock("@/providers/access", async () =>
+  (await import("../access-helpers")).mockAccessModule(() => mockPersona)
 );
 
 vi.mock("next/navigation", () => ({
@@ -67,18 +71,14 @@ vi.mock("motion/react", () => ({
   },
 }));
 
-vi.mock("@/lib/admin-access", () => ({
-  getAdminAccessStatus: vi.fn().mockResolvedValue("unauthorised"),
-}));
-
 import Header from "@/components/layout/header";
-import { getAdminAccessStatus } from "@/lib/admin-access";
 
 describe("Header", () => {
   afterEach(() => {
     mockPathname = "/";
     mockSelectedRecordingMode = null;
     mockIsRecording = false;
+    mockPersona = ME.judge;
     vi.unstubAllEnvs();
   });
 
@@ -108,45 +108,107 @@ describe("Header", () => {
     });
   });
 
-  it("links an admin for the jurisdiction to its wording, and nobody else (DIAAT-356)", () => {
-    const { queryByRole, unmount } = render(<Header />);
-    expect(queryByRole("link", { name: /Wording/ })).toBeNull();
-    unmount();
+  describe("shows links only from the permissions the API returned (DIAAT-384)", () => {
+    const LINKS = {
+      admin: "Go to admin",
+      wording: "Wording",
+      dictation: "Go to dictation",
+      recordings: "Go to hearing recordings",
+      help: "Go to help",
+    };
 
-    mockRole = "admin";
-    try {
+    function shown(persona: MeResponse) {
+      mockPersona = persona;
+      const nav = within(render(<Header />).getByRole("navigation"));
+      return Object.fromEntries(
+        Object.entries(LINKS).map(([key, name]) => [
+          key,
+          nav.queryByRole("link", { name: key === "wording" ? /Wording/ : name }) !== null,
+        ])
+      );
+    }
+
+    it.each([
+      [
+        "a judge",
+        ME.judge,
+        { admin: false, wording: false, dictation: true, recordings: true, help: true },
+      ],
+      [
+        "a legal text manager",
+        ME.legalTextManager,
+        { admin: true, wording: false, dictation: false, recordings: false, help: true },
+      ],
+      [
+        "a jurisdiction administrator",
+        ME.jurisdictionAdministrator,
+        { admin: true, wording: true, dictation: false, recordings: false, help: true },
+      ],
+      [
+        // Holds the permission, but works in no one jurisdiction (the API answers
+        // 403 no_jurisdiction): it changes wording from Admin, Jurisdictions.
+        "a jurisdiction super administrator",
+        ME.jurisdictionSuperAdministrator,
+        { admin: true, wording: false, dictation: false, recordings: false, help: true },
+      ],
+      [
+        "a system administrator with no jurisdiction",
+        ME.sysadminOnly,
+        { admin: true, wording: false, dictation: false, recordings: false, help: true },
+      ],
+    ])("for %s", (_, persona, expected) => {
+      expect(shown(persona)).toEqual(expected);
+    });
+
+    it("links the wording editor to its page", () => {
+      mockPersona = ME.jurisdictionAdministrator;
       const { getByRole } = render(<Header />);
       expect(getByRole("link", { name: /Wording/ }).getAttribute("href")).toBe(
         "/jurisdiction-wording"
       );
-    } finally {
-      mockRole = "judge";
-    }
+    });
+
+    it("leaves dictation and recordings out of the mobile menu for any other role", () => {
+      mockPersona = ME.legalTextManager;
+      render(<Header />);
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open navigation menu" })
+      );
+      const menu = within(screen.getByRole("dialog"));
+      expect(menu.queryByRole("link", { name: "Dictation" })).toBeNull();
+      expect(menu.queryByRole("link", { name: "Hearing recordings" })).toBeNull();
+      expect(menu.getByRole("link", { name: "Admin" }).getAttribute("href")).toBe(
+        "/admin"
+      );
+    });
+
+    it("has no Legal wording link: the Admin link is how a legal text manager gets there", () => {
+      mockPersona = ME.legalTextManager;
+      const { queryByRole } = render(<Header />);
+      expect(queryByRole("link", { name: "Legal wording" })).toBeNull();
+    });
   });
 
-  it("links an admin of a jurisdiction with legal wording to it, unless the Admin link already does (DIAAT-342)", async () => {
-    const { queryByRole, unmount } = render(<Header />);
-    expect(queryByRole("link", { name: "Legal wording" })).toBeNull();
-    unmount();
+  describe("the context switcher (DIAAT-390)", () => {
+    it("names where and as what the user works, and offers the other pair", () => {
+      mockPersona = ME.multiAsAdministrator;
+      render(<Header />);
+      const trigger = screen.getAllByRole("button", {
+        name: /Working in Immigration and Asylum Chamber as jurisdiction administrator/i,
+      })[0];
+      expect(trigger).toBeTruthy();
+    });
 
-    mockRole = "admin";
-    try {
-      const view = render(<Header />);
-      expect(
-        view.getByRole("link", { name: "Legal wording" }).getAttribute("href")
-      ).toBe("/admin");
-      view.unmount();
+    it("is not shown to a user with no role", () => {
+      mockPersona = ME.sysadminOnly;
+      render(<Header />);
+      expect(screen.queryByRole("button", { name: /Switch or leave/ })).toBeNull();
+    });
 
-      // With an admin app role the Admin link reaches the same page.
-      vi.mocked(getAdminAccessStatus).mockResolvedValueOnce("authorised");
-      const withRole = render(<Header />);
-      expect(
-        await withRole.findByRole("link", { name: "Go to admin" })
-      ).toBeTruthy();
-      expect(withRole.queryByRole("link", { name: "Legal wording" })).toBeNull();
-    } finally {
-      mockRole = "judge";
-    }
+    it("has no persona picker outside local development", () => {
+      render(<Header />);
+      expect(screen.queryByTestId("dev-persona-picker")).toBeNull();
+    });
   });
 
   it("renders the Bench Notes text", () => {

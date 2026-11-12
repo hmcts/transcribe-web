@@ -3,6 +3,7 @@ import { getJobAudio } from "@/lib/recording/api-client";
 import {
   getBackendAuthContext,
   jurisdictionFromAudioUrl,
+  roleFromAudioUrl,
 } from "@/lib/recording/auth-utils";
 
 interface RouteContext {
@@ -14,7 +15,12 @@ export async function GET(request: NextRequest, { params }: RouteContext) {
   const context = await getBackendAuthContext(request);
   // DIAAT-334: an <audio> source names the tab's jurisdiction in its query.
   const jurisdiction = context.jurisdiction ?? jurisdictionFromAudioUrl(request.url);
-  const auth = jurisdiction ? { ...context, jurisdiction } : context;
+  const role = context.role ?? roleFromAudioUrl(request.url);
+  const auth = {
+    ...context,
+    ...(jurisdiction && { jurisdiction }),
+    ...(role && { role }),
+  };
   try {
     // Forward the browser's Range header so <audio> seeking works — without
     // this, the browser can request a byte range it never receives and

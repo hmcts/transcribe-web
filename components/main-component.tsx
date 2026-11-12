@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import WelcomePage from "@/components/welcome-page";
 import useBrowserNavigation from "@/hooks/use-browser-navigation";
 import { apiClient } from "@/lib/api-client";
+import { useAccess } from "@/providers/access";
 
 interface OnboardingStatus {
   has_completed_onboarding: boolean;
@@ -19,11 +20,20 @@ function MainParentComponent() {
   const { currentParams } = useBrowserNavigation();
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(true);
+  // DIAAT-373: onboarding is about using the app. A context without `app.access`
+  // (system pages only) has no home page of its own: it goes to Admin.
+  const { can } = useAccess();
+  const hasAppAccess = can("app.access");
+  const hasAdminAccess = can("admin.access");
 
   // Check if we're directly accessing a transcript via URL
   const transcriptId = currentParams?.get("id");
 
   useEffect(() => {
+    if (!hasAppAccess) {
+      if (hasAdminAccess) router.replace("/admin");
+      return;
+    }
     const checkOnboardingStatus = async () => {
       try {
         const response = await apiClient.request<OnboardingStatus>(
@@ -54,10 +64,11 @@ function MainParentComponent() {
     };
 
     checkOnboardingStatus();
-  }, [router, transcriptId]);
+  }, [router, transcriptId, hasAppAccess, hasAdminAccess]);
 
   // Show loading while checking onboarding status
-  if (isLoading) {
+  if (!hasAppAccess && hasAdminAccess) return null;
+  if (isLoading && hasAppAccess) {
     return (
       <div className="flex h-screen w-full items-center justify-center">
         <div className="text-lg text-muted-foreground">Loading...</div>

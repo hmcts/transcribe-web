@@ -12,7 +12,8 @@ import type {
   Word,
   WordCorrection,
 } from "./types";
-import { JURISDICTION_HEADER } from "@/lib/jurisdiction-session";
+import { refusalCodeIn } from "@/lib/access/refusals";
+import { JURISDICTION_HEADER, ROLE_HEADER } from "@/lib/jurisdiction-session";
 
 // Server-only client for the transcription_svc backend. Never import this
 // from a "use client" component — it reads the backend API key, which must
@@ -121,7 +122,10 @@ export class BackendApiError extends Error {
     message: string,
     public status: number,
     // The id the API logged the failure under, from its error body.
-    public requestId?: string
+    public requestId?: string,
+    // The refusal's machine-readable code (`context_changed`, `user_deactivated`, ...),
+    // from `{detail: {code}}`, so a route can pass on the ones the browser must see.
+    public code?: string
   ) {
     super(message);
     this.name = "BackendApiError";
@@ -143,6 +147,14 @@ function requestIdOf(body: string): string | undefined {
     // Not JSON: a proxy's error page, say.
   }
   return undefined;
+}
+
+function refusalCodeOf(body: string): string | undefined {
+  try {
+    return refusalCodeIn(JSON.parse(body));
+  } catch {
+    return undefined;
+  }
 }
 
 function backendUrl(): string {
@@ -180,6 +192,9 @@ async function rawBackendFetch(
   if (auth?.jurisdiction) {
     headers[JURISDICTION_HEADER] = auth.jurisdiction;
   }
+  if (auth?.role) {
+    headers[ROLE_HEADER] = auth.role;
+  }
   return fetch(`${backendUrl()}${path}`, {
     ...init,
     headers,
@@ -199,7 +214,8 @@ async function backendFetch(
     throw new BackendApiError(
       `Backend request to ${path} failed: ${response.status} ${body}`,
       response.status,
-      requestIdOf(body)
+      requestIdOf(body),
+      refusalCodeOf(body)
     );
   }
 
@@ -447,6 +463,49 @@ export async function deleteJob(
   // 204 No Content — backendFetch throws BackendApiError on any non-2xx, so a
   // clean return here means the job (transcript + audio) was deleted.
   await backendFetch(`/api/v1/jobs/${jobId}`, { method: "DELETE" }, auth);
+}
+
+/**
+ * One entry of a recording's audit history (DIAAT-395): who did what, in which
+ * role, and how it ended. The API sends no transcript text.
+ */
+export interface JobHistoryEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  actor_label: string;
+  actor_role: string | null;
+  outcome: string;
+}
+
+export interface JobHistoryPage {
+  items: JobHistoryEntry[];
+  total: number;
+}
+
+/**
+ * `GET /api/v1/jobs/{id}/history` (recording.audit.read, the recording's owner
+ * only; anyone else gets the answer for a recording they cannot see, a 404).
+ * Passed through as the API sent it.
+ */
+export async function getJobHistory(
+  jobId: string,
+  params: { page?: number; pageSize?: number } | undefined,
+  auth: BackendAuthContext | null
+): Promise<JobHistoryPage> {
+  const query = new URLSearchParams();
+  if (params?.page !== undefined) query.set("page", String(params.page));
+  if (params?.pageSize !== undefined) {
+    query.set("page_size", String(params.pageSize));
+  }
+  const qs = query.toString();
+  const response = await backendFetch(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/history${qs ? `?${qs}` : ""}`,
+    undefined,
+    auth
+  );
+  const body: JobHistoryPage = await response.json();
+  return { items: body.items ?? [], total: body.total ?? 0 };
 }
 
 // Returns the backend's raw Response — including non-2xx ones (404 if the

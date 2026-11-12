@@ -5,6 +5,7 @@ import {
 } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
 import { isSegmentId } from "@/lib/recording/segment-id";
+import { identityRefusalResponse } from "@/lib/recording/identity-refusal";
 
 interface RouteContext {
   params: Promise<{ jobId: string; index: string }>;
@@ -33,6 +34,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const job = await mergeSegmentWithNext(jobId, index, nextSegmentId, auth);
     return NextResponse.json({ job });
   } catch (err) {
+    const refusal = identityRefusalResponse(err);
+    if (refusal) return refusal;
     if (err instanceof BackendApiError) {
       return NextResponse.json({ error: err.message }, { status: err.status });
     }

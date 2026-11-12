@@ -6,14 +6,14 @@ import {
   Menu,
   Mic,
   PenLine,
-  Scale,
   Shield,
 } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { JurisdictionSwitcher } from "@/components/jurisdiction/jurisdiction-switcher";
+import { ContextSwitcher } from "@/components/access/context-switcher";
+import { DevPersonaPicker } from "@/components/access/dev-persona-picker";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
 import {
@@ -24,18 +24,17 @@ import {
   SheetTitle,
   SheetTrigger,
 } from "@/components/ui/sheet";
-import { getAdminAccessStatus } from "@/lib/admin-access";
-import { isDictationEnabled } from "@/lib/environment";
 import {
   DICTATION_BASE_PATH,
   DICTATION_HREF,
   HEARING_RECORDINGS_HREF,
   isPathActive,
 } from "@/lib/navigation";
-import { canEditLegalWording } from "@/lib/jurisdiction-context";
 import { inSentence } from "@/lib/jurisdiction-wording";
 import cn from "@/lib/utils";
+import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
+import { useDictationEnabled } from "@/providers/runtime-flags";
 import { useTranscripts } from "@/providers/transcripts";
 
 export default function Header() {
@@ -48,21 +47,30 @@ export default function Header() {
   const hideNavLinks = Boolean(selectedRecordingMode) || isRecording;
   // DIAAT-332: no switching jurisdiction while an upload is being processed.
   const hideSwitcher = hideNavLinks || Boolean(isProcessingTranscription);
-  // DIAAT-330: hearing recordings only where the jurisdiction uses them, in its words.
+  // DIAAT-373: every link is shown from the permissions of the active context,
+  // never from a role name. DIAAT-330: hearing recordings also only where the
+  // jurisdiction uses them, in its words.
+  const { can, active } = useAccess();
+  // DIAAT-392: the runtime flag, else the deploy-time default.
+  const dictationEnabled = useDictationEnabled();
   const { current, hasHearingRecordings, wording } = useJurisdiction();
-  // DIAAT-356: an admin for the jurisdiction they work in can change its wording.
-  const isJurisdictionAdmin = current?.role === "admin";
-  // DIAAT-342: and, where it has legal wording, that too (the Admin link below
-  // reaches the same page for those with an admin app role).
-  const canEditLegal = canEditLegalWording(current);
+  const canAdmin = can("admin.access");
+  // DIAAT-356: whoever may edit the jurisdiction's wording reaches its editor.
+  // Only while working in a jurisdiction: a global role has none to edit here
+  // (the API answers 403 `no_jurisdiction`), and changes a jurisdiction's wording
+  // from Admin, Jurisdictions.
+  const canEditWording =
+    can("jurisdiction.wording.edit") && Boolean(active?.jurisdiction);
   const recordingsLabel = wording("nav.recordings");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const lastScrollY = useRef(0);
   const [isHidden, setIsHidden] = useState(false);
-  const [isAdminUser, setIsAdminUser] = useState(false);
-  const showDictation = !hideNavLinks && isDictationEnabled();
+  const showDictation =
+    !hideNavLinks && dictationEnabled && can("dictation.use");
+  const showRecordings =
+    !hideNavLinks && can("recording.own") && hasHearingRecordings;
   const isDictationActive = isPathActive(pathname, DICTATION_BASE_PATH);
   const isHearingRecordingsActive = isPathActive(
     pathname,
@@ -108,25 +116,6 @@ export default function Header() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [isHidden]);
 
-  useEffect(() => {
-    let cancelled = false;
-
-    const checkAdminAccess = async () => {
-      const accessStatus = await getAdminAccessStatus({
-        allowLocalhostFallback: true,
-      });
-      if (!cancelled) {
-        setIsAdminUser(accessStatus === "authorised");
-      }
-    };
-
-    void checkAdminAccess();
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   if (pathname === "/coming-soon") {
     return null;
   }
@@ -165,8 +154,8 @@ export default function Header() {
           </span>
         </Link>
 
-        <nav className="hidden items-center gap-2 md:flex">
-          {!hideNavLinks && isAdminUser && (
+        <nav className="hidden items-center gap-2 lg:flex">
+          {!hideNavLinks && canAdmin && (
             <Link
               href="/admin"
               className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
@@ -177,24 +166,14 @@ export default function Header() {
               <span className="text-base">Admin</span>
             </Link>
           )}
-          {!hideNavLinks && isJurisdictionAdmin && (
+          {!hideNavLinks && canEditWording && (
             <Link
               href="/jurisdiction-wording"
               className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
-              title={`Change ${current.code} wording`}
+              title={`Change ${current?.code ?? ""} wording`}
             >
               <PenLine className="mr-1 size-5" />
               <span className="text-base">Wording</span>
-            </Link>
-          )}
-          {!hideNavLinks && canEditLegal && !isAdminUser && (
-            <Link
-              href="/admin"
-              className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
-              title={`Change ${current?.code} legal wording`}
-            >
-              <Scale className="mr-1 size-5" />
-              <span className="text-base">Legal wording</span>
             </Link>
           )}
           {/* MERGE NOTE: entry points for both feature areas (dictation and
@@ -215,7 +194,7 @@ export default function Header() {
               <span className="text-base">Dictation</span>
             </Link>
           )}
-          {!hideNavLinks && hasHearingRecordings && (
+          {showRecordings && (
             <Link
               href={HEARING_RECORDINGS_HREF}
               className={cn(
@@ -242,8 +221,9 @@ export default function Header() {
             </Link>
           )}
           {!hideSwitcher && (
-            <JurisdictionSwitcher className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
+            <ContextSwitcher className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
           )}
+          <DevPersonaPicker className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
           <ThemeToggle />
         </nav>
 
@@ -252,7 +232,7 @@ export default function Header() {
             <Button
               variant="ghost"
               size="icon"
-              className="size-10 md:hidden"
+              className="size-10 lg:hidden"
               aria-label="Open navigation menu"
             >
               <Menu className="size-5" />
@@ -264,8 +244,9 @@ export default function Header() {
             </SheetHeader>
             <div className="flex flex-col gap-2">
               {!hideSwitcher && (
-                <JurisdictionSwitcher className="h-10 justify-start px-3 text-sm font-medium" />
+                <ContextSwitcher className="h-10 justify-start px-3 text-sm font-medium" />
               )}
+              <DevPersonaPicker className="h-10 justify-start px-3 text-sm font-medium" />
               <SheetClose asChild>
                 <Link
                   href="/"
@@ -275,7 +256,7 @@ export default function Header() {
                   Home
                 </Link>
               </SheetClose>
-              {!hideNavLinks && isAdminUser && (
+              {!hideNavLinks && canAdmin && (
                 <SheetClose asChild>
                   <Link
                     href="/admin"
@@ -286,7 +267,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!hideNavLinks && isJurisdictionAdmin && (
+              {!hideNavLinks && canEditWording && (
                 <SheetClose asChild>
                   <Link
                     href="/jurisdiction-wording"
@@ -294,17 +275,6 @@ export default function Header() {
                   >
                     <PenLine className="size-4" />
                     Wording
-                  </Link>
-                </SheetClose>
-              )}
-              {!hideNavLinks && canEditLegal && !isAdminUser && (
-                <SheetClose asChild>
-                  <Link
-                    href="/admin"
-                    className="inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground"
-                  >
-                    <Scale className="size-4" />
-                    Legal wording
                   </Link>
                 </SheetClose>
               )}
@@ -323,7 +293,7 @@ export default function Header() {
                   </Link>
                 </SheetClose>
               )}
-              {!hideNavLinks && hasHearingRecordings && (
+              {showRecordings && (
                 <SheetClose asChild>
                   <Link
                     href={HEARING_RECORDINGS_HREF}

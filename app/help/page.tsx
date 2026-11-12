@@ -6,6 +6,7 @@ import {
   DecisionTemplateOnly,
   JurisdictionText,
 } from "@/components/jurisdiction/jurisdiction-content";
+import { DictationGuidance } from "@/components/flags/dictation-guidance";
 import { MultistepTutorial } from "@/components/help/multistep-tutorial";
 import { TableOfContents } from "@/components/help/table-of-contents";
 import {
@@ -14,8 +15,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import { DictationOnly } from "@/components/flags/dictation-only";
 import { Button } from "@/components/ui/button";
-import { isDictationEnabled } from "@/lib/environment";
 import cn from "@/lib/utils";
 
 export default function HelpPage() {
@@ -62,6 +63,8 @@ export default function HelpPage() {
 
           {/* Main content */}
           <section id="help-content" className="max-w-4xl">
+            {/* DIAAT-373: the dictation and recording guidance only for a role that uses them. */}
+            <DictationGuidance>
             <DecisionTemplateOnly
               otherwise={
                 <p>
@@ -96,9 +99,11 @@ export default function HelpPage() {
                 >Online training</Link>
               </h2>
             </DecisionTemplateOnly>
+            </DictationGuidance>
 
             <ContactSupport className="mb-20 [&_h2]:m-0" />
 
+            <DictationGuidance>
             {/* DIAAT-330: the IAC hearing form and decision, for jurisdictions that use them. */}
             <DecisionTemplateOnly>
               {/* Quick Start Guide */}
@@ -203,39 +208,38 @@ export default function HelpPage() {
               </div>
             </DecisionTemplateOnly>
 
-            {isDictationEnabled() && (
-              <>
-                <h3 id="live-transcription">Live Transcription</h3>
-                <DecisionTemplateOnly
-                  otherwise={
-                    <p>
-                      Speech is converted to text in real-time, and you can edit
-                      it as you go. Your dictation is saved as you dictate and
-                      can be restored within 24 hours if you leave the page.
-                      When you have finished, copy your text into your own
-                      document.
-                    </p>
-                  }
-                >
+            <DictationOnly>
+              <h3 id="live-transcription">Live Transcription</h3>
+              <DecisionTemplateOnly
+                otherwise={
                   <p>
-                    Speech is converted to text in real-time. The first speaker
-                    is labelled as &quot;Judge&quot;. Use the section tabs to
-                    organise your dictation into Background, Evidence, and
-                    Facts. Recording auto-saves locally and can be paused and
-                    resumed at any time.
+                    Speech is converted to text in real-time, and you can edit
+                    it as you go. Your dictation is saved as you dictate and
+                    can be restored within 24 hours if you leave the page.
+                    When you have finished, copy your text into your own
+                    document.
                   </p>
+                }
+              >
+                <p>
+                  Speech is converted to text in real-time. The first speaker
+                  is labelled as &quot;Judge&quot;. Use the section tabs to
+                  organise your dictation into Background, Evidence, and
+                  Facts. Recording auto-saves locally and can be paused and
+                  resumed at any time.
+                </p>
 
-                  <h3 id="document-generation">Document Generation</h3>
-                  <p>
-                    Submitting a hearing generates a Word document using the
-                    official decision template. Form data, dates (in long
-                    format), and legal framework content are automatically
-                    populated. Documents are available for download for 24
-                    hours.
-                  </p>
-                </DecisionTemplateOnly>
-              </>
-            )}
+                <h3 id="document-generation">Document Generation</h3>
+                <p>
+                  Submitting a hearing generates a Word document using the
+                  official decision template. Form data, dates (in long
+                  format), and legal framework content are automatically
+                  populated. Documents are available for download for 24
+                  hours.
+                </p>
+              </DecisionTemplateOnly>
+            </DictationOnly>
+            </DictationGuidance>
 
             <h3 id="privacy">Privacy</h3>
             <p>
@@ -250,6 +254,7 @@ export default function HelpPage() {
               </Link>
             </p>
 
+            <DictationGuidance>
             <h3 id="troubleshooting">Troubleshooting</h3>
             <Accordion type="single" collapsible className="not-prose">
               <AccordionItem value="microphone">
@@ -267,6 +272,7 @@ export default function HelpPage() {
                 </AccordionContent>
               </AccordionItem>
             </Accordion>
+            </DictationGuidance>
           </section>
 
           {/* Table of contents sidebar */}

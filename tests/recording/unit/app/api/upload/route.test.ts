@@ -115,7 +115,11 @@ function uploadRequest(
 async function seedSession(id: string, idToken: string) {
   const { writeSession } = await import("@/lib/auth/session-store");
   await writeSession(id, {
-    idToken,
+    // The Entra token is never what the API is sent (DIAAT-373): the BenchNotes
+    // token the API minted from it is.
+    idToken: "entra-id-token",
+    appToken: idToken,
+    appTokenExpiresAt: Date.now() + 5 * 60 * 1000,
     idTokenExpiresAt: Date.now() + 60 * 60 * 1000,
     user: {
       oid: "oid-1",

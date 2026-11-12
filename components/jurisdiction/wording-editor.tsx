@@ -13,8 +13,8 @@ import {
   type JurisdictionWording,
   saveJurisdictionWording,
 } from "@/lib/jurisdiction-api";
-import { canEditLegalWording } from "@/lib/jurisdiction-context";
 import { type WordingKey, wordingFor } from "@/lib/jurisdiction-wording";
+import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
 
 /**
@@ -38,7 +38,12 @@ function sameWording(a: Record<string, string>, b: Record<string, string>): bool
 
 export function JurisdictionWordingEditor() {
   const { current } = useJurisdiction();
-  const isAdmin = current?.role === "admin";
+  // DIAAT-373: from the permissions the API returns, not from a role name.
+  const { can, active } = useAccess();
+  const isAdmin = can("jurisdiction.wording.edit");
+  // A global role (a super administrator) works in no jurisdiction, so there is
+  // none to edit here: the API refuses with 403 `no_jurisdiction`.
+  const inJurisdiction = Boolean(active?.jurisdiction);
   const [loaded, setLoaded] = useState<JurisdictionWording | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -60,8 +65,8 @@ export function JurisdictionWordingEditor() {
   }, []);
 
   useEffect(() => {
-    if (isAdmin) void load();
-  }, [isAdmin, load]);
+    if (isAdmin && inJurisdiction) void load();
+  }, [isAdmin, inJurisdiction, load]);
 
   async function save() {
     setSaving(true);
@@ -87,8 +92,17 @@ export function JurisdictionWordingEditor() {
       </h1>
       {!isAdmin ? (
         <p className="text-muted-foreground">
-          Only an admin for {current?.code ?? "this jurisdiction"} can change its
-          wording.
+          Your role cannot change the wording of{" "}
+          {current?.code ?? "this jurisdiction"}.
+        </p>
+      ) : !inJurisdiction ? (
+        <p className="text-muted-foreground">
+          You are working across all jurisdictions, so there is no one
+          jurisdiction here. Change a jurisdiction&apos;s wording from{" "}
+          <Link className="underline" href="/admin?tab=jurisdictions">
+            Admin, Jurisdictions
+          </Link>
+          , or switch to a role in one jurisdiction.
         </p>
       ) : error ? (
         <div className="space-y-4">
@@ -110,16 +124,6 @@ export function JurisdictionWordingEditor() {
             void save();
           }}
         >
-          {canEditLegalWording(current) && (
-            <p>
-              The hearing types, legal frameworks and anonymity text of the
-              decision document are edited under{" "}
-              <Link href="/admin" className="underline">
-                legal wording
-              </Link>
-              .
-            </p>
-          )}
           <p className="text-muted-foreground">
             What judges in {loaded.code} see. Leave a line blank to use the
             standard text, shown in grey.

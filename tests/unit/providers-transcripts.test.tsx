@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import type React from "react";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // ─── mocks ────────────────────────────────────────────────────────────────────
 
@@ -16,6 +16,20 @@ vi.mock("@/providers/jurisdiction", async () => {
       mockInJurisdiction ? inIac : { ...inIac, current: null },
   };
 });
+
+// DIAAT-373: as a judge, the role whose permissions these screens are for, unless
+// a test says otherwise.
+let mockPersona: import("@/lib/access/types").MeResponse | undefined;
+vi.mock("@/providers/access", async () => {
+  const helpers = await import("../access-helpers");
+  return helpers.mockAccessModule(() => mockPersona ?? helpers.ME.judge);
+});
+
+// DIAAT-392: the runtime dictation flag; on unless a test switches it off.
+let dictationEnabled = true;
+vi.mock("@/providers/runtime-flags", () => ({
+  useDictationEnabled: () => dictationEnabled,
+}));
 
 vi.mock("@/lib/database", () => ({
   getAllTranscriptionMetadata: vi.fn(),
@@ -62,6 +76,45 @@ describe("useTranscripts", () => {
 });
 
 // ─── initial state ────────────────────────────────────────────────────────────
+
+describe("TranscriptsProvider — which roles load dictations (DIAAT-384)", () => {
+  afterEach(() => {
+    mockPersona = undefined;
+  });
+
+  it("loads nothing for a role without dictation.use, whose calls the API would refuse", async () => {
+    const { ME } = await import("../access-helpers");
+    mockPersona = ME.legalTextManager;
+    vi.mocked(getAllTranscriptionMetadata).mockClear();
+
+    renderHook(() => useTranscripts(), { wrapper });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(getAllTranscriptionMetadata).not.toHaveBeenCalled();
+  });
+});
+
+describe("TranscriptsProvider — dictation switched off (DIAAT-392)", () => {
+  it("loads nothing while the dictation flag is off, whose calls the API refuses with 403 dictation_disabled", async () => {
+    dictationEnabled = false;
+    vi.mocked(getAllTranscriptionMetadata).mockClear();
+
+    const { result } = renderHook(() => useTranscripts(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(getAllTranscriptionMetadata).not.toHaveBeenCalled();
+    dictationEnabled = true;
+  });
+
+  it("does not leave the list loading, or reject, when a load is refused anyway", async () => {
+    vi.mocked(getAllTranscriptionMetadata).mockRejectedValue(new Error("Dictation is switched off."));
+    const { result } = renderHook(() => useTranscripts(), { wrapper });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.transcriptsMetadata).toEqual([]);
+    vi.mocked(getAllTranscriptionMetadata).mockReset();
+  });
+});
 
 describe("TranscriptsProvider — initial state", () => {
   it("starts with isLoading true and empty transcriptsMetadata", async () => {

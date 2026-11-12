@@ -112,14 +112,22 @@ export type LiveTranscriptionSubmissionResponse = z.infer<
 export const submissionErrorResponseSchema = z
   .object({
     error: NON_EMPTY_TEXT.optional(),
-    detail: NON_EMPTY_TEXT.optional(),
+    // A string, or the API's `{code, message}` refusal.
+    detail: z
+      .union([NON_EMPTY_TEXT, z.object({ message: NON_EMPTY_TEXT }).loose()])
+      .optional(),
   })
   .refine(
     (value) => Boolean(value.error || value.detail),
     "Expected either an error or detail message"
   )
   .transform((value) => ({
-    error: value.error ?? value.detail ?? "Unknown error",
+    error:
+      value.error ??
+      (typeof value.detail === "string"
+        ? value.detail
+        : value.detail?.message) ??
+      "Unknown error",
   }));
 
 export const hearingTypeSchema = z.object({

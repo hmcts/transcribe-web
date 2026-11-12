@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { RequireRoute } from "@/components/access/require-permission";
 import { HearingRecordingsOnly } from "@/components/jurisdiction/hearing-recordings-only";
 
 /**
@@ -20,5 +21,9 @@ export const metadata: Metadata = {
 };
 
 export default function RecordingLayout({ children }: { children: React.ReactNode }) {
-  return <HearingRecordingsOnly>{children}</HearingRecordingsOnly>;
+  return (
+    <RequireRoute prefix="/recording">
+      <HearingRecordingsOnly>{children}</HearingRecordingsOnly>
+    </RequireRoute>
+  );
 }

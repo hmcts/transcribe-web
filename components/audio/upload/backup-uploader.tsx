@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { track } from "@/lib/analytics";
 import { apiClient } from "@/lib/api-client";
 import { type AudioBackup, audioBackupDB } from "@/lib/indexeddb-backup";
+import { reportXhrRefusal } from "@/lib/access/refusals";
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -60,6 +61,7 @@ function BackupUploader({
             if (xhr.status >= 200 && xhr.status < 300) {
               resolve(xhr.response);
             } else {
+              reportXhrRefusal(xhr); // a refusal about who the user is shows its notice
               reject(new Error("Failed to upload file to Azure Storage"));
             }
           });

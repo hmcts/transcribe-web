@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
 import {
   prepareForJurisdictionSwitch,
-  reloadInJurisdiction,
+  reloadAt,
   stayInJurisdiction,
 } from "@/lib/jurisdiction-switch";
 import { LiveDraftError } from "@/lib/live-draft-errors";
@@ -74,9 +74,6 @@ vi.mock("@/lib/document-content-api", () => ({
   fetchUserDocumentContent: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("@/lib/admin-access", () => ({
-  getAdminAccessStatus: vi.fn().mockResolvedValue("unauthorised"),
-}));
 
 vi.mock("@/lib/auth-utils", () => ({
   getAuthToken: vi.fn().mockResolvedValue(null),
@@ -812,7 +809,7 @@ describe("Autosave failure states", () => {
 
     vi.stubGlobal("location", { ...window.location, assign: vi.fn() });
     try {
-      reloadInJurisdiction("ET");
+      reloadAt("/");
       expect(leave()).toBe(false);
     } finally {
       stayInJurisdiction();

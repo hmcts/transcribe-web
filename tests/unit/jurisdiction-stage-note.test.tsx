@@ -1,6 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
-import ChooseJurisdiction from "@/components/jurisdiction/choose-jurisdiction";
+import { ChooseContext } from "@/components/access/choose-context";
 import { stageNote } from "@/lib/jurisdiction-api";
 
 // DIAAT-345: admins see a draft jurisdiction and testers one in test before it is
@@ -14,21 +14,25 @@ describe("a jurisdiction not live yet", () => {
     expect(stageNote(undefined)).toBeNull();
   });
 
-  it("is marked where the judge chooses a jurisdiction", () => {
+  it("is marked where the user chooses where they work", () => {
     render(
-      <ChooseJurisdiction
-        jurisdictions={[
+      <ChooseContext
+        assignments={[
           {
-            code: "IAC",
-            name: "Immigration and Asylum Chamber",
-            role: "judge",
-            stage: "live",
+            jurisdiction: {
+              code: "IAC",
+              name: "Immigration and Asylum Chamber",
+              stage: "live",
+            },
+            role: "Judge",
           },
           {
-            code: "ET",
-            name: "Employment Tribunals (ET)",
-            role: "judge",
-            stage: "test",
+            jurisdiction: {
+              code: "ET",
+              name: "Employment Tribunals (ET)",
+              stage: "test",
+            },
+            role: "Judge",
           },
         ]}
         onChoose={vi.fn()}
@@ -36,11 +40,13 @@ describe("a jurisdiction not live yet", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Immigration and Asylum Chamber" })
+      screen.getByRole("button", {
+        name: "Immigration and Asylum Chamber as judge",
+      })
     ).toBeTruthy();
     expect(
       screen.getByRole("button", {
-        name: "Employment Tribunals (ET) (Test: not live yet)",
+        name: "Employment Tribunals (ET) as judge (Test: not live yet)",
       })
     ).toBeTruthy();
   });

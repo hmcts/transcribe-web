@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getAuthConfig } from "@/lib/auth/config";
+import { isPreviewSignInEnabled } from "@/lib/auth/preview-mode";
 import { beginLogin } from "@/lib/auth/oidc";
 import {
   cookieOptions,
@@ -16,6 +17,12 @@ export async function GET(request: NextRequest) {
   const returnTo = safeReturnTo(request.nextUrl.searchParams.get("returnTo"));
 
   if (!config.enabled) {
+    // A PR preview signs the preview user in (a 401 from the API ends up here).
+    if (isPreviewSignInEnabled()) {
+      const signIn = new URL("/auth/preview-login", config.appUrl);
+      signIn.searchParams.set("returnTo", returnTo);
+      return NextResponse.redirect(signIn);
+    }
     return NextResponse.redirect(new URL(returnTo, config.appUrl));
   }
 

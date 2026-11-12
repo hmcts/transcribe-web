@@ -68,7 +68,7 @@ Every PR build deploys a preview to the CFT preview cluster at `https://transcri
 - API: the preview brings its own transcribe-api, deployed in the same Helm release (the `transcribe-api` chart dependency, on only in `values.preview.template.yaml`) with no ingress of its own. Web reaches it through its in-cluster Service.
   - By default it runs `transcribe/api:latest`, the last `master` build of transcribe-api. The image is pulled again on every build, so a kept preview picks up a newer api on its next build.
   - To test against a transcribe-api PR, add the label `api-pr:<n>` (its PR number) and rebuild. That runs the api PR's `pr-<n>` image, but still this repo's pinned api chart version. The api PR must have built at least once. Once it closes, its image is untagged and the preview's api stops starting: remove the label and rebuild.
-- Sign-in: there is none. Web runs with `AUTH_ENABLED=false` (per-PR hostnames cannot be Entra redirect URIs), so it sends the api no token. The api runs with `ENVIRONMENT=preview` and `AUTH_PREVIEW_USER_ENABLED=true`, so every token-less call is a fixed preview user holding every app role.
+- Sign-in: automatic, as the api's preview user. Per-PR hostnames cannot be Entra redirect URIs, so web runs with `AUTH_ENABLED=false` and `PREVIEW_USER_SIGN_IN=true`. A browser with no session is sent to `/auth/preview-login`, which calls the api's sign-in with no Authorization header. The api runs with `ENVIRONMENT=preview` and `AUTH_PREVIEW_USER_ENABLED=true`, so that sign-in is a fixed preview user, given every role (super administrator, and administrator, so also judge and legal text manager, in every jurisdiction, plus system administrator). It then holds a BenchNotes token like anyone else (every other api call still needs one), so the chooser asks where and as what to work, and the header switches. `PREVIEW_USER_SIGN_IN` is refused when `AUTH_ENABLED=true` and is set nowhere but the preview values.
 - Data is throwaway: Postgres and Azurite run in the release, and Speech is mocked (`SPEECH_BACKEND=mock`). The preview cluster shuts down every night, which wipes both. Postgres and Azurite otherwise survive pushes, except that changing the api image (adding or removing `api-pr:<n>`) recreates Azurite: blobs go while database rows stay.
 
 ## Sign-in
@@ -80,6 +80,12 @@ itself — the CNP pattern for internal users (DARTS does the same):
   with PKCE against the MoJ tenant app registration, as a confidential client.
 - Tokens are kept in a server-side session in Redis (`lib/auth`). The browser
   only ever holds an opaque, httpOnly `transcribe_session` cookie.
+- At sign-in the API turns the Entra ID token into a short-lived BenchNotes
+  access token (`POST /api/auth/session`), kept in the session next to it and
+  minted again near expiry. That token, not the Entra one, is what every backend
+  call carries. The user's chosen jurisdiction and role, and what they may do,
+  come from the API (`GET /api/me/permissions`); the UI shows only what those
+  permissions allow. See [docs/authz-web.md](docs/authz-web.md).
 - Caddy attaches the session's bearer token to every backend `/api/*` call via
   `forward_auth` (`/auth/forward`), after discarding any `Authorization` or
   Easy Auth header the client sent. The recording area's own `/api/*` route
@@ -87,13 +93,19 @@ itself — the CNP pattern for internal users (DARTS does the same):
 - `proxy.ts` sends anyone without a session to the login. The API verifies
   the token on every call; the cookie check is only a routing hint.
 
-Locally, leave `AUTH_ENABLED=false`: nothing is gated, and the backend uses its
-mock identity with `ENVIRONMENT=local`.
+Locally, leave `AUTH_ENABLED=false`: nothing is gated. To work as one of the
+API's seeded personas (`ENVIRONMENT=local`), set `NEXT_PUBLIC_DEV_LOGIN=true`
+and run `yarn dev`: a persona picker appears, `/auth/dev-login?persona=<name>`
+signs in, and `/api/*` goes through a dev-only proxy that attaches the session's
+token. Both are refused when `AUTH_ENABLED=true` or in a production build
+(`yarn build && yarn start`). `node scripts/dev-mock-api.mjs` is a stand-in for
+the API when the real one is not running. Details in
+[docs/authz-web.md](docs/authz-web.md).
 
 ## Tests
 
 ```bash
-yarn test:unit    # vitest — 779 tests
+yarn test:unit    # vitest
 yarn test:e2e     # playwright (recording e2e specs)
 yarn type-check
 ```

@@ -1,7 +1,9 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { isDictationEnabled } from "@/lib/environment";
+import { isPreviewSignInEnabled } from "@/lib/auth/preview-mode";
+import { isDictationEnabledAtRuntime } from "@/lib/flags/proxy-flags";
 import {
   DICTATION_BASE_PATH,
+  DICTATION_UPLOAD_PATH,
   isPathActive,
   SPEECH_DEMO_PATH,
 } from "@/lib/navigation";
@@ -15,7 +17,9 @@ import {
  *  1. Generate a per-response CSP nonce and forward it to Server Components via
  *     the x-nonce request header (used for the next-themes inline script).
  *  2. Send anyone without a session to the login (/auth/login).
- *  3. Send Dictation pages home when the feature is switched off (DIAAT-366).
+ *  3. Send Dictation pages home when the feature is switched off (DIAAT-366):
+ *     by the runtime flag (`GET /api/flags`, DIAAT-392), else the deploy-time
+ *     NEXT_PUBLIC_DICTATION_ENABLED when the flag cannot be read.
  *
  * The session cookie's presence is only a routing hint. What protects data is
  * the API: every backend call carries the session's bearer token (Caddy's
@@ -46,7 +50,7 @@ export function isPublicPath(pathname: string): boolean {
   );
 }
 
-export function proxy(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
   // ── 1. CSP nonce (production only) ────────────────────────────────────────
@@ -109,15 +113,20 @@ export function proxy(request: NextRequest) {
   // gated /admin and /recording on top. On CNP there is no Easy Auth, so this
   // is now the only gate and it covers every page, matching what production
   // users experience today. AUTH_ENABLED is false for local development and
-  // preview environments.
-  if (process.env.AUTH_ENABLED === "true" && !isPublicPath(pathname)) {
+  // preview environments; a preview (PREVIEW_USER_SIGN_IN) signs the API's
+  // preview user in instead of sending anyone to Entra.
+  const loginOn = process.env.AUTH_ENABLED === "true";
+  if ((loginOn || isPreviewSignInEnabled()) && !isPublicPath(pathname)) {
     if (!request.cookies.get(SESSION_COOKIE)) {
       // Fetches from the recording area to its own /api/* route handlers get
       // a 401 they can act on, not an HTML redirect.
       if (pathname.startsWith("/api/")) {
         return new NextResponse(null, { status: 401 });
       }
-      const loginUrl = new URL("/auth/login", request.url);
+      const loginUrl = new URL(
+        loginOn ? "/auth/login" : "/auth/preview-login",
+        publicOrigin(request)
+      );
       loginUrl.searchParams.set(
         "returnTo",
         `${request.nextUrl.pathname}${request.nextUrl.search}`
@@ -127,12 +136,15 @@ export function proxy(request: NextRequest) {
   }
 
   // ── 3. Dictation feature flag ─────────────────────────────────────────────
+  // The flag is read only for the pages it guards. When it cannot be read the
+  // deploy-time value decides (lib/flags/proxy-flags.ts).
   if (
-    !isDictationEnabled() &&
     (isPathActive(pathname, DICTATION_BASE_PATH) ||
-      isPathActive(pathname, SPEECH_DEMO_PATH))
+      isPathActive(pathname, DICTATION_UPLOAD_PATH) ||
+      isPathActive(pathname, SPEECH_DEMO_PATH)) &&
+    !(await isDictationEnabledAtRuntime(request.headers.get("cookie")))
   ) {
-    return NextResponse.redirect(new URL("/", request.url));
+    return NextResponse.redirect(new URL("/", publicOrigin(request)));
   }
 
   const response = NextResponse.next({
@@ -145,6 +157,15 @@ export function proxy(request: NextRequest) {
   return response;
 }
 
+/**
+ * The origin to redirect on: the public one (APP_URL), as the auth routes do. Behind Caddy a request
+ * can arrive on the internal 127.0.0.1:3001, and a redirect built from its URL would send the browser
+ * there. Without APP_URL (local development) it is the request's own.
+ */
+function publicOrigin(request: NextRequest): string {
+  return process.env.APP_URL?.trim() || request.url;
+}
+
 export const config = {
   matcher: [
     {
@@ -153,8 +174,12 @@ export const config = {
       // request the proxy runs on, and passes at most
       // experimental.proxyClientMaxBodySize (10 MB) of it on; /api/upload
       // streams recordings of up to 200 MB to the API instead, and checks the
-      // session itself (app/api/upload/route.ts).
-      source: "/((?!_next/static|_next/image|favicon.ico|api/upload$).*)",
+      // session itself (app/api/upload/route.ts). /api/upload-audio is the
+      // dictation upload: deployed, Caddy sends it straight to the API; in local
+      // development the dev proxy (app/api/[...path]/route.ts) streams it, and
+      // must not be buffered first either.
+      source:
+        "/((?!_next/static|_next/image|favicon.ico|api/upload(?:-audio)?$).*)",
       missing: [
         { type: "header", key: "next-router-prefetch" },
         { type: "header", key: "purpose", value: "prefetch" },
