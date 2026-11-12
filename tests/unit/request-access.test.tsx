@@ -60,7 +60,7 @@ async function choose(jurisdiction: string) {
     await screen.findByRole("combobox", { name: "Jurisdiction" })
   );
   await user.click(await screen.findByRole("option", { name: jurisdiction }));
-  return Object.assign(user, { rerender });
+  return { user, rerender };
 }
 
 const checkbox = (name: RegExp) =>
@@ -92,7 +92,7 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
       decided_at: null,
       reason: null,
     });
-    const user = await choose("Upper Tribunal");
+    const { user } = await choose("Upper Tribunal");
     await user.click(checkbox(/^Judge/));
     await user.click(checkbox(/^Legal text manager/));
     await user.click(screen.getByRole("button", { name: "Send request" }));
@@ -106,7 +106,7 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
   });
 
   it("does not offer a role the user already holds in that jurisdiction", async () => {
-    const user = await choose("Immigration and Asylum Chamber");
+    const { user } = await choose("Immigration and Asylum Chamber");
 
     expect(checkbox(/^Judge \(you have this role there\)/).disabled).toBe(true);
     expect(checkbox(/^Legal text manager/).disabled).toBe(false);
@@ -146,7 +146,7 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
     api.createAccessRequest.mockRejectedValue(
       new AccessApiError("Already assigned", 409, "already_assigned")
     );
-    const user = await choose("Upper Tribunal");
+    const { user } = await choose("Upper Tribunal");
     await user.click(checkbox(/^Judge/));
     await user.click(screen.getByRole("button", { name: "Send request" }));
 
@@ -192,14 +192,14 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
       persona = approved;
       return approved;
     });
-    const user = await choose("Upper Tribunal");
+    const { user, rerender } = await choose("Upper Tribunal");
     expect(checkbox(/^Judge/).disabled).toBe(false);
     const asked = api.fetchMyAccessRequests.mock.calls.length;
 
     await user.click(screen.getByRole("button", { name: "Check again" }));
     expect(checkAgain).toHaveBeenCalledTimes(1);
     // The access provider adopts the new `me` and renders its consumers again.
-    user.rerender(<RequestAccessPage />);
+    rerender(<RequestAccessPage />);
 
     await waitFor(() => expect(checkbox(/^Judge/).disabled).toBe(true));
     expect(api.fetchMyAccessRequests.mock.calls.length).toBeGreaterThan(asked);
@@ -221,7 +221,7 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
 
   it("stops a context switch over a filled-in form until it is sent or cleared", async () => {
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
-    const user = await choose("Upper Tribunal");
+    const { user } = await choose("Upper Tribunal");
     await user.click(checkbox(/^Judge/));
 
     await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
@@ -241,7 +241,7 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
         finish = resolve;
       })
     );
-    const user = await choose("Upper Tribunal");
+    const { user } = await choose("Upper Tribunal");
     await user.click(checkbox(/^Judge/));
     await user.click(screen.getByRole("button", { name: "Send request" }));
 
