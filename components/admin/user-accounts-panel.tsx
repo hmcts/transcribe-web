@@ -18,6 +18,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { errorMessage } from "@/lib/admin-request";
+import { holdJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import {
   type AdminUser,
   deactivateUser,
@@ -84,6 +85,10 @@ export function UserAccountsPanel() {
     }
   }, [search, page]);
 
+  // A change finishing after the search or page moved on refreshes what is shown now.
+  const loadRef = useRef(load);
+  loadRef.current = load;
+
   useEffect(() => {
     void load();
   }, [load]);
@@ -91,10 +96,12 @@ export function UserAccountsPanel() {
   async function setActive(user: AdminUser, active: boolean) {
     setBusy(true);
     try {
-      await (active ? reactivateUser(user.id) : deactivateUser(user.id));
+      await holdJurisdictionSwitch(
+        active ? reactivateUser(user.id) : deactivateUser(user.id)
+      );
       toast.success(`${active ? "Reactivated" : "Deactivated"} ${user.email}`);
       setConfirming(null);
-      await load();
+      await loadRef.current();
     } catch (err) {
       toast.error(errorMessage(err));
     } finally {

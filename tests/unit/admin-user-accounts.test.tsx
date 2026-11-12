@@ -5,6 +5,7 @@ import { UserAccountsPanel } from "@/components/admin/user-accounts-panel";
 import type { MeResponse } from "@/lib/access/types";
 import type { AdminUser, RoleHistoryEntry } from "@/lib/admin-users-api";
 import { apiClient } from "@/lib/api-client";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import { ET_REF, IAC_REF, ME } from "../access-helpers";
 
 // DIAAT-406: Admin > User accounts, the super administrator's. Every account,
@@ -176,6 +177,53 @@ describe("user accounts (DIAAT-406)", () => {
     await waitFor(() =>
       expect(calls("POST", "/admin/users/u-gone/reactivate")).toHaveLength(1)
     );
+  });
+
+  it("holds a context switch while a change is in flight, then shows the list as searched meanwhile", async () => {
+    serve();
+    const served = request.getMockImplementation();
+    if (!served) throw new Error("serve() sets an implementation");
+    let finish: () => void = () => undefined;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if ((options?.method ?? "GET") === "POST") {
+          await new Promise<void>((resolve) => {
+            finish = resolve;
+          });
+        }
+        return served(endpoint, options);
+      }
+    );
+    const u = userEvent.setup();
+    render(<UserAccountsPanel />);
+
+    await u.click(
+      await screen.findByRole("button", {
+        name: "Reactivate gone@example.test",
+      })
+    );
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+
+    await u.type(screen.getByLabelText("Search by email"), "many");
+    await waitFor(() =>
+      expect(screen.queryByText("admin@example.test")).toBeNull()
+    );
+    finish();
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "Reactivated gone@example.test"
+      )
+    );
+    await waitFor(() =>
+      expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined()
+    );
+    const lastList = calls("GET", "/admin/users").at(-1)?.[0];
+    expect(String(lastList)).toContain("search=many");
+    expect(screen.queryByText("admin@example.test")).toBeNull();
+    expect(screen.getByText("many@example.test")).toBeTruthy();
   });
 
   it("can call a deactivation off", async () => {
