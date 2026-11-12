@@ -2,7 +2,7 @@
  * A jurisdiction's uploaded Word templates (DIAAT-344).
  *
  * In the admin area an administrator who may manage templates uploads one, gets a field for each of
- * its fill-in boxes and links them; judges then choose an enabled template on the
+ * its fill-in boxes and links them; judges then choose a template on the
  * recording page and fill its Hearing Details form. Before then (DIAAT-346) the admin
  * previews it: fills that form with sample details and downloads the document a judge
  * would get.
@@ -14,6 +14,7 @@
  */
 
 import { apiClient } from "@/lib/api-client";
+import type { SignOff } from "@/lib/sign-off";
 
 export type TemplateFieldType =
   | "text"
@@ -73,19 +74,36 @@ export interface AdminTemplate {
   name: string;
   service: string | null;
   file_name: string;
-  enabled: boolean;
+  /** Who can choose it (DIAAT-347): draft, no judge; test, the jurisdiction's test
+   * group and administrators; live, all its judges. */
+  stage: TemplateStage;
+  /** The service lead's sign-off it went live with; null while it is not live. */
+  sign_off: SignOff | null;
   boxes: TemplateBox[];
   fields: TemplateField[];
-  /** What stops it being saved or enabled; empty when it is complete. */
+  /** What stops it being saved or moved on; empty when it is complete. */
   problems: string[];
   version: string;
 }
+
+export type TemplateStage = "draft" | "test" | "live";
+
+export const TEMPLATE_STAGES: { value: TemplateStage; label: string }[] = [
+  { value: "draft", label: "Draft: no judge can choose it" },
+  {
+    value: "test",
+    label: "Test: its test group and administrators can choose it",
+  },
+  { value: "live", label: "Live: all its judges can choose it" },
+];
 
 export interface TemplateSave {
   name: string;
   service: string | null;
   fields: TemplateField[];
-  enabled: boolean;
+  stage: TemplateStage;
+  /** Needed when it goes live (DIAAT-347). */
+  sign_off?: { service_lead: string; confirmed: true } | null;
   version: string;
 }
 

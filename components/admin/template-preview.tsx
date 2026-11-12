@@ -156,7 +156,11 @@ export function TemplatePreview({
         Fill in sample hearing details as a judge would, then download the
         document a judge would get. Sample text stands in for the judge's
         dictation.
-        {!template.enabled && " Judges cannot choose this template yet."}
+        {template.stage === "draft"
+          ? " Judges cannot choose this template yet."
+          : template.stage === "test"
+            ? " Only its test group and administrators can choose this template."
+            : ""}
       </p>
 
       {incomplete ? (

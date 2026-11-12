@@ -51,11 +51,13 @@ type Holder = { assignmentId: string; email: string; id: string; pending?: boole
 
 function serve({ jurisdictions = [IAC], admins = [] as Holder[] } = {}) {
   let list = [...jurisdictions];
+  let listRefused = false;
   const adminList = [...admins];
   request.mockImplementation(async (endpoint: string, options?: RequestInit) => {
     const method = options?.method ?? "GET";
     const body = options?.body ? JSON.parse(String(options.body)) : undefined;
-    if (endpoint === "/admin/jurisdictions") return { data: list };
+    if (endpoint === "/admin/jurisdictions")
+      return listRefused ? { error: "Service unavailable", status: 503 } : { data: list };
     if (endpoint === "/admin/jurisdictions/wording-keys")
       return { data: { keys: { "help.subtitle": "Under the service name" } } };
     const put = endpoint.match(/^\/admin\/jurisdictions\/(\w+)$/);
@@ -63,8 +65,15 @@ function serve({ jurisdictions = [IAC], admins = [] as Holder[] } = {}) {
       const existing = list.find((j) => j.code === put[1]);
       if ((existing?.version ?? "") !== body.version)
         return { error: existing && !body.version ? `${put[1]} already exists` : "changed", status: 409 };
-      const { version: _, ...fields } = body;
-      const saved = { code: put[1], member_count: 0, ...fields, version: "new" } as api.AdminJurisdiction;
+      const { version: _, sign_off: signOff, ...fields } = body;
+      // As the API: going live records the sign-off, leaving live clears it.
+      const sign_off =
+        fields.stage !== "live"
+          ? null
+          : signOff
+            ? { service_lead: signOff.service_lead, signed_off_at: "2026-11-12T10:00:00" }
+            : (existing?.sign_off ?? null);
+      const saved = { code: put[1], member_count: 0, ...fields, sign_off, version: `${existing?.version ?? ""}+` } as api.AdminJurisdiction;
       list = [...list.filter((j) => j.code !== saved.code), saved];
       return { data: saved };
     }
@@ -101,6 +110,10 @@ function serve({ jurisdictions = [IAC], admins = [] as Holder[] } = {}) {
     /** Someone else changes `code` meanwhile. */
     changeElsewhere(code: string, name: string) {
       list = list.map((j) => (j.code === code ? { ...j, name, version: `${j.version}+` } : j));
+    },
+    /** The list cannot be loaded from now on. */
+    refuseList() {
+      listRefused = true;
     },
   };
 }
@@ -450,6 +463,99 @@ describe("JurisdictionsPanel", () => {
     // An email typed but not added yet.
     await user.type(screen.getByLabelText("Sign-in email"), "new@example.test");
     await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved_changes" });
+  });
+
+  it("switches a jurisdiction on for everyone only with the service lead's sign-off (DIAAT-347)", async () => {
+    serve({ jurisdictions: [{ ...ET, stage: "test" }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await user.click(screen.getByLabelText("Who sees it"));
+    await user.click(await screen.findByRole("option", { name: "Live: everyone with a role there sees it" }));
+    const signOff = screen.getByRole("group", { name: "Service lead's sign-off" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(signOff.textContent).toContain("Enter the service lead's name and tick that they have signed it off.");
+    expect(request.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(false);
+
+    await user.type(screen.getByLabelText("Service lead who signed it off"), "A Lead");
+    await user.click(screen.getByLabelText("The service lead has signed this off"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(request.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+    const body = JSON.parse(String(put?.[1]?.body));
+    expect([body.stage, body.sign_off]).toEqual(["live", { service_lead: "A Lead", confirmed: true }]);
+  });
+
+  it("shows who signed a live jurisdiction off, and does not ask again", async () => {
+    serve({
+      jurisdictions: [{ ...ET, stage: "live", sign_off: { service_lead: "A Lead", signed_off_at: "2026-11-12T10:00:00" } }],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+
+    expect(screen.getByText("Signed off by A Lead on 12 November 2026.")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Service lead's sign-off" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(request.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body)).sign_off).toBeUndefined();
+  });
+
+  /** Choose a stage in the open editor and save it. */
+  async function saveStage(user: ReturnType<typeof userEvent.setup>, label: string) {
+    const puts = request.mock.calls.filter(([, o]) => o?.method === "PUT").length;
+    await user.click(screen.getByLabelText("Who sees it"));
+    await user.click(await screen.findByRole("option", { name: label }));
+    if (screen.queryByRole("group", { name: "Service lead's sign-off" })) {
+      await user.type(screen.getByLabelText("Service lead who signed it off"), "A Lead");
+      await user.click(screen.getByLabelText("The service lead has signed this off"));
+    }
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(request.mock.calls.filter(([, o]) => o?.method === "PUT")).toHaveLength(puts + 1));
+    await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).toHaveProperty("disabled", false));
+  }
+
+  it("asks for a fresh sign-off each time it goes live again", async () => {
+    serve({ jurisdictions: [{ ...ET, stage: "test" }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+
+    await saveStage(user, "Live: everyone with a role there sees it");
+    await saveStage(user, "Test: its administrators and test group see it");
+    await user.click(screen.getByLabelText("Who sees it"));
+    await user.click(await screen.findByRole("option", { name: "Live: everyone with a role there sees it" }));
+
+    expect(screen.getByLabelText("Service lead who signed it off")).toHaveProperty("value", "");
+    expect(screen.getByLabelText("The service lead has signed this off").getAttribute("aria-checked")).toBe("false");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Enter the service lead's name and tick that they have signed it off."
+    );
+    expect(request.mock.calls.filter(([, o]) => o?.method === "PUT")).toHaveLength(2);
+  });
+
+  it("asks for the sign-off after leaving live, even when the list could not be reloaded", async () => {
+    const fake = serve({
+      jurisdictions: [{ ...ET, stage: "live", sign_off: { service_lead: "A Lead", signed_off_at: "2026-11-12T10:00:00" } }],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+
+    fake.refuseList();
+    await saveStage(user, "Test: its administrators and test group see it");
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    await user.click(screen.getByLabelText("Who sees it"));
+    await user.click(await screen.findByRole("option", { name: "Live: everyone with a role there sees it" }));
+
+    expect(screen.getByRole("group", { name: "Service lead's sign-off" })).toBeTruthy();
+    expect(screen.queryByText("Signed off by A Lead on 12 November 2026.")).toBeNull();
   });
 
   it("offers a retry when the list cannot be loaded", async () => {
