@@ -1,7 +1,7 @@
 "use client";
 
 import { Download, Eye, Loader2 } from "lucide-react";
-import { useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { TemplateForm } from "@/components/audio/dictation/template-form";
 import { Button } from "@/components/ui/button";
 import {
@@ -79,12 +79,24 @@ export function TemplatePreview({
   const [failure, setFailure] = useState<Failure | null>(null);
   const headingId = useId();
   const incomplete = template.problems.length > 0;
+  // The latest form request: one that answers after another was made, or after the
+  // editor reopened (a save remounts it), must not overwrite the details since.
+  const latest = useRef(0);
+  useEffect(
+    () => () => {
+      latest.current += 1;
+    },
+    []
+  );
 
   async function open() {
+    const asked = ++latest.current;
+    const current = () => asked === latest.current;
     setLoading(true);
     setFailure(null);
     try {
       const loaded = await fetchTemplateForm(code, template.id);
+      if (!current()) return;
       setForm(loaded);
       // The details kept from before, as they fit the saved fields; a sample for each
       // field not filled in yet (new after a save) or whose answer no longer fits.
@@ -100,9 +112,9 @@ export function TemplatePreview({
         )
       );
     } catch (err) {
-      setFailure(failureOf(err));
+      if (current()) setFailure(failureOf(err));
     } finally {
-      setLoading(false);
+      if (current()) setLoading(false);
     }
   }
 

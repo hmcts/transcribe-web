@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -973,6 +974,73 @@ describe("Previewing a template (DIAAT-346)", () => {
       Reference: true,
       Party1Title: "Claimant",
     });
+  });
+
+  it.each([
+    ["not a calendar date", "2026-02-31", "today's sample"],
+    ["a date with spaces", " 2026-02-03 ", "2026-02-03"],
+  ])("keeps a text answer as a date only when it is one: %s", async (_, typed, kept) => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { preview: first } = await openPreview(user);
+    const reference = within(first).getByLabelText(/^Reference/);
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste(typed);
+
+    await chooseType(user, "Reference", "Date");
+    const preview = await saveAndReopen(user);
+
+    const today = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const sample = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    expect((await sentValues(user, preview)).Reference).toBe(
+      kept === "today's sample" ? sample : kept
+    );
+  });
+
+  it("ignores a form that answers after the editor reopened", async () => {
+    serve([UPLOADED]);
+    const served = request.getMockImplementation();
+    let answerLate: () => void = () => undefined;
+    let held = false;
+    request.mockImplementation((endpoint, ...rest) => {
+      if (!held && endpoint.endsWith("/form")) {
+        held = true;
+        return new Promise((resolve) => {
+          answerLate = () => resolve(served?.(endpoint, ...rest) as never);
+        });
+      }
+      return served?.(endpoint, ...rest) as never;
+    });
+    const user = userEvent.setup();
+    const fields = await open(user);
+    await user.click(
+      within(
+        within(fields).getByRole("region", { name: "Preview ET judgment" })
+      ).getByRole("button", { name: "Fill in sample details" })
+    );
+
+    // Saved while the first form is on its way: the editor reopens.
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    const preview = await saveAndReopen(user);
+    const reference = within(preview).getByLabelText(
+      /^Reference/
+    ) as HTMLInputElement;
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste("1234/2026");
+
+    answerLate();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(reference.value).toBe("1234/2026");
+    expect((await sentValues(user, preview)).Reference).toBe("1234/2026");
   });
 
   it("drops choices no longer offered, keeping the ones still offered", async () => {
