@@ -220,9 +220,7 @@ export default function Header() {
               <span className="text-base">Help</span>
             </Link>
           )}
-          {!hideSwitcher && (
-            <ContextSwitcher className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
-          )}
+          {!hideSwitcher && <ContextSwitcher className="px-1" />}
           <DevPersonaPicker className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
           <ThemeToggle />
         </nav>
@@ -244,7 +242,7 @@ export default function Header() {
             </SheetHeader>
             <div className="flex flex-col gap-2">
               {!hideSwitcher && (
-                <ContextSwitcher className="h-10 justify-start px-3 text-sm font-medium" />
+                <ContextSwitcher stacked className="px-3 pb-2" />
               )}
               <DevPersonaPicker className="h-10 justify-start px-3 text-sm font-medium" />
               <SheetClose asChild>

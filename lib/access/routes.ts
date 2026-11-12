@@ -26,6 +26,11 @@ export const ROUTE_PERMISSIONS: RoutePermission[] = [
     anyOf: ["jurisdiction.wording.edit"],
     staysAfterSwitch: true,
   },
+  {
+    prefix: "/request-access",
+    anyOf: ["access.request"],
+    staysAfterSwitch: true,
+  },
 ];
 
 function under(pathname: string, prefix: string): boolean {

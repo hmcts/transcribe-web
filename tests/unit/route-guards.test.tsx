@@ -5,6 +5,7 @@ import RecordLayout from "@/app/record/layout";
 import RecordingLayout from "@/app/recording/layout";
 import UploadLayout from "@/app/upload/layout";
 import WordingLayout from "@/app/jurisdiction-wording/layout";
+import RequestAccessLayout from "@/app/request-access/layout";
 import SpeechDemoLayout from "@/app/speech-demo/layout";
 import { isPathAllowed, landingAfterSwitch } from "@/lib/access/routes";
 import type { MeResponse } from "@/lib/access/types";
@@ -40,21 +41,19 @@ const AREAS: [string, Layout, string][] = [
   ["/recording", RecordingLayout as Layout, "recordings"],
   ["/admin", AdminLayout as Layout, "admin"],
   ["/jurisdiction-wording", WordingLayout as Layout, "wording"],
+  ["/request-access", RequestAccessLayout as Layout, "request access"],
 ];
 
 // Which areas each persona may open, as the permissions the API gave them say.
 const OPENS: [string, MeResponse, string[]][] = [
-  ["a judge", ME.judge, ["/record", "/upload", "/speech-demo", "/recording"]],
-  ["a legal text manager", ME.legalTextManager, ["/admin"]],
-  [
-    "a jurisdiction administrator",
-    ME.jurisdictionAdministrator,
-    ["/admin", "/jurisdiction-wording"],
-  ],
+  ["a judge", ME.judge, ["/record", "/upload", "/speech-demo", "/recording", "/request-access"]],
+  ["a legal text manager", ME.legalTextManager, ["/admin", "/request-access"]],
+  // DIAAT-406: the screen wording is the super administrator's, under Jurisdictions.
+  ["a jurisdiction administrator", ME.jurisdictionAdministrator, ["/admin", "/request-access"]],
   [
     "a jurisdiction super administrator",
     ME.jurisdictionSuperAdministrator,
-    ["/admin", "/jurisdiction-wording"],
+    ["/admin", "/jurisdiction-wording", "/request-access"],
   ],
   ["a system administrator with no jurisdiction", ME.sysadminOnly, ["/admin"]],
 ];

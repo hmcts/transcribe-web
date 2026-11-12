@@ -239,15 +239,15 @@ function AdminTabContent({
 }) {
   switch (tab) {
     case "templates":
-      // DIAAT-344: the Word templates of the jurisdiction this tab works in. Someone
-      // acting globally (a super administrator) picks a jurisdiction under Jurisdictions.
+      // DIAAT-344, DIAAT-406: the Word templates of the jurisdiction this tab works in,
+      // the only one the API lets a jurisdiction administrator manage.
       if (currentCode === undefined) return <LoadingState />;
       return currentCode ? (
         <TemplatesEditor key={`templates:${currentCode}`} code={currentCode} />
       ) : (
         <AdminPlaceholder
           title="Templates"
-          text="Open a jurisdiction under Jurisdictions to manage its templates."
+          text="Choose a jurisdiction to work in from the top of the page to manage its templates."
         />
       );
     case "users":

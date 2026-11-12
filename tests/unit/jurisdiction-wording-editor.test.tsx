@@ -12,8 +12,13 @@ import { ET } from "../jurisdiction-helpers";
 // DIAAT-356: whoever holds `jurisdiction.wording.edit` changes the jurisdiction's
 // wording; any other role is told it cannot.
 
-// DIAAT-373: whether the user may edit the wording is the API's permission.
-let mockPersona: MeResponse = ME.jurisdictionAdministrator;
+// DIAAT-373: whether the user may edit the wording is the API's permission. Since
+// DIAAT-406 no role in a jurisdiction holds it; the page still follows the permission.
+const EDITOR: MeResponse = {
+  ...ME.jurisdictionAdministrator,
+  permissions: [...ME.jurisdictionAdministrator.permissions, "jurisdiction.wording.edit"],
+};
+let mockPersona: MeResponse = EDITOR;
 vi.mock("@/providers/access", async () =>
   (await import("../access-helpers")).mockAccessModule(() => mockPersona)
 );
@@ -33,7 +38,7 @@ const KEYS = {
 
 describe("JurisdictionWordingEditor", () => {
   beforeEach(() => {
-    mockPersona = ME.jurisdictionAdministrator;
+    mockPersona = EDITOR;
     request.mockReset();
     vi.mocked(toast.success).mockClear();
     vi.mocked(toast.error).mockClear();
@@ -136,6 +141,7 @@ describe("JurisdictionWordingEditor", () => {
   it.each([
     ["a judge", ME.judge],
     ["a legal text manager", ME.legalTextManager],
+    ["a jurisdiction administrator", ME.jurisdictionAdministrator],
   ])("tells %s it cannot change the wording, without asking the API", (_n, persona) => {
     mockPersona = persona;
     render(<JurisdictionWordingEditor />);

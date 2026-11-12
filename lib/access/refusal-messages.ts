@@ -12,6 +12,7 @@
  * | `ambiguous_email`            | 409    | assigning by an email that more than one user has used |
  * | `jurisdiction_disabled`      | 409    | assigning, or approving, into a disabled jurisdiction |
  * | `too_many_pending_requests`  | 409    | asking for access with the limit of requests waiting |
+ * | `already_assigned`           | 409    | asking for a role you already hold in that jurisdiction |
  * | `permission_denied`          | 403    | saving a jurisdiction's name or enabled switch without `jurisdiction.create` |
  */
 
@@ -20,6 +21,7 @@ export const ASSIGNMENT_NOT_ALLOWED = "assignment_not_allowed";
 export const AMBIGUOUS_EMAIL = "ambiguous_email";
 export const JURISDICTION_DISABLED = "jurisdiction_disabled";
 export const TOO_MANY_PENDING_REQUESTS = "too_many_pending_requests";
+export const ALREADY_ASSIGNED = "already_assigned";
 export const PERMISSION_DENIED = "permission_denied";
 
 /** Shown next to the Approve and Reject buttons' place on your own request. */
@@ -56,6 +58,8 @@ export function describeRefusal(
       return "That jurisdiction is switched off, so nobody can be given a role there. A super administrator can switch it on again in Admin, Jurisdictions.";
     case TOO_MANY_PENDING_REQUESTS:
       return "You already have as many requests waiting as are allowed. Withdraw one of them, then ask again.";
+    case ALREADY_ASSIGNED:
+      return "You already have that role in that jurisdiction. Switch to it from the top of the page.";
     case PERMISSION_DENIED:
       return context.savingJurisdiction
         ? "Only a super administrator can rename or switch off a jurisdiction. Everything else on this page you can still change."

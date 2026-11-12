@@ -26,7 +26,6 @@ import {
 } from "@/components/ui/table";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { JURISDICTION_SUPER_ADMINISTRATOR } from "@/lib/access/assignable-roles";
-import { fetchAdminJurisdictions } from "@/lib/admin-jurisdictions-api";
 import { errorMessage } from "@/lib/admin-request";
 import {
   type AdminAssignment,
@@ -67,28 +66,11 @@ function whereLabel(jurisdiction: JurisdictionRef | null): string {
   return jurisdiction ? jurisdiction.code : "All jurisdictions";
 }
 
-/** The jurisdictions the caller can work with: the API's list when they may
- * manage jurisdictions, else (or until it loads) the active context's only,
- * never the others the user holds roles in (DIAAT-403). */
+/** The jurisdiction the caller manages users in: the active context's only, never
+ * the others the user holds roles in (DIAAT-403, DIAAT-406). */
 function useCallerJurisdictions(): JurisdictionRef[] {
-  const { can, active } = useAccess();
-  const manage = can("jurisdictions.manage");
-  const [listed, setListed] = useState<JurisdictionRef[] | null>(null);
-  useEffect(() => {
-    if (!manage) return;
-    let current = true;
-    fetchAdminJurisdictions()
-      .then((list) => {
-        if (current) {
-          setListed(list.map((j) => ({ code: j.code, name: j.name })));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      current = false;
-    };
-  }, [manage]);
-  return listed ?? (active?.jurisdiction ? [active.jurisdiction] : []);
+  const { active } = useAccess();
+  return active?.jurisdiction ? [active.jurisdiction] : [];
 }
 
 export function UsersPanel() {
@@ -128,7 +110,7 @@ export function UsersPanel() {
         )}
       </div>
       {view === "history" && showHistory ? (
-        <RoleHistorySection jurisdictions={jurisdictions} />
+        <RoleHistorySection />
       ) : (
         <PeopleSection jurisdictions={jurisdictions} />
       )}
@@ -147,7 +129,6 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
   const [rolesError, setRolesError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{
     items: AdminUser[];
@@ -187,7 +168,6 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
     try {
       const result = await fetchAdminUsers({
         search,
-        jurisdiction: filter || null,
         page,
         pageSize: PAGE_SIZE,
       });
@@ -199,7 +179,7 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
     } finally {
       if (mine === latest.current) setLoading(false);
     }
-  }, [search, filter, page]);
+  }, [search, page]);
 
   useEffect(() => {
     void load();
@@ -252,27 +232,6 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
               />
             </div>
           </div>
-          {jurisdictions.length > 1 && (
-            <div className="space-y-1">
-              <Label htmlFor="users-jurisdiction">Filter by jurisdiction</Label>
-              <select
-                id="users-jurisdiction"
-                className={SELECT_CLASS}
-                value={filter}
-                onChange={(e) => {
-                  setFilter(e.target.value);
-                  setPage(1);
-                }}
-              >
-                <option value="">All of mine</option>
-                {jurisdictions.map((j) => (
-                  <option key={j.code} value={j.code}>
-                    {j.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
         </div>
 
         {error ? (
@@ -317,6 +276,7 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
                     user={user}
                     isMe={user.id === myId}
                     assignable={roles ?? []}
+                    scope={jurisdictions.map((j) => j.code)}
                     confirming={confirming}
                     onConfirming={setConfirming}
                     busy={busy}
@@ -357,6 +317,7 @@ function UserRow({
   user,
   isMe,
   assignable,
+  scope,
   confirming,
   onConfirming,
   busy,
@@ -367,6 +328,8 @@ function UserRow({
   isMe: boolean;
   /** The roles the API says the caller may assign (and so remove). */
   assignable: string[];
+  /** The jurisdictions the caller manages: a role elsewhere is not theirs to remove. */
+  scope: string[];
   confirming: string | null;
   onConfirming: (key: string | null) => void;
   busy: boolean;
@@ -398,7 +361,9 @@ function UserRow({
           <ul className="flex flex-wrap gap-1.5" aria-label={`Roles of ${user.email}`}>
             {user.assignments.map((assignment) => {
               const text = `${roleLabel(assignment.role)} in ${whereLabel(assignment.jurisdiction)}`;
-              const removable = assignable.includes(assignment.role);
+              const removable =
+                assignable.includes(assignment.role) &&
+                scope.includes(assignment.jurisdiction?.code ?? "");
               return (
                 <li
                   key={assignment.id}
@@ -680,12 +645,7 @@ function formatTime(timestamp: string): string {
       });
 }
 
-function RoleHistorySection({
-  jurisdictions,
-}: {
-  jurisdictions: JurisdictionRef[];
-}) {
-  const [filter, setFilter] = useState("");
+function RoleHistorySection() {
   const [page, setPage] = useState(1);
   const [data, setData] = useState<RoleHistoryPage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -696,7 +656,6 @@ function RoleHistorySection({
     setLoading(true);
     setError(null);
     fetchRoleHistory({
-      jurisdiction: filter || null,
       page,
       pageSize: HISTORY_PAGE_SIZE,
     })
@@ -706,7 +665,7 @@ function RoleHistorySection({
     return () => {
       current = false;
     };
-  }, [filter, page]);
+  }, [page]);
 
   return (
     <section aria-labelledby="role-history-heading" className="space-y-3">
@@ -717,27 +676,6 @@ function RoleHistorySection({
         Who gave or removed a role, deactivated someone or decided a request,
         newest first.
       </p>
-      {jurisdictions.length > 1 && (
-        <div className="space-y-1">
-          <Label htmlFor="history-jurisdiction">Filter by jurisdiction</Label>
-          <select
-            id="history-jurisdiction"
-            className={SELECT_CLASS}
-            value={filter}
-            onChange={(e) => {
-              setFilter(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All of mine</option>
-            {jurisdictions.map((j) => (
-              <option key={j.code} value={j.code}>
-                {j.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
       {error ? (
         <p role="alert" className="py-4 text-destructive">
           {error}

@@ -1,10 +1,10 @@
 "use client";
 
-import { Building2, Check, LogOut } from "lucide-react";
-import { useState } from "react";
+import { LogOut, UserRound, UserRoundPlus } from "lucide-react";
+import Link from "next/link";
+import { useId, useState } from "react";
 import { toast } from "sonner";
 import { describeAssignment } from "@/components/access/choose-context";
-import { StageNote } from "@/components/access/stage-note";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -20,18 +20,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  assignmentKey,
-  contextOf,
+  type Assignment,
   type JurisdictionRef,
   jurisdictionsOf,
-  sameContext,
+  roleLabel,
 } from "@/lib/access/types";
+import { stageNote } from "@/lib/jurisdiction-api";
 import { JurisdictionSwitchError } from "@/lib/jurisdiction-switch";
+import cn from "@/lib/utils";
 import { useAccess } from "@/providers/access";
 
 /** Why a switch stopped, in words, and what to do. */
@@ -52,14 +52,60 @@ export function switchFailedMessage(error: unknown, where: string): string {
   return `Your work could not be saved, so you are still working in ${where}. Try again.`;
 }
 
+/** The jurisdiction control's value for the global roles (no jurisdiction). */
+export const ALL_JURISDICTIONS = "-";
+export const ALL_JURISDICTIONS_LABEL = "All jurisdictions";
+
+const whereKey = (assignment: Assignment) =>
+  assignment.jurisdiction?.code ?? ALL_JURISDICTIONS;
+
 /**
- * Where and as what the user is working, for a user with a role (DIAAT-390).
- * With more than one pair it switches between them; for any user it can leave a
- * jurisdiction (which drops their roles there) and sign out. The tab's work is
- * saved first; if it cannot be, the tab stays where it is.
+ * The jurisdictions the user holds any role in, in the order the API listed
+ * them, then "All jurisdictions" if they hold a global role.
  */
-export function ContextSwitcher({ className }: { className?: string }) {
-  const { active, assignments, switchContext, leaveJurisdiction } = useAccess();
+export function jurisdictionChoices(
+  assignments: Assignment[]
+): { value: string; label: string }[] {
+  const choices = jurisdictionsOf(assignments).map((j) => {
+    const note = stageNote(j.stage);
+    return { value: j.code, label: note ? `${j.name} (${note})` : j.name };
+  });
+  if (assignments.some((a) => a.jurisdiction === null)) {
+    choices.push({ value: ALL_JURISDICTIONS, label: ALL_JURISDICTIONS_LABEL });
+  }
+  return choices;
+}
+
+/** The user's roles in one jurisdiction (or, for ALL_JURISDICTIONS, their global roles). */
+export function rolesIn(
+  assignments: Assignment[],
+  where: string
+): Assignment[] {
+  return assignments.filter((a) => whereKey(a) === where);
+}
+
+const SELECT_CLASS =
+  "h-10 min-w-0 rounded-md border border-input bg-background px-2 text-base text-foreground shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
+
+/**
+ * Where and as what the user is working, for a user with a role (DIAAT-390,
+ * DIAAT-406): one control picks the jurisdiction, the other the role held in it.
+ * Changing the jurisdiction switches to the same role there if the user holds it,
+ * else to their first role there. The account menu asks for access elsewhere,
+ * leaves a jurisdiction (which drops their roles there) or signs out. The tab's
+ * work is saved before any switch; if it cannot be, the tab stays where it is.
+ */
+export function ContextSwitcher({
+  className,
+  stacked = false,
+}: {
+  className?: string;
+  /** Visible labels, one control under the other (the narrow-screen menu). */
+  stacked?: boolean;
+}) {
+  const { active, assignments, can, switchContext, leaveJurisdiction } =
+    useAccess();
+  const id = useId();
   const [busy, setBusy] = useState(false);
   const [leaving, setLeaving] = useState<JurisdictionRef | null>(null);
 
@@ -67,7 +113,8 @@ export function ContextSwitcher({ className }: { className?: string }) {
 
   const here = describeAssignment(active);
   const label = `${here.where}: ${here.as}`;
-  const current = contextOf(active);
+  const where = whereKey(active);
+  const roles = rolesIn(assignments, where);
 
   const run = async (work: () => Promise<void>) => {
     setBusy(true);
@@ -80,51 +127,93 @@ export function ContextSwitcher({ className }: { className?: string }) {
     }
   };
 
-  const others = assignments.filter(
-    (assignment) => !sameContext(contextOf(assignment), current)
-  );
+  const chooseJurisdiction = (value: string) => {
+    if (value === where) return;
+    const there = rolesIn(assignments, value);
+    const target = there.find((a) => a.role === active.role) ?? there[0];
+    if (target) void run(() => switchContext(target));
+  };
+
+  const chooseRole = (value: string) => {
+    if (value === active.role) return;
+    const target = roles.find((a) => a.role === value);
+    if (target) void run(() => switchContext(target));
+  };
+
+  const labelClass = stacked ? "text-sm font-medium" : "sr-only";
 
   return (
-    <>
+    <div
+      role="group"
+      aria-label="Where and as what you are working"
+      aria-busy={busy || undefined}
+      className={cn(
+        stacked ? "flex flex-col gap-2" : "flex items-center gap-2",
+        className
+      )}
+    >
+      <label htmlFor={`${id}-jurisdiction`} className={labelClass}>
+        Jurisdiction
+      </label>
+      <select
+        id={`${id}-jurisdiction`}
+        className={cn(SELECT_CLASS, !stacked && "max-w-[14rem]")}
+        value={where}
+        disabled={busy}
+        onChange={(event) => chooseJurisdiction(event.target.value)}
+      >
+        {jurisdictionChoices(assignments).map((choice) => (
+          <option key={choice.value} value={choice.value}>
+            {choice.label}
+          </option>
+        ))}
+      </select>
+      <label htmlFor={`${id}-role`} className={labelClass}>
+        Role
+      </label>
+      <select
+        id={`${id}-role`}
+        className={cn(SELECT_CLASS, !stacked && "max-w-[12rem]")}
+        value={active.role}
+        disabled={busy}
+        onChange={(event) => chooseRole(event.target.value)}
+      >
+        {roles.map((assignment) => (
+          <option key={assignment.role} value={assignment.role}>
+            {roleLabel(assignment.role)}
+          </option>
+        ))}
+      </select>
+      {busy && (
+        <span role="status" className="text-sm text-muted-foreground">
+          Switching...
+        </span>
+      )}
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button
             variant="ghost"
-            className={className}
+            className={stacked ? "h-10 justify-start px-0" : "h-10 px-2"}
             disabled={busy}
-            aria-label={`Working in ${here.where} as ${here.as.toLowerCase()}. Switch or leave`}
+            aria-label="Your access: ask for more, leave a jurisdiction or sign out"
           >
-            <Building2 className="mr-1 size-5" />
-            <span
-              className="text-base lg:max-w-[16rem] lg:truncate"
-              title={label}
-            >
-              {busy ? "Switching..." : label}
-            </span>
+            <UserRound className="size-5" aria-hidden="true" />
+            {stacked && <span className="ml-2 text-sm">Your access</span>}
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-72">
-          <DropdownMenuLabel>Working as</DropdownMenuLabel>
-          <DropdownMenuItem disabled>
-            <Check className="mr-2 size-4" aria-hidden="true" />
-            {label}
-            <StageNote stage={active.jurisdiction?.stage} />
-            <span className="sr-only"> (current)</span>
-          </DropdownMenuItem>
-          {others.map((assignment) => {
-            const { where, as } = describeAssignment(assignment);
-            return (
-              <DropdownMenuItem
-                key={assignmentKey(assignment)}
-                onSelect={() => run(() => switchContext(assignment))}
-              >
-                <span className="mr-2 size-4" aria-hidden="true" />
-                {where}: {as}
-                <StageNote stage={assignment.jurisdiction?.stage} />
+          {can("access.request") && (
+            <>
+              <DropdownMenuItem asChild>
+                <Link href="/request-access">
+                  <UserRoundPlus className="mr-2 size-4" aria-hidden="true" />
+                  Request access
+                </Link>
               </DropdownMenuItem>
-            );
-          })}
-          {jurisdictionsOf(assignments).length > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuSeparator />
+            </>
+          )}
           {jurisdictionsOf(assignments).map((jurisdiction) => (
             <DropdownMenuItem
               key={jurisdiction.code}
@@ -134,7 +223,7 @@ export function ContextSwitcher({ className }: { className?: string }) {
               Leave {jurisdiction.name}
             </DropdownMenuItem>
           ))}
-          <DropdownMenuSeparator />
+          {jurisdictionsOf(assignments).length > 0 && <DropdownMenuSeparator />}
           <DropdownMenuItem asChild>
             <a href="/auth/logout">Sign out</a>
           </DropdownMenuItem>
@@ -168,6 +257,6 @@ export function ContextSwitcher({ className }: { className?: string }) {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </>
+    </div>
   );
 }

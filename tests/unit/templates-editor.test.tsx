@@ -687,11 +687,10 @@ describe("TemplatesEditor", () => {
     }
   });
 
-  it("tells the jurisdictions panel about unsaved edits, and warns before the tab closes", async () => {
+  it("warns before the tab closes with unsaved edits", async () => {
     serve([UPLOADED]);
-    const onStateChange = vi.fn();
     const user = userEvent.setup();
-    render(<TemplatesEditor code="ET" onStateChange={onStateChange} />);
+    render(<TemplatesEditor code="ET" />);
     await user.click(
       await screen.findByRole("button", { name: "ET judgment" })
     );
@@ -709,10 +708,6 @@ describe("TemplatesEditor", () => {
       within(fields).getByLabelText("Label of box Reference"),
       "!"
     );
-    expect(onStateChange).toHaveBeenLastCalledWith({
-      busy: false,
-      unsaved: true,
-    });
     expect(leave()).toBe(true);
   });
 

@@ -20,7 +20,7 @@ export function SuperAdministratorsPanel() {
         jurisdiction={null}
         headingId="super-administrators"
         heading="Who can manage every jurisdiction"
-        intro="Super administrators create jurisdictions, manage them all and appoint each jurisdiction's administrators. You can add yourself."
+        intro="Super administrators create jurisdictions, change their settings and appoint each jurisdiction's administrators. They do not manage users, templates or access requests. You can add yourself."
         noun="super administrator"
         offerSelf
       />

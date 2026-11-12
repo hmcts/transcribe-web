@@ -4,11 +4,6 @@ import { Loader2, Plus, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { RoleHolders } from "@/components/admin/role-holders";
-import {
-  type EditorState,
-  IDLE,
-  TemplatesEditor,
-} from "@/components/admin/templates-editor";
 import { SignOffFields } from "@/components/admin/sign-off";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
@@ -51,16 +46,16 @@ import { useAccess } from "@/providers/access";
  *  - `jurisdiction.create`: adding a jurisdiction;
  *  - `jurisdiction_admin.assign`: who administers each jurisdiction. That is a
  *    role assignment like any other (given by sign-in email, or to someone who has
- *    signed in), not a setting of the jurisdiction. Only a super administrator holds
- *    it, and the tab is shown for the first two (DIAAT-403: a system administrator
- *    gives no jurisdiction role, so it has no Jurisdictions tab).
+ *    signed in, the super administrator included), not a setting of the jurisdiction.
+ *    Only a super administrator holds it, and the tab is shown for the first two
+ *    (DIAAT-403: a system administrator gives no jurisdiction role, so it has no
+ *    Jurisdictions tab; DIAAT-406: a jurisdiction administrator manages its
+ *    jurisdiction's users, templates and approvals, not its settings).
  *
  * DIAAT-345: a new jurisdiction is a draft only its administrators see. Moved to test,
  * its test group sees it too; live, everyone with a role there. It leaves draft only
  * when it is ready, and the editor lists what is missing. That needs an API that knows
  * stages: until it reports them the panel offers none of it.
- * DIAAT-344: a jurisdiction's Word templates are edited under it (with
- * `templates.manage`), for whoever picks a jurisdiction here.
  */
 
 const message = (error: unknown, savingJurisdiction = false) =>
@@ -77,13 +72,6 @@ export function JurisdictionsPanel() {
   // Bumped to reopen the editor from the server's copy, dropping unsaved edits.
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [creating, setCreating] = useState(false);
-  // DIAAT-344: the open jurisdiction's templates. Leaving it (another row, or Add
-  // jurisdiction) closes them: not while a change is under way, and only once the
-  // admin agrees to drop unsaved edits.
-  const [templatesState, setTemplatesState] = useState<EditorState>(IDLE);
-  const mayLeaveTemplates = () =>
-    !templatesState.unsaved ||
-    window.confirm("Discard your unsaved changes to this jurisdiction's template?");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -156,9 +144,7 @@ export function JurisdictionsPanel() {
         {canCreate && (
           <Button
             size="sm"
-            disabled={templatesState.busy}
             onClick={() => {
-              if (!mayLeaveTemplates()) return;
               setCreating(true);
               setSelected(null);
             }}
@@ -189,10 +175,8 @@ export function JurisdictionsPanel() {
                   <button
                     type="button"
                     aria-current={j.code === selected ? "true" : undefined}
-                    className="underline-offset-2 hover:underline disabled:no-underline disabled:opacity-60"
-                    disabled={templatesState.busy && j.code !== selected}
+                    className="underline-offset-2 hover:underline"
                     onClick={() => {
-                      if (j.code !== selected && !mayLeaveTemplates()) return;
                       setSelected(j.code);
                       setCreating(false);
                     }}
@@ -246,15 +230,9 @@ export function JurisdictionsPanel() {
           jurisdiction={current.code}
           headingId="jurisdiction-administrators"
           heading={`Administrators of ${current.code}`}
-          intro="Administrators add users to the jurisdiction, give and remove its roles for judges and legal text managers, approve requests and manage its settings. They cannot appoint or remove other administrators."
+          intro="Administrators add users to the jurisdiction, give and remove its judge and legal text manager roles, approve access requests and manage its templates. They cannot change its settings or appoint other administrators. You can appoint yourself."
           noun="administrator"
-        />
-      )}
-      {can("templates.manage") && current && !creating && (
-        <TemplatesEditor
-          key={`templates:${current.code}`}
-          code={current.code}
-          onStateChange={setTemplatesState}
+          offerSelf
         />
       )}
     </div>

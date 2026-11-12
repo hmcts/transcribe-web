@@ -7,7 +7,8 @@ import type { AdminUser, RoleHistoryEntry } from "@/lib/admin-users-api";
 import { apiClient } from "@/lib/api-client";
 import { IAC_REF, ME } from "../access-helpers";
 
-// DIAAT-385, DIAAT-391, DIAAT-394, DIAAT-374: Admin > Users. The roles on offer
+// DIAAT-385, DIAAT-391, DIAAT-394, DIAAT-374, DIAAT-406: Admin > Users, the
+// jurisdiction administrator's, in the jurisdiction they work in. The roles on offer
 // are the API's own list; the screen keeps none.
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
@@ -95,9 +96,6 @@ function serve(initial: Partial<Server> = {}) {
     const params = new URLSearchParams(query);
     if (state.refuse?.[`${method} ${path}`]) return state.refuse[`${method} ${path}`];
     if (path === "/admin/roles") return { data: { roles: state.roles } };
-    if (path === "/admin/jurisdictions") {
-      return { data: [{ ...IAC_REF }, { ...ET }] };
-    }
     if (path === "/admin/users" && method === "GET") {
       const search = (params.get("search") ?? "").toLowerCase();
       const size = Number(params.get("page_size") ?? 25);
@@ -210,18 +208,53 @@ describe("the people list", () => {
     expect(screen.getByText(/Page 2 of 2/)).toBeTruthy();
   });
 
-  it("filters by jurisdiction when the caller works across several", async () => {
-    persona = ME.jurisdictionSuperAdministrator;
+  it("shows every role a user holds there, one chip each, never collapsed into one (DIAAT-406)", async () => {
+    const MANY = person({
+      id: "u-many",
+      email: "many@example.test",
+      assignments: [
+        at("m-1", "Judge"),
+        at("m-2", "LegalTextManager"),
+        at("m-3", "JurisdictionAdministrator"),
+      ],
+    });
+    serve({ users: [MANY] });
+    render(<UsersPanel />);
+
+    const chips = within(await screen.findByRole("list", { name: "Roles of many@example.test" }));
+    expect(chips.getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Judge in IAC",
+      "Legal text manager in IAC",
+      "Jurisdiction administrator in IAC",
+    ]);
+    await waitFor(() =>
+      expect(chips.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+        "Remove Judge in IAC from many@example.test",
+        "Remove Legal text manager in IAC from many@example.test",
+      ])
+    );
+  });
+
+  it("offers no removal of a role in another jurisdiction, were the API to list one", async () => {
+    serve({
+      users: [person({ id: "u-x", email: "x@example.test", assignments: [at("x-1", "Judge", ET), at("x-2", "Judge")] })],
+    });
+    render(<UsersPanel />);
+
+    const chips = within(await screen.findByRole("list", { name: "Roles of x@example.test" }));
+    await waitFor(() =>
+      expect(chips.getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual([
+        "Remove Judge in IAC from x@example.test",
+      ])
+    );
+  });
+
+  it("has no jurisdiction filter: it is one jurisdiction's list", async () => {
     serve();
-    const user = userEvent.setup();
     render(<UsersPanel />);
     await screen.findByText("anna@example.test");
-
-    await user.selectOptions(await screen.findByLabelText("Filter by jurisdiction"), "ET");
-
-    await waitFor(() =>
-      expect(request.mock.calls.some(([e]) => String(e).includes("jurisdiction=ET"))).toBe(true)
-    );
+    expect(screen.queryByLabelText("Filter by jurisdiction")).toBeNull();
+    expect(request.mock.calls.some(([e]) => String(e).includes("jurisdiction="))).toBe(false);
   });
 });
 
@@ -237,8 +270,7 @@ describe("the roles on offer come from the API", () => {
     expect(within(form).getAllByRole("checkbox")).toHaveLength(2);
   });
 
-  it("offers it when the API lists it (a super administrator)", async () => {
-    persona = ME.jurisdictionSuperAdministrator;
+  it("offers it when the API lists it", async () => {
     serve({ roles: ["Judge", "LegalTextManager", "JurisdictionAdministrator"] });
     render(<UsersPanel />);
 
@@ -268,7 +300,6 @@ describe("the roles on offer come from the API", () => {
   });
 
   it("lets a caller whose list includes it remove that role", async () => {
-    persona = ME.jurisdictionSuperAdministrator;
     serve({ roles: ["Judge", "LegalTextManager", "JurisdictionAdministrator"] });
     render(<UsersPanel />);
 
@@ -308,14 +339,34 @@ describe("adding a user", () => {
     expect((within(form).getByLabelText("Sign-in email") as HTMLInputElement).value).toBe("");
   });
 
-  it("offers only the working jurisdiction, never the others the user holds roles in, until the API lists them (DIAAT-403)", async () => {
+  it("offers only the working jurisdiction, never the others the user holds roles in (DIAAT-403, DIAAT-406)", async () => {
     persona = ME.multiAsAdministrator;
-    serve({ refuse: { "GET /admin/jurisdictions": { error: "Unavailable", status: 503 } } });
+    serve();
     render(<UsersPanel />);
 
     const form = await screen.findByRole("region", { name: "Add a user or give roles" });
     const options = within(within(form).getByLabelText("Jurisdiction")).getAllByRole("option");
     expect(options.map((o) => o.textContent)).toEqual([ME.multiAsAdministrator.active?.jurisdiction?.name]);
+    expect(request.mock.calls.some(([e]) => String(e).startsWith("/admin/jurisdictions"))).toBe(false);
+  });
+
+  it("gives someone who has signed in both Judge and Legal text manager at once (DIAAT-406)", async () => {
+    serve();
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+
+    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
+    await user.type(within(form).getByLabelText("Sign-in email"), "gone");
+    await user.click(await within(form).findByRole("button", { name: /gone@example.test/ }));
+    await user.click(await within(form).findByLabelText("Judge"));
+    await user.click(within(form).getByLabelText("Legal text manager"));
+    await user.click(within(form).getByRole("button", { name: "Add" }));
+
+    await waitFor(() => expect(calls("POST", "/admin/assignments")).toHaveLength(2));
+    expect(calls("POST", "/admin/assignments").map(([, o]) => JSON.parse(String(o?.body)))).toEqual([
+      { user_id: "u-gone", email: null, jurisdiction: "IAC", role: "Judge" },
+      { user_id: "u-gone", email: null, jurisdiction: "IAC", role: "LegalTextManager" },
+    ]);
   });
 
   it("will not add without a person, a role and a jurisdiction", async () => {
@@ -478,7 +529,6 @@ describe("refusals about who a role goes to", () => {
   }
 
   it("gives roles in exactly one jurisdiction, and never offers the global role there (DIAAT-403)", async () => {
-    persona = ME.jurisdictionSuperAdministrator;
     serve({ roles: ["Judge", "LegalTextManager", "JurisdictionAdministrator", "JurisdictionSuperAdministrator"] });
     render(<UsersPanel />);
     const form = await screen.findByRole("region", { name: "Add a user or give roles" });
@@ -696,7 +746,6 @@ describe("the role-change history", () => {
 
 describe("what the Users screen never says", () => {
   it("has no system administrator anywhere, in the lists, the form or the history", async () => {
-    persona = ME.jurisdictionSuperAdministrator;
     serve({
       roles: ["Judge", "LegalTextManager", "JurisdictionAdministrator"],
       history: [{
