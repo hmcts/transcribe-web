@@ -143,6 +143,13 @@ describe(`functional: ${TEST_URL}`, () => {
         (await get("/api/admin/access-requests?status=pending", { cookie }))
           .status
       ).toBe(403);
+      expect(asSuper).toContain("accounts.manage");
+      expect((await get("/api/admin/role-history", { cookie })).status).toBe(
+        200
+      );
+      expect([404, 405]).toContain(
+        (await get("/api/jurisdictions/wording", { cookie })).status
+      );
 
       const administrator = find("JurisdictionAdministrator");
       expect(administrator?.jurisdiction).toBeTruthy();

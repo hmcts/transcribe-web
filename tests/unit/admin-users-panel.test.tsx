@@ -131,10 +131,12 @@ function serve(initial: Partial<Server> = {}) {
     if (path === "/admin/role-history") {
       const size = Number(params.get("page_size") ?? 50);
       const page = Number(params.get("page") ?? 1);
+      const who = params.get("user");
+      const rows = state.history.filter((e) => !who || e.target?.id === who);
       return {
         data: {
-          items: state.history.slice((page - 1) * size, page * size),
-          total: state.history.length,
+          items: rows.slice((page - 1) * size, page * size),
+          total: rows.length,
         },
       };
     }
@@ -668,7 +670,33 @@ describe("the role-change history", () => {
 
     await screen.findByText("anna@example.test");
     expect(screen.queryByRole("button", { name: "Role history" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Role history of/ })).toBeNull();
     expect(calls("GET", "/admin/role-history")).toHaveLength(0);
+  });
+
+  it("shows one person's history from their row, and everyone's again (DIAAT-406)", async () => {
+    serve({
+      history: [
+        entry(),
+        entry({ id: "h-2", change: "user.deactivated", role: null, target: { id: "u-gone", email: "gone@example.test" } }),
+      ],
+    });
+    const user = userEvent.setup();
+    render(<UsersPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "Role history of anna@example.test" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Role change history of anna@example.test" })
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(calls("GET", "/admin/role-history").some(([e]) => String(e).includes("user=u-anna"))).toBe(true)
+    );
+    expect(screen.queryByText("gone@example.test")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Show everyone's history" }));
+    expect(await screen.findByText("gone@example.test")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Role change history" })).toBeTruthy();
   });
 
   it("shows who changed what, in which role, newest first, with role_audit.read", async () => {

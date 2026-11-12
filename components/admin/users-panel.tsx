@@ -4,6 +4,7 @@ import { Loader2, Plus, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Pager, SELECT_CLASS } from "@/components/admin/pager";
+import { RoleHistory } from "@/components/admin/role-history";
 import {
   hasTarget,
   NOBODY,
@@ -30,16 +31,12 @@ import { errorMessage } from "@/lib/admin-request";
 import {
   type AdminAssignment,
   type AdminUser,
-  actorLabel,
   assignRoles,
   deactivateUser,
   deleteAssignment,
-  describeRoleChange,
   fetchAdminRoles,
   fetchAdminUsers,
-  fetchRoleHistory,
   reactivateUser,
-  type RoleHistoryPage,
 } from "@/lib/admin-users-api";
 import {
   type JurisdictionRef,
@@ -56,7 +53,6 @@ import { useAccess } from "@/providers/access";
  */
 
 const PAGE_SIZE = 25;
-const HISTORY_PAGE_SIZE = 50;
 const SEARCH_DELAY_MS = 300;
 
 export const TAKES_EFFECT =
@@ -76,6 +72,7 @@ function useCallerJurisdictions(): JurisdictionRef[] {
 export function UsersPanel() {
   const { can } = useAccess();
   const [view, setView] = useState<"people" | "history">("people");
+  const [historyOf, setHistoryOf] = useState<AdminUser | null>(null);
   const showHistory = can("role_audit.read");
   const jurisdictions = useCallerJurisdictions();
 
@@ -102,7 +99,10 @@ export function UsersPanel() {
               size="sm"
               variant={view === "history" ? "default" : "outline"}
               aria-pressed={view === "history"}
-              onClick={() => setView("history")}
+              onClick={() => {
+                setHistoryOf(null);
+                setView("history");
+              }}
             >
               Role history
             </Button>
@@ -110,9 +110,23 @@ export function UsersPanel() {
         )}
       </div>
       {view === "history" && showHistory ? (
-        <RoleHistorySection />
+        <RoleHistory
+          key={historyOf?.id ?? "everyone"}
+          user={historyOf}
+          onShowAll={() => setHistoryOf(null)}
+        />
       ) : (
-        <PeopleSection jurisdictions={jurisdictions} />
+        <PeopleSection
+          jurisdictions={jurisdictions}
+          onHistory={
+            showHistory
+              ? (user) => {
+                  setHistoryOf(user);
+                  setView("history");
+                }
+              : undefined
+          }
+        />
       )}
     </div>
   );
@@ -122,7 +136,14 @@ export function UsersPanel() {
 // People
 // ---------------------------------------------------------------------------
 
-function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) {
+function PeopleSection({
+  jurisdictions,
+  onHistory,
+}: {
+  jurisdictions: JurisdictionRef[];
+  /** Show the role history of one person (with `role_audit.read`). */
+  onHistory?: (user: AdminUser) => void;
+}) {
   const { me } = useAccess();
   const myId = me?.user.id;
   const [roles, setRoles] = useState<string[] | null>(null);
@@ -286,6 +307,7 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
                         `Removed ${roleLabel(assignment.role)} from ${user.email}`
                       )
                     }
+                    onHistory={onHistory && (() => onHistory(user))}
                     onSetActive={(active) =>
                       run(
                         () =>
@@ -323,6 +345,7 @@ function UserRow({
   busy,
   onRemove,
   onSetActive,
+  onHistory,
 }: {
   user: AdminUser;
   isMe: boolean;
@@ -335,6 +358,7 @@ function UserRow({
   busy: boolean;
   onRemove: (assignment: AdminAssignment) => void;
   onSetActive: (active: boolean) => void;
+  onHistory?: () => void;
 }) {
   const deactivateKey = `deactivate:${user.id}`;
   const canDeactivate = user.assignments.every((a) =>
@@ -472,6 +496,18 @@ function UserRow({
             onClick={() => onSetActive(true)}
           >
             Reactivate
+          </Button>
+        )}
+        {onHistory && !user.pending && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-1"
+            aria-label={`Role history of ${user.email}`}
+            onClick={onHistory}
+          >
+            History
           </Button>
         )}
       </TableCell>
@@ -623,118 +659,6 @@ function AddRolesForm({
             Add
           </Button>
         </form>
-      )}
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Role-change history
-// ---------------------------------------------------------------------------
-
-function formatTime(timestamp: string): string {
-  const parsed = new Date(timestamp);
-  return Number.isNaN(parsed.getTime())
-    ? timestamp
-    : parsed.toLocaleString("en-GB", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-}
-
-function RoleHistorySection() {
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<RoleHistoryPage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let current = true;
-    setLoading(true);
-    setError(null);
-    fetchRoleHistory({
-      page,
-      pageSize: HISTORY_PAGE_SIZE,
-    })
-      .then((result) => current && setData(result))
-      .catch((err) => current && setError(errorMessage(err)))
-      .finally(() => current && setLoading(false));
-    return () => {
-      current = false;
-    };
-  }, [page]);
-
-  return (
-    <section aria-labelledby="role-history-heading" className="space-y-3">
-      <h3 id="role-history-heading" className="text-lg font-semibold">
-        Role change history
-      </h3>
-      <p className="text-sm text-muted-foreground">
-        Who gave or removed a role, deactivated someone or decided a request,
-        newest first.
-      </p>
-      {error ? (
-        <p role="alert" className="py-4 text-destructive">
-          {error}
-        </p>
-      ) : !data ? (
-        <div className="flex justify-center py-8" role="status">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-          <span className="sr-only">Loading the history</span>
-        </div>
-      ) : data.items.length === 0 ? (
-        <p className="py-4 text-sm text-muted-foreground">
-          No role changes have been recorded.
-        </p>
-      ) : (
-        <>
-          <Table aria-busy={loading}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Change</TableHead>
-                <TableHead>Person</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Jurisdiction</TableHead>
-                <TableHead>Done by</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.items.map((entry) => (
-                <TableRow key={entry.id}>
-                  <TableCell className="whitespace-nowrap">
-                    {formatTime(entry.timestamp)}
-                  </TableCell>
-                  <TableCell>{describeRoleChange(entry.change)}</TableCell>
-                  <TableCell>{entry.target?.email ?? ""}</TableCell>
-                  <TableCell>{entry.role ? roleLabel(entry.role) : ""}</TableCell>
-                  <TableCell>{entry.jurisdiction ?? ""}</TableCell>
-                  <TableCell>
-                    {actorLabel(entry)}
-                    {entry.actor_context && (
-                      <span className="block text-xs text-muted-foreground">
-                        as {roleLabel(entry.actor_context.role).toLowerCase()}
-                        {entry.actor_context.jurisdiction
-                          ? ` in ${entry.actor_context.jurisdiction}`
-                          : ""}
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <Pager
-            page={page}
-            pageSize={HISTORY_PAGE_SIZE}
-            total={data.total}
-            onPage={setPage}
-            disabled={loading}
-          />
-        </>
       )}
     </section>
   );

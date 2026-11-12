@@ -140,14 +140,12 @@ describe("Header", () => {
         { admin: true, wording: false, dictation: false, recordings: false, help: true },
       ],
       [
-        // DIAAT-406: the screen wording is the super administrator's, under Jurisdictions.
         "a jurisdiction administrator",
         ME.jurisdictionAdministrator,
         { admin: true, wording: false, dictation: false, recordings: false, help: true },
       ],
       [
-        // Holds the permission, but works in no one jurisdiction (the API answers
-        // 403 no_jurisdiction): it changes wording from Admin, Jurisdictions.
+        // DIAAT-406: screen wording is changed in Admin, Jurisdictions only.
         "a jurisdiction super administrator",
         ME.jurisdictionSuperAdministrator,
         { admin: true, wording: false, dictation: false, recordings: false, help: true },
@@ -172,15 +170,13 @@ describe("Header", () => {
       expect(shown(persona)).toEqual(expected);
     });
 
-    it("links the wording editor to its page, for a context in a jurisdiction that may edit it", () => {
+    it("has no Wording link even with jurisdiction.wording.edit in a jurisdiction (DIAAT-406)", () => {
       mockPersona = {
         ...ME.jurisdictionAdministrator,
         permissions: [...ME.jurisdictionAdministrator.permissions, "jurisdiction.wording.edit"],
       };
-      const { getByRole } = render(<Header />);
-      expect(getByRole("link", { name: /Wording/ }).getAttribute("href")).toBe(
-        "/jurisdiction-wording"
-      );
+      const { queryByRole } = render(<Header />);
+      expect(queryByRole("link", { name: /Wording/ })).toBeNull();
     });
 
     it("leaves dictation and recordings out of the mobile menu for any other role", () => {

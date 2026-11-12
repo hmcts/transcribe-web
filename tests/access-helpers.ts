@@ -61,6 +61,8 @@ const JSUPER: Permission[] = [
   "jurisdiction_admin.assign",
   "jurisdiction.wording.edit",
   "jurisdiction.features",
+  "accounts.manage",
+  "role_audit.read",
 ];
 const SYSADMIN: Permission[] = [
   "admin.access",

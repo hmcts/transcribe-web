@@ -202,6 +202,53 @@ describe("the mock API: who may assign what", () => {
 });
 
 describe("the mock API: deactivation, history, requests, flags, recordings", () => {
+  it("lets a super administrator deactivate and reactivate anyone but itself, administrators and many-jurisdiction users included (DIAAT-406)", async () => {
+    const boss = await session("jsuper");
+    const admin = await session("jadmin-iac");
+    const many = await session("many", "ET:Judge");
+    for (const target of [admin.me.user.id, many.me.user.id]) {
+      expect((await call(boss.token, "POST", `/api/admin/users/${target}/deactivate`)).status).toBe(204);
+      expect((await call(boss.token, "POST", `/api/admin/users/${target}/reactivate`)).status).toBe(204);
+    }
+    const self = await call(boss.token, "POST", `/api/admin/users/${boss.me.user.id}/deactivate`);
+    expect([self.status, self.body.detail.code]).toEqual([403, "cannot_deactivate_self"]);
+  });
+
+  it("lets a jurisdiction administrator deactivate only people whose every role is Judge or LegalTextManager there (DIAAT-406)", async () => {
+    const admin = await session("jadmin-iac");
+    const many = await session("many", "ET:Judge");
+    const other = await session("multi", "IAC:JurisdictionAdministrator");
+    expect((await call(admin.token, "POST", `/api/admin/users/${many.me.user.id}/deactivate`)).body.detail.code).toBe(
+      "assignment_not_allowed"
+    );
+    expect((await call(admin.token, "POST", `/api/admin/users/${other.me.user.id}/deactivate`)).body.detail.code).toBe(
+      "assignment_not_allowed"
+    );
+  });
+
+  it("gives a super administrator every jurisdiction's role history, and narrows it to one user with user= (DIAAT-406)", async () => {
+    const boss = await session("jsuper");
+    const all = (await call(boss.token, "GET", "/api/admin/role-history")).body.items as {
+      jurisdiction: string | null;
+      target: { id: string };
+    }[];
+    expect(new Set(all.map((e) => e.jurisdiction)).size).toBeGreaterThan(1);
+    const judge = await session("judge-iac");
+    const theirs = (await call(boss.token, "GET", `/api/admin/role-history?user=${judge.me.user.id}`)).body.items as {
+      target: { id: string };
+    }[];
+    expect(theirs.length).toBeGreaterThan(0);
+    expect(theirs.every((e) => e.target.id === judge.me.user.id)).toBe(true);
+
+    const admin = await session("jadmin-et");
+    const scoped = (await call(admin.token, "GET", `/api/admin/role-history?user=${judge.me.user.id}`)).body.items as {
+      jurisdiction: string | null;
+    }[];
+    expect(scoped.every((e) => e.jurisdiction === "ET")).toBe(true);
+    const sys = await session("sysadmin");
+    expect((await call(sys.token, "GET", "/api/admin/role-history")).status).toBe(403);
+  });
+
   it("deactivates and reactivates, refuses self-deactivation, and refuses a deactivated user's sign-in", async () => {
     const admin = await session("jadmin-et");
     const target = await session("judge-et");
@@ -328,7 +375,9 @@ describe("the mock API: refusals as the real API gives them", () => {
     expect(legal.permissions).not.toContain("templates.manage");
     const boss = (await call((await session("jsuper")).token, "GET", "/api/me/permissions")).body;
     expect(boss.permissions).toContain("jurisdiction_admin.assign");
-    for (const gone of ["users.manage", "access.approve", "role_audit.read", "templates.manage"]) {
+    expect(boss.permissions).toContain("accounts.manage");
+    expect(boss.permissions).toContain("role_audit.read");
+    for (const gone of ["users.manage", "access.approve", "templates.manage"]) {
       expect(boss.permissions).not.toContain(gone);
     }
   });
@@ -360,7 +409,8 @@ describe("the mock API: refusals as the real API gives them", () => {
   it("answers no_jurisdiction to a global role asking for a jurisdiction's material, context_required to no context", async () => {
     const boss = await session("jsuper");
     expect(code(await call(boss.token, "GET", "/api/jurisdictions/current"))).toBe("no_jurisdiction");
-    expect(code(await call(boss.token, "GET", "/api/jurisdictions/wording"))).toBe("no_jurisdiction");
+    // DIAAT-406: the in-jurisdiction wording route is gone; wording is edited under Jurisdictions.
+    expect((await call(boss.token, "GET", "/api/jurisdictions/wording")).status).toBe(404);
     const sys = await session("sysadmin");
     expect(code(await call(sys.token, "GET", "/api/jurisdictions/current"))).toBe("permission_denied");
     expect(code(await call(sys.token, "GET", "/api/admin/role-history"))).toBe("permission_denied");

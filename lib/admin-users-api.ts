@@ -232,11 +232,18 @@ export interface RoleHistoryPage {
 
 /** `GET /api/admin/role-history` (role_audit.read). */
 export async function fetchRoleHistory(
-  query: { jurisdiction?: string | null; page?: number; pageSize?: number } = {}
+  query: {
+    jurisdiction?: string | null;
+    /** Only the changes made to this user (DIAAT-406). */
+    user?: string;
+    page?: number;
+    pageSize?: number;
+  } = {}
 ): Promise<RoleHistoryPage> {
   const body = await adminRequest<RoleHistoryPage>(
     `/admin/role-history${queryString({
       jurisdiction: query.jurisdiction,
+      user: query.user,
       page: query.page ?? 1,
       page_size: query.pageSize ?? 50,
     })}`,

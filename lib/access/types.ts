@@ -38,6 +38,7 @@ export const PERMISSIONS = [
   "jurisdictions.manage",
   "jurisdiction.wording.edit",
   "jurisdiction.features",
+  "accounts.manage",
   "feature_flags.manage",
   "system.settings",
   "security.alert_test",

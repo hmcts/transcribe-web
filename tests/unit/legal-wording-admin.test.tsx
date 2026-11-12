@@ -307,7 +307,7 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
 
     // DIAAT-406: the legal text manager has the legal text (and frameworks) only; the
     // jurisdiction administrator its users, templates and approvals; the super
-    // administrator the jurisdictions and their administrators only.
+    // administrator the jurisdictions, their administrators and user accounts.
     expect(await tabsFor(ME.legalTextManager)).toEqual(["Document Content"]);
     expect(await tabsFor(ME.jurisdictionAdministrator)).toEqual([
       "Templates",
@@ -316,6 +316,7 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
     ]);
     expect(await tabsFor(ME.jurisdictionSuperAdministrator)).toEqual([
       "Jurisdictions",
+      "User accounts",
     ]);
     // DIAAT-403: a system administrator gives only the super administrator role,
     // so it has no Jurisdictions tab.

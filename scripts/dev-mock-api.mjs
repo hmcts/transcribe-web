@@ -27,7 +27,7 @@
  *   GET    /api/admin/feature-flags     PUT /api/admin/feature-flags/{name}
  *   GET    /api/v1/jobs, /api/v1/jobs/{id}, /api/v1/jobs/{id}/history   (two seeded recordings)
  *   GET    /api/admin/me, /api/templates, /api/transcriptions-metadata (empty; 403 dictation_disabled
- *          with the flag off), /api/jurisdictions/wording
+ *          with the flag off)
  *
  * Checked against the real API (phase 7): response shapes, status codes and refusal codes of the
  * endpoints above match it, except that this mock keeps its state in memory, signs nothing, and
@@ -42,7 +42,11 @@
  * administrator may appoint and remove themselves as a jurisdiction administrator);
  * nobody deactivates themselves, and nobody grants SystemAdministrator. A jurisdiction
  * administrator's Judge and LegalTextManager roles are stored assignments like anyone's,
- * never derived from the administrator role.
+ * never derived from the administrator role. The super administrator (accounts.manage)
+ * deactivates and reactivates any account but its own, and reads the role history of
+ * every jurisdiction; a jurisdiction administrator deactivates only people whose every
+ * role is Judge or LegalTextManager in its jurisdiction, and reads its own history.
+ * The role history takes `user=<id>` for the changes made to one person.
  *
  * "Tokens" are `mock.<base64url JSON>`: the claims of section 2, unsigned. As in
  * the real API, what a token may do is what it carried when it was minted: a role
@@ -88,7 +92,7 @@ const BASIC = ["app.access", "context.switch", "access.request"];
 const JUDGE = [...BASIC, "dictation.use", "recording.upload", "recording.own", "documents.export", "recording.audit.read", "document_content.read"];
 const LEGAL = [...BASIC, "admin.access", "legal_text.manage", "document_content.read", "document_content.write"];
 const JADMIN = [...BASIC, "admin.access", "users.manage", "access.approve", "role_audit.read", "templates.manage"];
-const JSUPER = [...BASIC, "admin.access", "jurisdictions.manage", "jurisdiction.create", "jurisdiction_admin.assign", "jurisdiction.wording.edit", "jurisdiction.features"];
+const JSUPER = [...BASIC, "admin.access", "jurisdictions.manage", "jurisdiction.create", "jurisdiction_admin.assign", "jurisdiction.wording.edit", "jurisdiction.features", "accounts.manage", "role_audit.read"];
 const SYSADMIN = ["admin.access", "feature_flags.manage", "system.settings", "security.alert_test", "jurisdiction_super_admin.assign"];
 const ROLE_PERMISSIONS = {
   Judge: JUDGE,
@@ -681,13 +685,20 @@ const server = createServer(async (req, res) => {
 
   const setActive = /^\/api\/admin\/users\/([^/]+)\/(deactivate|reactivate)$/.exec(path);
   if (method === "POST" && setActive) {
-    if (!need("users.manage")) return;
+    if (!needAny("users.manage", "accounts.manage")) return;
     const target = userById(setActive[1]);
     if (!target) return refuse(res, 404, "user_not_found", "No such user");
     if (target.id === user.id) return refuse(res, 403, "cannot_deactivate_self", "You cannot deactivate yourself");
-    const scoped = !permissions.includes("jurisdiction_admin.assign");
-    if (scoped && !target.assignments.some((p) => p.jurisdiction?.code === claims.ctx?.jurisdiction?.code)) {
-      return refuse(res, 404, "user_not_found", "No such user");
+    // A super administrator (accounts.manage) deactivates anyone else; a jurisdiction
+    // administrator only someone whose every role is Judge or LegalTextManager there.
+    if (!permissions.includes("accounts.manage")) {
+      const here = claims.ctx?.jurisdiction?.code;
+      if (!target.assignments.some((p) => p.jurisdiction?.code === here)) {
+        return refuse(res, 404, "user_not_found", "No such user");
+      }
+      if (target.sysadmin || !target.assignments.every((p) => p.jurisdiction?.code === here && REQUESTABLE.includes(p.role))) {
+        return notAllowed(res, "That person holds a role you cannot give");
+      }
     }
     target.is_active = setActive[2] === "reactivate";
     recordChange(claims, target.is_active ? "user.reactivated" : "user.deactivated", target, claims.ctx?.jurisdiction?.code ?? null, null);
@@ -696,12 +707,16 @@ const server = createServer(async (req, res) => {
 
   if (method === "GET" && path === "/api/admin/role-history") {
     if (!need("role_audit.read")) return;
-    const everywhere = permissions.includes("jurisdiction_admin.assign");
-    const scope = everywhere ? null : claims.ctx?.jurisdiction?.code ?? "";
+    // A super administrator reads every jurisdiction's and the global rows; a
+    // jurisdiction administrator its own jurisdiction's. `user=`: changes to that user.
+    const everywhere = claims.ctx.jurisdiction === null;
+    const scope = everywhere ? null : claims.ctx.jurisdiction.code;
     const wanted = q.get("jurisdiction");
+    const about = q.get("user");
     const rows = roleHistory
       .filter((e) => scope === null || e.jurisdiction === scope)
       .filter((e) => !wanted || e.jurisdiction === wanted)
+      .filter((e) => !about || e.target.id === about)
       .reverse();
     const pageSize = intParam(q.get("page_size"), 50);
     const page = intParam(q.get("page"), 1);
@@ -827,12 +842,6 @@ const server = createServer(async (req, res) => {
       anonymity: { statuses: [] },
     });
   }
-  if (method === "GET" && path === "/api/jurisdictions/wording") {
-    if (!need("jurisdiction.wording.edit")) return;
-    if (!claims.ctx?.jurisdiction) return refuse(res, 403, "no_jurisdiction", "The role you are working as has no jurisdiction.");
-    return send(res, 200, { code: claims.ctx.jurisdiction.code, name: claims.ctx.jurisdiction.name, keys: { "home.intro": "Introduction under the welcome heading" }, wording: {}, version: "v1" });
-  }
-
   return refuse(res, 404, "mock_not_implemented", `The mock API does not implement ${method} ${path}`);
 });
 
