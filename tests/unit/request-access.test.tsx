@@ -292,7 +292,34 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
     await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
       step: "busy",
     });
+    expect(
+      screen
+        .getByRole("button", { name: "Withdraw request for Upper Tribunal" })
+        .hasAttribute("disabled")
+    ).toBe(true);
     finish({});
+    await waitFor(() =>
+      expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined()
+    );
+  });
+
+  it("stops a context switch while checking again", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    checkAgain.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    render(<RequestAccessPage />);
+    await user.click(
+      await screen.findByRole("button", { name: "Check again" })
+    );
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+    finish(persona);
     await waitFor(() =>
       expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined()
     );

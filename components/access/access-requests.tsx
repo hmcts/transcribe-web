@@ -77,7 +77,7 @@ export function AccessRequests({
   // A context switch reloads the tab: not while a request is being sent or
   // withdrawn, nor over a form filled in but not sent.
   useJurisdictionSwitchGuard({
-    busy: sending || withdrawing,
+    busy: sending || withdrawing || checking,
     unsaved: drafted,
   });
 
@@ -193,6 +193,7 @@ export function AccessRequests({
                   variant="outline"
                   aria-label={`Withdraw request for ${nameOf(request)}`}
                   onClick={() => withdraw(request.id)}
+                  disabled={withdrawing}
                 >
                   Withdraw
                 </Button>
