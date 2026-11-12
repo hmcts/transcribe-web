@@ -92,9 +92,11 @@ class ApiClient {
     return null;
   }
 
+  /** ``as: "blob"``: the response is a file (DIAAT-346's preview), not JSON. */
   async request<T>(
     endpoint: string,
-    options: RequestInit = {}
+    options: RequestInit = {},
+    { as = "json" }: { as?: "json" | "blob" } = {}
   ): Promise<ApiResponse<T>> {
     try {
       const url = `${this.baseUrl}${endpoint}`;
@@ -198,7 +200,8 @@ class ApiClient {
         };
       }
 
-      const data = await response.json();
+      const data =
+        as === "blob" ? await response.blob() : await response.json();
       return {
         data,
         status: response.status,
