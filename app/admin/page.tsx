@@ -111,11 +111,7 @@ const ADMIN_TABS: AdminTab[] = [
     value: "jurisdictions",
     label: "Jurisdictions",
     icon: Building2,
-    anyOf: [
-      "jurisdictions.manage",
-      "jurisdiction.create",
-      "jurisdiction_admin.assign",
-    ],
+    anyOf: ["jurisdictions.manage", "jurisdiction.create"],
   },
   {
     value: "super-admins",

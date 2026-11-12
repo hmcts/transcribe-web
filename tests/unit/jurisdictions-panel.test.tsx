@@ -652,8 +652,7 @@ describe("JurisdictionsPanel", () => {
       );
     });
 
-    it("does not offer a super administrator to appoint themselves as a jurisdiction administrator", async () => {
-      // jurisdiction_admin.assign without jurisdiction_super_admin.assign: a super administrator.
+    it("lets a super administrator appoint themselves as a jurisdiction administrator (DIAAT-403)", async () => {
       persona = ME.jurisdictionSuperAdministrator;
       serve({ jurisdictions: [ET] });
       const user = userEvent.setup();
@@ -661,29 +660,19 @@ describe("JurisdictionsPanel", () => {
 
       await user.click(await screen.findByRole("button", { name: "ET" }));
       await user.type(await screen.findByLabelText("Sign-in email"), "someone@localhost.test");
+      const add = screen.getByRole("button", { name: /Add administrator/ }) as HTMLButtonElement;
+      expect(add.disabled).toBe(false);
+      await user.click(add);
 
-      expect(screen.getByText(/You cannot give yourself a role/)).toBeTruthy();
-      expect((screen.getByRole("button", { name: /Add administrator/ }) as HTMLButtonElement).disabled).toBe(true);
-    });
-
-    it("gives whoever assigns administrators but cannot manage jurisdictions only the names and the administrators", async () => {
-      persona = ME.sysadminOnly; // jurisdiction_admin.assign, no jurisdictions.manage or jurisdiction.create
-      serve({ admins: [] });
-      const base = request.getMockImplementation() as typeof apiClient.request;
-      request.mockImplementation(async (endpoint: string, options?: RequestInit) =>
-        endpoint === "/jurisdictions/public"
-          ? { data: [{ code: "IAC", name: "Immigration and Asylum Chamber" }] }
-          : base(endpoint, options)
+      await waitFor(() =>
+        expect(request.mock.calls.some(([endpoint]) => endpoint === "/admin/assignments")).toBe(true)
       );
-      const user = userEvent.setup();
-      render(<JurisdictionsPanel />);
-
-      await user.click(await screen.findByRole("button", { name: "IAC" }));
-      expect(await screen.findByRole("heading", { name: "Administrators of IAC" })).toBeTruthy();
-      // The admin list and the settings are not theirs, and are never asked for.
-      expect(screen.queryByRole("button", { name: /Add jurisdiction/ })).toBeNull();
-      expect(screen.queryByRole("button", { name: "Save" })).toBeNull();
-      expect(request.mock.calls.some(([endpoint]) => String(endpoint).startsWith("/admin/jurisdictions"))).toBe(false);
+      const post = request.mock.calls.find(([endpoint]) => endpoint === "/admin/assignments");
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        email: "someone@localhost.test",
+        jurisdiction: "ET",
+        role: "JurisdictionAdministrator",
+      });
     });
   });
 });

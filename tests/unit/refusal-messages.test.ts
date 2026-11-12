@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  describeRefusal,
-  OWN_REQUEST_NOTE,
-  SELF_ASSIGNMENT_NOTE,
-} from "@/lib/access/refusal-messages";
+import { describeRefusal, OWN_REQUEST_NOTE } from "@/lib/access/refusal-messages";
 import { AdminApiError } from "@/lib/admin-api";
 import { actorLabel, type RoleHistoryEntry } from "@/lib/admin-users-api";
 import { submissionErrorResponseSchema } from "@/lib/editor-contracts";
@@ -18,9 +14,8 @@ describe("describeRefusal", () => {
     expect(describeRefusal(refused("own_request"))).toBe(OWN_REQUEST_NOTE);
   });
 
-  it("says why giving yourself a role is refused, and otherwise keeps the API's words", () => {
+  it("keeps the API's words for a role the caller may not give, to anyone, themselves included", () => {
     const error = refused("assignment_not_allowed", "Only a super administrator assigns that.");
-    expect(describeRefusal(error, { self: true })).toBe(SELF_ASSIGNMENT_NOTE);
     expect(describeRefusal(error)).toBe("Only a super administrator assigns that.");
   });
 

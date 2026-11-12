@@ -321,16 +321,14 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       "Approvals",
       "Jurisdictions",
     ]);
-    // Assigning administrators (jurisdiction_admin.assign) opens Jurisdictions
-    // for them too; the settings in it are for jurisdictions.manage.
+    // DIAAT-403: a system administrator gives only the super administrator role,
+    // so it has no Jurisdictions tab.
     expect(await tabsFor(ME.sysadminOnly)).toEqual([
-      "Jurisdictions",
       "Super administrators",
       "Feature flags",
     ]);
-    // DIAAT-403: the same tabs for a system administrator who holds other roles, while acting as one.
+    // The same tabs for a system administrator who holds other roles, while acting as one.
     expect(await tabsFor(ME.sysadminMultiAsSystem)).toEqual([
-      "Jurisdictions",
       "Super administrators",
       "Feature flags",
     ]);

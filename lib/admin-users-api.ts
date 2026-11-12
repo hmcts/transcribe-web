@@ -168,8 +168,7 @@ export async function deleteAssignment(id: string): Promise<void> {
 export async function assignRoles(
   target: AssignmentTarget,
   jurisdiction: string | null,
-  roles: string[],
-  self = false
+  roles: string[]
 ): Promise<{ added: string[]; failed: { role: string; message: string }[] }> {
   const added: string[] = [];
   const failed: { role: string; message: string }[] = [];
@@ -180,7 +179,7 @@ export async function assignRoles(
     } catch (error) {
       failed.push({
         role,
-        message: describeRefusal(error, { self }, "Not added"),
+        message: describeRefusal(error, {}, "Not added"),
       });
     }
   }

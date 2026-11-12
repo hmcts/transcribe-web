@@ -477,13 +477,32 @@ describe("refusals about who a role goes to", () => {
     return { user, form };
   }
 
-  it("does not offer to give yourself a role: a note instead, and Add stays off (typed email)", async () => {
-    serve();
-    const { form } = await addAs("Someone@Localhost.test");
+  it("gives roles in exactly one jurisdiction, and never offers the global role there (DIAAT-403)", async () => {
+    persona = ME.jurisdictionSuperAdministrator;
+    serve({ roles: ["Judge", "LegalTextManager", "JurisdictionAdministrator", "JurisdictionSuperAdministrator"] });
+    render(<UsersPanel />);
+    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
 
-    expect(within(form).getByText("You cannot give yourself a role. Ask another administrator to add you.")).toBeTruthy();
-    expect((within(form).getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(calls("POST", "/admin/assignments")).toHaveLength(0);
+    expect(await within(form).findByLabelText("Jurisdiction administrator")).toBeTruthy();
+    expect(within(form).queryByLabelText("Jurisdiction super administrator")).toBeNull();
+    const picker = within(form).getByLabelText("Jurisdiction") as HTMLSelectElement;
+    expect(picker.multiple).toBe(false);
+    expect(Array.from(picker.options).some((o) => /All jurisdictions/.test(o.text))).toBe(false);
+  });
+
+  it("lets a jurisdiction administrator give themselves a role below their own (typed email)", async () => {
+    serve();
+    const { user, form } = await addAs("Someone@Localhost.test");
+
+    const add = within(form).getByRole("button", { name: "Add" }) as HTMLButtonElement;
+    expect(add.disabled).toBe(false);
+    await user.click(add);
+    await waitFor(() => expect(calls("POST", "/admin/assignments")).toHaveLength(1));
+    expect(JSON.parse(String(calls("POST", "/admin/assignments")[0][1]?.body))).toMatchObject({
+      email: "someone@localhost.test",
+      jurisdiction: "IAC",
+      role: "Judge",
+    });
   });
 
   it("does the same for yourself picked from the list of people who have signed in", async () => {
@@ -494,37 +513,24 @@ describe("refusals about who a role goes to", () => {
     await user.type(within(form).getByLabelText("Sign-in email"), "someone@loc");
     await user.click(await within(form).findByRole("button", { name: /someone@localhost.test/ }));
     await user.click(await within(form).findByLabelText("Judge"));
+    await user.click(within(form).getByRole("button", { name: "Add" }));
 
-    expect(within(form).getByText(/You cannot give yourself a role/)).toBeTruthy();
-    expect((within(form).getByRole("button", { name: "Add" }) as HTMLButtonElement).disabled).toBe(true);
+    await waitFor(() => expect(calls("POST", "/admin/assignments")).toHaveLength(1));
   });
 
-  it("lets the holder of jurisdiction_super_admin.assign give themselves a role (the API excepts them)", async () => {
-    persona = ME.sysadminOnly;
-    serve({ roles: ["JurisdictionAdministrator", "JurisdictionSuperAdministrator"] });
-    const user = userEvent.setup();
-    render(<UsersPanel />);
-    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
-    await user.type(within(form).getByLabelText("Sign-in email"), "someone@localhost.test");
-
-    expect(within(form).queryByText(/You cannot give yourself a role/)).toBeNull();
-  });
-
-  it("says why when the API refuses a role for yourself anyway (403 assignment_not_allowed)", async () => {
-    // A caller the web cannot tell is themselves (their email differs in the form).
+  it("shows the API's words when it refuses a role (403 assignment_not_allowed)", async () => {
     serve();
     const base = request.getMockImplementation() as typeof apiClient.request;
     request.mockImplementation(async (endpoint, options) =>
       endpoint === "/admin/assignments"
-        ? { error: "You cannot give yourself a role.", status: 403, code: "assignment_not_allowed" }
+        ? { error: "Your role does not allow you to assign that role.", status: 403, code: "assignment_not_allowed" }
         : base(endpoint, options)
     );
-    const { user, form } = await addAs("x@example.test");
+    const { user, form } = await addAs("Someone@Localhost.test");
     await user.click(within(form).getByRole("button", { name: "Add" }));
 
-    // Not known to be themselves: the API's own words are shown.
     await waitFor(() =>
-      expect(toast.error).toHaveBeenCalledWith("Judge was not added: You cannot give yourself a role.")
+      expect(toast.error).toHaveBeenCalledWith("Judge was not added: Your role does not allow you to assign that role.")
     );
   });
 

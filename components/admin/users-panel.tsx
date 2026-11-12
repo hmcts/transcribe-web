@@ -25,7 +25,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
-import { SELF_ASSIGNMENT_NOTE } from "@/lib/access/refusal-messages";
+import { JURISDICTION_SUPER_ADMINISTRATOR } from "@/lib/access/assignable-roles";
 import { fetchAdminJurisdictions } from "@/lib/admin-jurisdictions-api";
 import { errorMessage } from "@/lib/admin-request";
 import {
@@ -222,7 +222,9 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
   return (
     <div className="space-y-6">
       <AddRolesForm
-        roles={roles}
+        // This form gives roles in one jurisdiction; the global role is given on the
+        // Super administrators screen, for all jurisdictions (DIAAT-403).
+        roles={roles?.filter((role) => role !== JURISDICTION_SUPER_ADMINISTRATOR) ?? null}
         rolesError={rolesError}
         jurisdictions={jurisdictions}
         onAdded={load}
@@ -528,7 +530,7 @@ function AddRolesForm({
   jurisdictions: JurisdictionRef[];
   onAdded: () => Promise<void>;
 }) {
-  const { active, me, can } = useAccess();
+  const { active } = useAccess();
   const [who, setWho] = useState<PickedUser>(NOBODY);
   const [chosen, setChosen] = useState<string[]>([]);
   const [jurisdiction, setJurisdiction] = useState("");
@@ -546,19 +548,7 @@ function AddRolesForm({
     jurisdictions.find((j) => j.code === wanted)?.code ??
     (jurisdictions.length === 1 ? jurisdictions[0].code : "");
 
-  // Nobody gives themselves a role, except the one who holds the permission to
-  // appoint super administrators (the API: 403 `assignment_not_allowed`). The
-  // person picked, or an email typed, being the caller is known here, so the
-  // refusal is not provoked.
-  const picksSelf =
-    !!me &&
-    (who.user
-      ? who.user.id === me.user.id
-      : typedEmail(who) === me.user.email.trim().toLowerCase());
-  const selfBlocked = picksSelf && !can("jurisdiction_super_admin.assign");
-
-  const ready =
-    hasTarget(who) && chosen.length > 0 && target !== "" && !busy && !selfBlocked;
+  const ready = hasTarget(who) && chosen.length > 0 && target !== "" && !busy;
 
   function toggle(role: string, on: boolean) {
     setChosen((current) =>
@@ -572,7 +562,7 @@ function AddRolesForm({
       const email = typedEmail(who);
       const to = who.user ? { user_id: who.user.id } : email ? { email } : null;
       if (!to) return;
-      const result = await assignRoles(to, target, chosen, picksSelf);
+      const result = await assignRoles(to, target, chosen);
       const name = who.user?.email ?? email;
       if (result.added.length > 0) {
         toast.success(
@@ -659,11 +649,6 @@ function AddRolesForm({
               </div>
             )}
           </fieldset>
-          {selfBlocked && (
-            <p role="status" className="text-sm text-muted-foreground">
-              {SELF_ASSIGNMENT_NOTE}
-            </p>
-          )}
           <Button type="submit" disabled={!ready}>
             {busy ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />

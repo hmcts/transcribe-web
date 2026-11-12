@@ -117,7 +117,7 @@ plain words and falls back to the API's message for any other code:
 | code | where | what the user sees |
 |---|---|---|
 | `own_request` 403 | Approvals | "This is your own request. Another administrator has to decide it." The queue offers no Approve or Reject on a request whose `requester.id` is the user's own id, so the refusal is only a fallback |
-| `assignment_not_allowed` 403 | Users, Administrators of X, Super administrators | for oneself: "You cannot give yourself a role. Ask another administrator to add you." Add is off, with that note, when the person picked or the email typed is the caller, unless the caller holds `jurisdiction_super_admin.assign` (a system administrator may give themselves a stored role: *Add me* on the Super administrators screen). Otherwise the API's own message |
+| `assignment_not_allowed` 403 | Users, Administrators of X, Super administrators | the API's own message. Giving yourself a role follows the same rule as giving it to anyone (DIAAT-403: only a role strictly below the one you act in; a system administrator gives only the super administrator role, *Add me* on the Super administrators screen), so the screens offer it like any other: the roles listed are `GET /api/admin/roles` |
 | `ambiguous_email` 409 | Users, Administrators of X | "More than one person has signed in with that email address ... choose the person from the list". The picker tells two accounts with one address apart ("account ending ...") and assigns by id |
 | `jurisdiction_disabled` 409 | Users, Administrators of X, Approvals | "That jurisdiction is switched off ... A super administrator can switch it on again" |
 | `too_many_pending_requests` 409 | access request form | "... Withdraw one of them, then ask again." Each pending request has Withdraw on the same page, and the message goes when one is withdrawn |
@@ -142,7 +142,7 @@ that are nobody's material render in any state.
 | Admin tab Templates | `templates.manage` |
 | Admin tab Users | `users.manage` (its Role history view: `role_audit.read`) |
 | Admin tab Approvals | `access.approve` |
-| Admin tab Jurisdictions | `jurisdictions.manage`, `jurisdiction.create` or `jurisdiction_admin.assign` (settings: `jurisdictions.manage`; Add jurisdiction: `jurisdiction.create`; Administrators of a jurisdiction: `jurisdiction_admin.assign`) |
+| Admin tab Jurisdictions | `jurisdictions.manage` or `jurisdiction.create` (settings: `jurisdictions.manage`; Add jurisdiction: `jurisdiction.create`; Administrators of a jurisdiction: `jurisdiction_admin.assign`, which only a super administrator holds). A system administrator has none of them, so no Jurisdictions tab (DIAAT-403) |
 | Admin tab Super administrators | `jurisdiction_super_admin.assign` |
 | Admin tab Feature flags | `feature_flags.manage` |
 | Recording "History" | `recording.audit.read` |
@@ -216,12 +216,14 @@ A role change reaches the person at their next token re-mint, so the screens say
   only the settings: template, hearing recordings, wording): for a holder of
   `jurisdictions.manage` without it the editor shows name and Enabled disabled, with
   a note, and sends the name and `enabled` the jurisdiction already has (which the
-  API accepts; anything else is 403 `permission_denied`). Someone who holds only
-  `jurisdiction_admin.assign` sees the names (`GET /api/jurisdictions/public`) and
-  the administrators, none of the settings.
+  API accepts; anything else is 403 `permission_denied`). A JurisdictionAdministrator
+  is always given in exactly one jurisdiction, the one open here; holding it in several
+  is several assignments, each its own context in the switcher.
 * **Super administrators** (`super-administrators-panel.tsx`): the holders of the
-  global JurisdictionSuperAdministrator role, with add (by email, by picking, or
-  *Add me*) and remove, oneself included.
+  global JurisdictionSuperAdministrator role, always for all jurisdictions (no
+  jurisdiction picker), with add (by email, by picking, or *Add me*) and remove,
+  oneself included. It is one "All jurisdictions" context in the switcher. The Users
+  screen gives roles in one chosen jurisdiction and never offers this role.
 * **Feature flags** (`feature-flags-panel.tsx`, `GET/PUT /api/admin/feature-flags`):
   a switch per flag; shows what the API stored, last changed by whom.
 
@@ -369,7 +371,7 @@ session lives in the dev server's memory: restarting `yarn dev` signs everyone o
 | `jadmin-iac`, `jadmin-et` | administrator of IAC / ET | Admin: Templates, Users, Approvals, Jurisdictions; Wording; no Document Content |
 | `legal-iac` | legal text manager in IAC | Admin: Document Content (editable), Templates; nothing else |
 | `jsuper` | super administrator (global) | Admin: Users (everyone), Approvals, Jurisdictions (add one, appoint administrators); no Wording link |
-| `sysadmin` | none (system administrator) | Admin: Jurisdictions (names, administrators), Super administrators, Feature flags |
+| `sysadmin` | none (system administrator) | Admin: Super administrators, Feature flags |
 | `no-role` | none | "You do not have access yet" with the request form |
 
 **4. Things to try**
@@ -389,8 +391,9 @@ session lives in the dev server's memory: restarting `yarn dev` signs everyone o
   `judge-et` (reload): Dictation is gone, `/record` goes to the home page. The API
   answers its dictation routes 403 `dictation_disabled`; a tab already open hides
   dictation as soon as it meets one. Switch it back on.
-* *Refusals the screens avoid.* As `jadmin-iac`: Users, type `jadmin-iac@localhost.test`
-  and tick Judge (a note says you cannot give yourself a role; Add stays off). Jurisdictions,
+* *Giving yourself a role.* As `jadmin-iac`: Users, type `jadmin-iac@localhost.test`
+  and tick Judge: Add works, as for anyone (a role below your own). Remove it again.
+* *Refusals the screens avoid.* As `jadmin-iac`: Jurisdictions,
   IAC: Name and Enabled are disabled, with a note; Save still works for the settings.
   Approvals, for a request of your own (an administrator asking for another role has no
   button for it in the app; from the browser console on any page:
@@ -399,8 +402,8 @@ session lives in the dev server's memory: restarting `yarn dev` signs everyone o
   As `jsuper`, add a jurisdiction with Enabled off, then add an administrator to it:
   "That jurisdiction is switched off". As `no-role` with five requests pending, a sixth is
   refused with "Withdraw one of them" (withdraw one on the same page, send again).
-* *History of a system administrator's change.* As `sysadmin`: Jurisdictions, IAC, add an
-  administrator by email. As `jsuper`: Users, Role history: the row reads "Done by System
+* *History of a system administrator's change.* As `sysadmin`: Super administrators, add
+  someone by email. As `jsuper`: Users, Role history: the row reads "Done by System
   administrator".
 * *Token expiry.* Start the API with `APP_JWT_TTL_SECONDS=75`, sign in as `multi` and
   choose IAC administrator. Leave the tab open and use it: about every 20 s the web mints
@@ -484,16 +487,17 @@ recordings, owned by `judge-et` and `judge-iac`). The role map is a copy of the
 contract's, and the assignment rules of section 1 are enforced as the real API
 will (a jurisdiction administrator gives Judge and LegalTextManager in the active
 jurisdiction only; a super administrator also JurisdictionAdministrator; a system
-administrator both administrator roles, and any role to themselves; nobody changes
-their own admin role or deactivates themselves; nobody grants SystemAdministrator).
+administrator JurisdictionSuperAdministrator only; the same for oneself as for anyone;
+nobody but a system administrator removes their own admin role, nobody deactivates
+themselves, nobody grants SystemAdministrator).
 `tests/unit/dev-mock-api.test.ts` starts it and checks those rules.
 
 What a token may do is what it carried when minted, as in the real API, so a role
 given or removed reaches the user at their next mint. `APP_JWT_TTL_SECONDS=75`
 makes that quick (the web re-mints 60 s before expiry). At start-up it prints the
 ids of two seeded pending requests, for `/admin?tab=approvals&request=<id>`.
-It also gives the API's review-fix refusals: 403 `assignment_not_allowed` for giving yourself a
-role (a system administrator excepted), 403 `own_request`, 409 `jurisdiction_disabled`, 409
+It also gives the API's review-fix refusals: 403 `assignment_not_allowed` for a role at or
+above your own, 403 `own_request`, 409 `jurisdiction_disabled`, 409
 `too_many_pending_requests` (five), 403 `permission_denied` for a jurisdiction administrator
 changing a name or `enabled`, 409 `edit_conflict`, history rows with `actor.id` null for a
 system administrator's own change, and `{code, message}` 401s (`not_authenticated`,
@@ -532,7 +536,7 @@ persona shape; its role names and role map are test data copied from the contrac
 The API's review-fix changes (DIAAT-373, final web pass) are covered in
 `refusal-messages.test.ts` (the codes in plain words, `actorLabel`, the dictation
 submission's `{code, message}` body), `admin-users-panel.test.tsx` (null history actor,
-no self-assignment, ambiguous email, disabled jurisdiction, the picker telling twins
+self-assignment below your own role, ambiguous email, disabled jurisdiction, the picker telling twins
 apart), `admin-approvals-panel.test.tsx` (no Approve or Reject on one's own request),
 `jurisdictions-panel.test.tsx` (name and Enabled need `jurisdiction.create`),
 `access-provider.test.tsx` (too many pending requests), `lib-api-client.test.ts` (a 401

@@ -35,9 +35,10 @@
  * The assignment rules of section 1 are enforced as the real API will: a
  * jurisdiction administrator assigns Judge and LegalTextManager in the active
  * jurisdiction only; a super administrator also assigns JurisdictionAdministrator;
- * the system administrator assigns JurisdictionAdministrator and
- * JurisdictionSuperAdministrator (and any role to themselves); nobody changes their
- * own admin role or deactivates themselves; nobody grants SystemAdministrator.
+ * the system administrator assigns JurisdictionSuperAdministrator only. Giving a role
+ * to yourself follows the same rules as giving it to anyone (DIAAT-403); nobody but the
+ * system administrator removes their own admin role, nobody deactivates themselves,
+ * and nobody grants SystemAdministrator.
  *
  * "Tokens" are `mock.<base64url JSON>`: the claims of section 2, unsigned. As in
  * the real API, what a token may do is what it carried when it was minted: a role
@@ -82,7 +83,7 @@ const JUDGE = [...BASIC, "dictation.use", "recording.upload", "recording.own", "
 const LEGAL = [...BASIC, "admin.access", "legal_text.manage", "templates.manage", "document_content.read", "document_content.write"];
 const JADMIN = [...BASIC, "admin.access", "users.manage", "access.approve", "role_audit.read", "templates.manage", "jurisdictions.manage", "jurisdiction.wording.edit", "jurisdiction.features"];
 const JSUPER = [...JADMIN, "jurisdiction.create", "jurisdiction_admin.assign"];
-const SYSADMIN = ["admin.access", "feature_flags.manage", "system.settings", "security.alert_test", "jurisdiction_super_admin.assign", "jurisdiction_admin.assign"];
+const SYSADMIN = ["admin.access", "feature_flags.manage", "system.settings", "security.alert_test", "jurisdiction_super_admin.assign"];
 const ROLE_PERMISSIONS = {
   Judge: JUDGE,
   LegalTextManager: LEGAL,
@@ -91,7 +92,7 @@ const ROLE_PERMISSIONS = {
 };
 const STORED_ROLES = Object.keys(ROLE_PERMISSIONS);
 const REQUESTABLE = ["Judge", "LegalTextManager"];
-// The roles whose own-assignment is forbidden (section 1: "your own admin role").
+// The roles nobody but the system administrator removes from themselves.
 const ADMIN_ROLES = ["JurisdictionAdministrator", "JurisdictionSuperAdministrator"];
 
 const a = (code, role) => ({ id: randomUUID(), jurisdiction: code ? refOf(code) : null, role });
@@ -575,7 +576,7 @@ const server = createServer(async (req, res) => {
 
   // ---- admin -------------------------------------------------------------------------
   // What the caller may assign, from the permissions of the token's context (never
-  // a system administrator role). A system administrator may also give themselves any.
+  // a system administrator role).
   const assignable = () => {
     const roles = [];
     if (permissions.includes("users.manage")) roles.push("Judge", "LegalTextManager");
@@ -621,14 +622,8 @@ const server = createServer(async (req, res) => {
     if (body.user_id && !target) return refuse(res, 404, "user_not_found", "No such user");
     const email = String(body.email ?? "").trim().toLowerCase();
     if (!target && !/^[^\s@]+@[^\s@]+$/.test(email)) return refuse(res, 400, "invalid_email", "Enter a full email address");
-    const toSelf = target?.id === user.id;
-    const own = toSelf && actingAsSystem(claims); // acting as system administrator, may give themselves any role
-    if (!own) {
-      if (toSelf) return notAllowed(res, "You cannot give yourself a role.");
-      if (!assignable().includes(role)) return notAllowed(res, "You cannot give that role");
-      if (code !== null && !reaches(code)) return notAllowed(res, "That is not your jurisdiction");
-      if (toSelf && ADMIN_ROLES.includes(role)) return notAllowed(res, "You cannot change your own administrator role");
-    }
+    if (!assignable().includes(role)) return notAllowed(res, "You cannot give that role");
+    if (code !== null && !reaches(code)) return notAllowed(res, "That is not your jurisdiction");
     if (code !== null && jurisdictions.find((j) => j.code === code)?.enabled === false) {
       return refuse(res, 409, "jurisdiction_disabled", "That jurisdiction is disabled: nobody can be given a role there.");
     }
@@ -651,11 +646,10 @@ const server = createServer(async (req, res) => {
     const found = holder?.assignments.find((p) => p.id === assignment[1]);
     if (!holder || !found) return refuse(res, 404, "not_found", "No such assignment");
     const code = found.jurisdiction?.code ?? null;
-    const own = holder.id === user.id && actingAsSystem(claims);
-    if (!own) {
-      if (!assignable().includes(found.role)) return notAllowed(res, "You cannot remove that role");
-      if (code !== null && !reaches(code)) return refuse(res, 404, "not_found", "No such assignment");
-      if (holder.id === user.id && ADMIN_ROLES.includes(found.role)) return notAllowed(res, "You cannot change your own administrator role");
+    if (!assignable().includes(found.role)) return notAllowed(res, "You cannot remove that role");
+    if (code !== null && !reaches(code)) return refuse(res, 404, "not_found", "No such assignment");
+    if (holder.id === user.id && !actingAsSystem(claims) && ADMIN_ROLES.includes(found.role)) {
+      return notAllowed(res, "You cannot remove your own administrator role");
     }
     holder.assignments = holder.assignments.filter((p) => p.id !== found.id);
     if (holder.assignments.length === 0 && pendingByEmail.get(holder.email) === holder) {

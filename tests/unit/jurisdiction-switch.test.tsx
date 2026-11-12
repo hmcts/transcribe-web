@@ -111,6 +111,22 @@ describe("switching context", () => {
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
   });
 
+  it("offers a jurisdiction administrator in two jurisdictions each as its own context (DIAAT-403)", async () => {
+    await openSwitcher(ME.jurisdictionAdministratorInTwo);
+
+    expect(
+      await screen.findByRole("menuitem", { name: /Employment Tribunal: Jurisdiction administrator/ })
+    ).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /All jurisdictions: Jurisdiction administrator/ })).toBeNull();
+  });
+
+  it("shows a super administrator one context for all jurisdictions, not one per jurisdiction (DIAAT-403)", async () => {
+    const trigger = await openSwitcher(ME.jurisdictionSuperAdministrator);
+
+    expect(trigger.getAttribute("aria-label") ?? trigger.textContent).toMatch(/All jurisdictions/);
+    expect(screen.queryByRole("menuitem", { name: /(Employment Tribunal|Immigration and Asylum Chamber): Jurisdiction super/ })).toBeNull();
+  });
+
   it("saves the tab's work, switches with the server, then reloads the tab in the new context", async () => {
     api.postContext.mockResolvedValue(ME.multiAsJudge);
     const order: string[] = [];
