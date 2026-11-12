@@ -74,8 +74,11 @@ local dev proxy does the same, so the token cannot be fetched by hand either.
   offered Judge and Legal text manager in their own jurisdiction, which they can
   switch to from the header), a user given several sees "choose where and as what"
   (`status: "choose"`), a user with none sees the "no access yet" page
-  (`status: "no_access"`). A system administrator with no assignments is
-  `ready` with system pages only.
+  (`status: "no_access"`). A system administrator is offered their system
+  administrator context as one more pair (no jurisdiction), and one with no
+  assignments lands in it. Acting in any pair, the user has that role's
+  permissions only, never those of the other roles they hold (DIAAT-403): a system
+  administrator switched to Judge sees exactly what a Judge sees.
 * Each tab also remembers, in `sessionStorage`, the context its page state was
   loaded for (`lib/jurisdiction-session.ts`) and names it on every call in
   `X-Jurisdiction` (`-` for a global role) and `X-Role`. If another tab switched,
@@ -504,8 +507,7 @@ mock and follow "Running against the real API". The mock was compared with the r
 API (status codes, refusal codes and response shapes of every endpoint it has, for
 every persona) and changed to match: roles on `GET /api/jurisdictions/public`,
 `duplicate_request`, `jurisdiction_not_found`, `no_jurisdiction` for a global role,
-`context_required` (not `permission_denied`) for a system administrator with no
-context, `/api/admin/me`, `/api/templates`, `dictation_disabled`. It stays a stand-in:
+the system administrator context (its permissions only while acting in it, DIAAT-403), `/api/admin/me`, `/api/templates`, `dictation_disabled`. It stays a stand-in:
 it implements nothing of dictation, uploads, document content, and its tokens are not
 signed.
 

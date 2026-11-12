@@ -308,6 +308,16 @@ describe("adding a user", () => {
     expect((within(form).getByLabelText("Sign-in email") as HTMLInputElement).value).toBe("");
   });
 
+  it("offers only the working jurisdiction, never the others the user holds roles in, until the API lists them (DIAAT-403)", async () => {
+    persona = ME.multiAsAdministrator;
+    serve({ refuse: { "GET /admin/jurisdictions": { error: "Unavailable", status: 503 } } });
+    render(<UsersPanel />);
+
+    const form = await screen.findByRole("region", { name: "Add a user or give roles" });
+    const options = within(within(form).getByLabelText("Jurisdiction")).getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual([ME.multiAsAdministrator.active?.jurisdiction?.name]);
+  });
+
   it("will not add without a person, a role and a jurisdiction", async () => {
     serve();
     const user = userEvent.setup();

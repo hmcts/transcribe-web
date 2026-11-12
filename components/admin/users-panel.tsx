@@ -44,7 +44,6 @@ import {
 } from "@/lib/admin-users-api";
 import {
   type JurisdictionRef,
-  jurisdictionsOf,
   roleLabel,
 } from "@/lib/access/types";
 import { useAccess } from "@/providers/access";
@@ -69,9 +68,10 @@ function whereLabel(jurisdiction: JurisdictionRef | null): string {
 }
 
 /** The jurisdictions the caller can work with: the API's list when they may
- * manage jurisdictions, else the ones they hold roles in. */
+ * manage jurisdictions, else (or until it loads) the active context's only,
+ * never the others the user holds roles in (DIAAT-403). */
 function useCallerJurisdictions(): JurisdictionRef[] {
-  const { can, assignments } = useAccess();
+  const { can, active } = useAccess();
   const manage = can("jurisdictions.manage");
   const [listed, setListed] = useState<JurisdictionRef[] | null>(null);
   useEffect(() => {
@@ -88,7 +88,7 @@ function useCallerJurisdictions(): JurisdictionRef[] {
       current = false;
     };
   }, [manage]);
-  return listed ?? jurisdictionsOf(assignments);
+  return listed ?? (active?.jurisdiction ? [active.jurisdiction] : []);
 }
 
 export function UsersPanel() {

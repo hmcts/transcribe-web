@@ -295,11 +295,53 @@ describe("the mock API: refusals as the real API gives them", () => {
     expect(code(await call(boss.token, "GET", "/api/jurisdictions/current"))).toBe("no_jurisdiction");
     expect(code(await call(boss.token, "GET", "/api/jurisdictions/wording"))).toBe("no_jurisdiction");
     const sys = await session("sysadmin");
-    expect(code(await call(sys.token, "GET", "/api/jurisdictions/current"))).toBe("context_required");
+    expect(code(await call(sys.token, "GET", "/api/jurisdictions/current"))).toBe("permission_denied");
+    expect(code(await call(sys.token, "GET", "/api/admin/role-history"))).toBe("permission_denied");
     // What a role has, asked for with no context at all: context_required, not permission_denied.
-    expect(code(await call(sys.token, "GET", "/api/admin/role-history"))).toBe("context_required");
+    const undecided = await session("multi");
+    expect(code(await call(undecided.token, "GET", "/api/admin/role-history"))).toBe("context_required");
     const judge = await session("judge-et");
     expect(code(await call(judge.token, "GET", "/api/admin/role-history"))).toBe("permission_denied");
+  });
+
+  it("lists a system administrator's own context and grants its permissions only while acting in it (DIAAT-403)", async () => {
+    const sys = await session("sysadmin");
+    const me = (await call(sys.token, "GET", "/api/me/permissions")).body;
+    expect(me.assignments).toEqual([{ jurisdiction: null, role: "SystemAdministrator" }]);
+    expect(me.active).toEqual({ jurisdiction: null, role: "SystemAdministrator" });
+    expect(me.permissions).toContain("feature_flags.manage");
+    const judge = await session("judge-et");
+    expect(code(await call(judge.token, "PUT", "/api/me/context", { jurisdiction: null, role: "SystemAdministrator" }))).toBe(
+      "context_not_available"
+    );
+  });
+
+  it("gives a system administrator switched to Judge a Judge's permissions only, and the system ones back as system administrator", async () => {
+    const sys = await session("sysadmin");
+    const given = await call(sys.token, "POST", "/api/admin/assignments", {
+      user_id: sys.me.user.id,
+      jurisdiction: "ET",
+      role: "Judge",
+    });
+    expect(given.status).toBe(201);
+    try {
+      const asJudge = await session("sysadmin", "ET:Judge");
+      const judgeMe = (await call(asJudge.token, "GET", "/api/me/permissions")).body;
+      expect(judgeMe.active).toMatchObject({ role: "Judge" });
+      expect(judgeMe.permissions).toContain("dictation.use");
+      expect(judgeMe.permissions).not.toContain("feature_flags.manage");
+      expect(judgeMe.permissions).not.toContain("admin.access");
+      expect((await call(asJudge.token, "GET", "/api/admin/feature-flags")).status).toBe(403);
+
+      const back = await call(asJudge.token, "PUT", "/api/me/context", { jurisdiction: null, role: "SystemAdministrator" });
+      expect(back.status).toBe(200);
+      expect(back.body.me.permissions).toContain("feature_flags.manage");
+      expect(back.body.me.permissions).not.toContain("dictation.use");
+      expect((await call(back.body.token, "GET", "/api/admin/feature-flags")).status).toBe(200);
+    } finally {
+      const asSystem = await session("sysadmin", "-:SystemAdministrator");
+      expect((await call(asSystem.token, "DELETE", `/api/admin/assignments/${given.body.id}`)).status).toBe(204);
+    }
   });
 
   it("tells who the admin is, and lists roles only to those who may assign", async () => {

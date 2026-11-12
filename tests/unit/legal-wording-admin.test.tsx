@@ -328,6 +328,25 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       "Super administrators",
       "Feature flags",
     ]);
+    // DIAAT-403: the same tabs for a system administrator who holds other roles, while acting as one.
+    expect(await tabsFor(ME.sysadminMultiAsSystem)).toEqual([
+      "Jurisdictions",
+      "Super administrators",
+      "Feature flags",
+    ]);
+  });
+
+  it("shows a system administrator acting as a judge no tab at all (DIAAT-403)", async () => {
+    respondWith(wording());
+    mockPersona = ME.sysadminMultiAsJudge;
+    render(<AdminPage />);
+
+    expect(
+      await screen.findByText("There is nothing to manage here in your role.")
+    ).toBeTruthy();
+    expect(screen.queryAllByRole("tab")).toEqual([]);
+    expect(screen.queryByText("Super administrators")).toBeNull();
+    expect(request).not.toHaveBeenCalled();
   });
 
   it("opens on the first tab the role has, and does not load legal wording for a role without it", async () => {

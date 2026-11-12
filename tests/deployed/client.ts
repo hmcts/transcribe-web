@@ -8,3 +8,16 @@ export function get(
 ): Promise<Response> {
   return fetch(`${TEST_URL}${path}`, { redirect: "manual", headers });
 }
+
+export function postJson(
+  path: string,
+  body: unknown,
+  headers: Record<string, string> = {}
+): Promise<Response> {
+  return fetch(`${TEST_URL}${path}`, {
+    method: "POST",
+    redirect: "manual",
+    headers: { "content-type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+}

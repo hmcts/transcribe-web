@@ -156,6 +156,17 @@ describe("Header", () => {
         ME.sysadminOnly,
         { admin: true, wording: false, dictation: false, recordings: false, help: true },
       ],
+      [
+        // DIAAT-403: holds super administrator and system administrator too, and sees none of it.
+        "a system administrator acting as a judge",
+        ME.sysadminMultiAsJudge,
+        { admin: false, wording: false, dictation: true, recordings: true, help: true },
+      ],
+      [
+        "the same user acting as system administrator",
+        ME.sysadminMultiAsSystem,
+        { admin: true, wording: false, dictation: false, recordings: false, help: true },
+      ],
     ])("for %s", (_, persona, expected) => {
       expect(shown(persona)).toEqual(expected);
     });
@@ -200,7 +211,7 @@ describe("Header", () => {
     });
 
     it("is not shown to a user with no role", () => {
-      mockPersona = ME.sysadminOnly;
+      mockPersona = ME.noAccess;
       render(<Header />);
       expect(screen.queryByRole("button", { name: /Switch or leave/ })).toBeNull();
     });
