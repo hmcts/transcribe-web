@@ -16,6 +16,10 @@ export const DEV_PERSONAS: DevPersona[] = [
   { name: "jadmin-iac", description: "Administrator in IAC" },
   { name: "jadmin-et", description: "Administrator in ET" },
   { name: "legal-iac", description: "Legal text manager in IAC" },
+  {
+    name: "many",
+    description: "Judge in IAC, judge and legal text manager in ET, administrator in SSCS: must choose",
+  },
   { name: "jsuper", description: "Super administrator, every jurisdiction" },
   { name: "sysadmin", description: "System administrator, no jurisdiction" },
   { name: "no-role", description: "Signed in, no access yet" },

@@ -15,6 +15,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   Trash2,
+  UserCog,
   Users,
   X,
 } from "lucide-react";
@@ -25,6 +26,7 @@ import { ApprovalsPanel } from "@/components/admin/approvals-panel";
 import { FeatureFlagsPanel } from "@/components/admin/feature-flags-panel";
 import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
 import { TemplatesEditor } from "@/components/admin/templates-editor";
+import { UserAccountsPanel } from "@/components/admin/user-accounts-panel";
 import { SuperAdministratorsPanel } from "@/components/admin/super-administrators-panel";
 import { UsersPanel } from "@/components/admin/users-panel";
 import { AppSidebar, type Selection } from "@/components/app-sidebar";
@@ -103,10 +105,19 @@ interface AdminTab {
 }
 
 const ADMIN_TABS: AdminTab[] = [
-  { value: "document-content", label: "Document Content", anyOf: ["legal_text.manage"] },
+  {
+    value: "document-content",
+    label: "Document Content",
+    anyOf: ["legal_text.manage"],
+  },
   { value: "templates", label: "Templates", anyOf: ["templates.manage"] },
   { value: "users", label: "Users", icon: Users, anyOf: ["users.manage"] },
-  { value: "approvals", label: "Approvals", icon: Inbox, anyOf: ["access.approve"] },
+  {
+    value: "approvals",
+    label: "Approvals",
+    icon: Inbox,
+    anyOf: ["access.approve"],
+  },
   {
     value: "jurisdictions",
     label: "Jurisdictions",
@@ -114,17 +125,27 @@ const ADMIN_TABS: AdminTab[] = [
     anyOf: ["jurisdictions.manage", "jurisdiction.create"],
   },
   {
+    value: "user-accounts",
+    label: "User accounts",
+    icon: UserCog,
+    anyOf: ["accounts.manage"],
+  },
+  {
     value: "super-admins",
     label: "Super administrators",
     icon: ShieldCheck,
     anyOf: ["jurisdiction_super_admin.assign"],
   },
-  { value: "feature-flags", label: "Feature flags", icon: Flag, anyOf: ["feature_flags.manage"] },
+  {
+    value: "feature-flags",
+    label: "Feature flags",
+    icon: Flag,
+    anyOf: ["feature_flags.manage"],
+  },
 ];
 
 const TAB_TRIGGER_CLASS =
   "rounded-none border-b-2 border-transparent px-1 pb-0 pt-0 h-10 data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none font-medium";
-
 
 export default function AdminPage() {
   // useSearchParams needs a Suspense boundary for the page to build.
@@ -168,14 +189,20 @@ function AdminTabs() {
   return (
     <div className="fixed inset-0 top-14 flex flex-col bg-background">
       <Tabs
-        value={tabs.some((tab) => tab.value === active) ? active : tabs[0].value}
+        value={
+          tabs.some((tab) => tab.value === active) ? active : tabs[0].value
+        }
         onValueChange={setActive}
         className="flex flex-col h-full min-h-0"
       >
         <div className="shrink-0 border-b px-4">
           <TabsList className="h-10 rounded-none bg-transparent p-0 gap-4">
             {tabs.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value} className={TAB_TRIGGER_CLASS}>
+              <TabsTrigger
+                key={tab.value}
+                value={tab.value}
+                className={TAB_TRIGGER_CLASS}
+              >
                 {tab.icon && <tab.icon className="mr-1.5 h-4 w-4" />}
                 {tab.label}
               </TabsTrigger>
@@ -239,15 +266,15 @@ function AdminTabContent({
 }) {
   switch (tab) {
     case "templates":
-      // DIAAT-344: the Word templates of the jurisdiction this tab works in. Someone
-      // acting globally (a super administrator) picks a jurisdiction under Jurisdictions.
+      // DIAAT-344, DIAAT-406: the Word templates of the jurisdiction this tab works in,
+      // the only one the API lets a jurisdiction administrator manage.
       if (currentCode === undefined) return <LoadingState />;
       return currentCode ? (
         <TemplatesEditor key={`templates:${currentCode}`} code={currentCode} />
       ) : (
         <AdminPlaceholder
           title="Templates"
-          text="Open a jurisdiction under Jurisdictions to manage its templates."
+          text="Choose a jurisdiction to work in from the top of the page to manage its templates."
         />
       );
     case "users":
@@ -257,6 +284,8 @@ function AdminTabContent({
     case "jurisdictions":
       // DIAAT-356, DIAAT-394: jurisdictions, and who administers each.
       return <JurisdictionsPanel />;
+    case "user-accounts":
+      return <UserAccountsPanel />;
     case "super-admins":
       return <SuperAdministratorsPanel />;
     case "feature-flags":
@@ -328,9 +357,7 @@ function LegalWordingTab({
   }
 
   const { content: loaded } = state;
-  const deleteName = deleteTarget
-    ? resolveItemTitle(loaded, deleteTarget)
-    : "";
+  const deleteName = deleteTarget ? resolveItemTitle(loaded, deleteTarget) : "";
   const deletesLastFramework =
     deleteTarget?.category === "legal-frameworks" &&
     loaded.legal_frameworks.length === 1;
@@ -411,9 +438,7 @@ function LegalWordingTab({
           if (deleteTarget.category === "hearing-types") {
             await holdJurisdictionSwitch(deleteHearingType(deleteTarget.id));
           } else if (deleteTarget.category === "legal-frameworks") {
-            await holdJurisdictionSwitch(
-              deleteLegalFramework(deleteTarget.id)
-            );
+            await holdJurisdictionSwitch(deleteLegalFramework(deleteTarget.id));
           }
           toast.success(`Deleted "${deleteName}"`);
           if (
@@ -469,7 +494,7 @@ function sameForm(a: unknown, b: unknown): boolean {
 function keepLaterEdits<T>(
   setForm: (update: (prev: T) => T) => void,
   submitted: T,
-  saved: T,
+  saved: T
 ): void {
   setForm((prev) => (sameForm(prev, submitted) ? saved : prev));
 }
@@ -588,7 +613,12 @@ function HearingTypeEditor({
   onSaved: (saved: HearingType) => Promise<void>;
   onDelete?: () => void;
 }) {
-  const blank = { id: "", title: "", hearing_title: "", hearing_description: "" };
+  const blank = {
+    id: "",
+    title: "",
+    hearing_title: "",
+    hearing_description: "",
+  };
   const [form, setForm] = useState<HearingType>(item ?? blank);
   const [saving, setSaving] = useState(false);
   // DIAAT-332: a switch reloads the tab, losing edits not saved, or a save under way.

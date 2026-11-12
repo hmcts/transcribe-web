@@ -5,6 +5,7 @@ import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
 import type * as api from "@/lib/admin-jurisdictions-api";
 import { apiClient } from "@/lib/api-client";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
+import type { MeResponse } from "@/lib/access/types";
 import { ME } from "../access-helpers";
 
 // DIAAT-356, DIAAT-394: whoever may manage jurisdictions adds one and edits its
@@ -14,7 +15,15 @@ import { ME } from "../access-helpers";
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
 
-let persona = ME.jurisdictionSuperAdministrator;
+let persona: MeResponse = ME.jurisdictionSuperAdministrator;
+// No role holds jurisdictions.manage without jurisdiction.create since DIAAT-406; the
+// panel still follows the permissions, so this tests that it does.
+const SETTINGS_ONLY: MeResponse = {
+  ...ME.jurisdictionSuperAdministrator,
+  permissions: ME.jurisdictionSuperAdministrator.permissions.filter(
+    (p) => p !== "jurisdiction.create" && p !== "jurisdiction_admin.assign"
+  ),
+};
 vi.mock("@/providers/access", async () =>
   (await import("../access-helpers")).mockAccessModule(() => persona)
 );
@@ -202,15 +211,16 @@ describe("JurisdictionsPanel", () => {
     });
   });
 
-  it("shows the templates of the jurisdiction that is open (DIAAT-344)", async () => {
+  it("does not show a jurisdiction's templates: they are its administrator's, under Templates (DIAAT-406)", async () => {
     serve({ jurisdictions: [IAC] });
     const user = userEvent.setup();
     render(<JurisdictionsPanel />);
 
     await user.click(await screen.findByRole("button", { name: "IAC" }));
 
-    expect(await screen.findByRole("heading", { name: "Templates of IAC" })).toBeTruthy();
-    expect(request).toHaveBeenCalledWith("/admin/jurisdictions/IAC/templates", undefined);
+    expect(await screen.findByRole("heading", { name: "Administrators of IAC" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Templates of IAC" })).toBeNull();
+    expect(request.mock.calls.some(([endpoint]) => String(endpoint).includes("/templates"))).toBe(false);
   });
 
   it("adds the ET with its wording, no template and no hearing recordings", async () => {
@@ -574,7 +584,7 @@ describe("JurisdictionsPanel", () => {
 
   describe("by permission", () => {
     it("shows creating a jurisdiction only with jurisdiction.create", async () => {
-      persona = ME.jurisdictionAdministrator; // jurisdictions.manage, not jurisdiction.create
+      persona = SETTINGS_ONLY;
       serve({ jurisdictions: [IAC] });
       render(<JurisdictionsPanel />);
 
@@ -582,8 +592,8 @@ describe("JurisdictionsPanel", () => {
       expect(screen.queryByRole("button", { name: /Add jurisdiction/ })).toBeNull();
     });
 
-    it("gives a jurisdiction administrator the settings but no say over administrators", async () => {
-      persona = ME.jurisdictionAdministrator; // no jurisdiction_admin.assign
+    it("gives the settings but no say over administrators without jurisdiction_admin.assign", async () => {
+      persona = SETTINGS_ONLY;
       serve({ jurisdictions: [IAC] });
       const user = userEvent.setup();
       render(<JurisdictionsPanel />);
@@ -594,8 +604,8 @@ describe("JurisdictionsPanel", () => {
       expect(request.mock.calls.some(([endpoint]) => String(endpoint).startsWith("/admin/users"))).toBe(false);
     });
 
-    it("lets a jurisdiction administrator edit the settings but not rename or switch off (needs jurisdiction.create)", async () => {
-      persona = ME.jurisdictionAdministrator;
+    it("lets a holder of jurisdictions.manage edit the settings but not rename or switch off (needs jurisdiction.create)", async () => {
+      persona = SETTINGS_ONLY;
       serve({ jurisdictions: [IAC] });
       const user = userEvent.setup();
       render(<JurisdictionsPanel />);
@@ -650,6 +660,26 @@ describe("JurisdictionsPanel", () => {
       await waitFor(() =>
         expect(toast.error).toHaveBeenCalledWith(expect.stringContaining("Only a super administrator can rename or switch off"))
       );
+    });
+
+    it("lets a super administrator appoint themselves with Add me (DIAAT-406)", async () => {
+      persona = ME.jurisdictionSuperAdministrator;
+      serve({ jurisdictions: [ET] });
+      const user = userEvent.setup();
+      render(<JurisdictionsPanel />);
+
+      await user.click(await screen.findByRole("button", { name: "ET" }));
+      await user.click(await screen.findByRole("button", { name: "Add me" }));
+
+      await waitFor(() =>
+        expect(request.mock.calls.some(([endpoint]) => endpoint === "/admin/assignments")).toBe(true)
+      );
+      const post = request.mock.calls.find(([endpoint]) => endpoint === "/admin/assignments");
+      expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({
+        user_id: ME.jurisdictionSuperAdministrator.user.id,
+        jurisdiction: "ET",
+        role: "JurisdictionAdministrator",
+      });
     });
 
     it("lets a super administrator appoint themselves as a jurisdiction administrator (DIAAT-403)", async () => {

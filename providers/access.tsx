@@ -186,6 +186,8 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   // Refusals that are about who the user is, from any call in the tab (the
   // API's own codes: lib/access/refusals.ts).
   const lastRefreshRef = useRef(0);
+  // A refresh finishing after a switch would store the context the switch left.
+  const switchingRef = useRef(false);
   useEffect(
     () =>
       watchRefusals((code) => {
@@ -210,6 +212,7 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   );
 
   const checkAgain = useCallback(async () => {
+    if (switchingRef.current) return meRef.current;
     try {
       const me = await postRefreshSession();
       adopt(me);
@@ -241,31 +244,37 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
    * work done meanwhile, then reload. On a failure the tab stays as it was. */
   const changeContext = useCallback(
     async (change: () => Promise<MeResponse>, undo: () => Promise<unknown>) => {
+      switchingRef.current = true;
       try {
-        await prepareForJurisdictionSwitch();
+        try {
+          await prepareForJurisdictionSwitch();
+        } catch (error) {
+          throw error instanceof JurisdictionSwitchError
+            ? error
+            : new JurisdictionSwitchError("save", { cause: error });
+        }
+        let me: MeResponse;
+        try {
+          me = await change();
+        } catch (error) {
+          throw new JurisdictionSwitchError("switch", { cause: error });
+        }
+        // Again, just before leaving: anything said or typed meanwhile.
+        try {
+          await prepareForJurisdictionSwitch();
+        } catch (error) {
+          // The tab stays, so the session goes back too: new tabs must not work
+          // in the other context.
+          await undo().catch(() => undefined);
+          throw error instanceof JurisdictionSwitchError
+            ? error
+            : new JurisdictionSwitchError("save", { cause: error });
+        }
+        reloadAfter(me);
       } catch (error) {
-        throw error instanceof JurisdictionSwitchError
-          ? error
-          : new JurisdictionSwitchError("save", { cause: error });
+        switchingRef.current = false;
+        throw error;
       }
-      let me: MeResponse;
-      try {
-        me = await change();
-      } catch (error) {
-        throw new JurisdictionSwitchError("switch", { cause: error });
-      }
-      // Again, just before leaving: anything said or typed meanwhile.
-      try {
-        await prepareForJurisdictionSwitch();
-      } catch (error) {
-        // The tab stays, so the session goes back too: new tabs must not work
-        // in the other context.
-        await undo().catch(() => undefined);
-        throw error instanceof JurisdictionSwitchError
-          ? error
-          : new JurisdictionSwitchError("save", { cause: error });
-      }
-      reloadAfter(me);
     },
     [reloadAfter]
   );
@@ -288,7 +297,10 @@ export function AccessProvider({ children }: { children: React.ReactNode }) {
   const leaveJurisdiction = useCallback(
     async (code: string) => {
       // Leaving cannot be undone from here: there is nothing to put back.
-      await changeContext(() => postLeaveJurisdiction(code), async () => undefined);
+      await changeContext(
+        () => postLeaveJurisdiction(code),
+        async () => undefined
+      );
     },
     [changeContext]
   );

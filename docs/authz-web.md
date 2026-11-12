@@ -70,11 +70,13 @@ local dev proxy does the same, so the token cannot be fetched by hand either.
 
 * The choice of (jurisdiction, role) is remembered for the session on the
   server. There is no default: after sign-in a user given one pair goes straight
-  in (the API selects it; a jurisdiction administrator is given one, and is also
-  offered Judge and Legal text manager in their own jurisdiction, which they can
-  switch to from the header), a user given several sees "choose where and as what"
-  (`status: "choose"`), a user with none sees the "no access yet" page
-  (`status: "no_access"`). A system administrator is offered their system
+  in (the API selects it), a user given several sees "choose where and as what"
+  (`status: "choose"`, the pairs grouped by jurisdiction, global roles last), a
+  user with none sees the "no access yet" page (`status: "no_access"`). The pairs
+  are the stored assignments only: a jurisdiction administrator is not given Judge
+  or Legal text manager by being an administrator (DIAAT-406; existing
+  administrators were given them as stored assignments, which they can remove from
+  themselves in Users). A system administrator is offered their system
   administrator context as one more pair (no jurisdiction), and one with no
   assignments lands in it. Acting in any pair, the user has that role's
   permissions only, never those of the other roles they hold (DIAAT-403): a system
@@ -102,6 +104,15 @@ local dev proxy does the same, so the token cannot be fetched by hand either.
   of a stale save included, is `{"detail": {"code", "message"}}`: `apiClient` reads
   the message and keeps the code (a 401 too), and the dictation submission reads
   the same shape instead of showing "[object Object]".
+* The header switcher (`components/access/context-switcher.tsx`, DIAAT-406) is two
+  labelled controls. The first lists every jurisdiction the user holds any role in,
+  then "All jurisdictions" if they hold a global role (super administrator, system
+  administrator: `jurisdiction: null`); the second lists the roles they hold in the
+  chosen one. Changing the role switches to it; changing the jurisdiction switches to
+  the same role there if they hold it, else to their first role there. Beside them,
+  an account menu ("Your access") has Request access (with `access.request`), Leave
+  for each jurisdiction, and Sign out. On a narrow screen the same controls are in
+  the navigation menu, one under the other, with visible labels.
 * Switching (`providers/access.tsx`, `switchContext`): save the tab's work
   (the `onBeforeJurisdictionSwitch` handlers), `POST /auth/context`, save again,
   then reload at the same page if it is a list-level page the new context may use
@@ -117,10 +128,11 @@ plain words and falls back to the API's message for any other code:
 | code | where | what the user sees |
 |---|---|---|
 | `own_request` 403 | Approvals | "This is your own request. Another administrator has to decide it." The queue offers no Approve or Reject on a request whose `requester.id` is the user's own id, so the refusal is only a fallback |
-| `assignment_not_allowed` 403 | Users, Administrators of X, Super administrators | the API's own message. Giving yourself a role follows the same rule as giving it to anyone (DIAAT-403: only a role strictly below the one you act in; a system administrator gives only the super administrator role, *Add me* on the Super administrators screen), so the screens offer it like any other: the roles listed are `GET /api/admin/roles` |
+| `assignment_not_allowed` 403 | Users, Administrators of X, Super administrators | the API's own message. Giving yourself a role follows the same rule as giving it to anyone (DIAAT-403, DIAAT-406: a jurisdiction administrator gives Judge and Legal text manager, a super administrator gives jurisdiction administrator, *Add me* under Administrators of X, a system administrator gives the super administrator role, *Add me* on the Super administrators screen), so the screens offer it like any other: the roles listed are `GET /api/admin/roles` |
 | `ambiguous_email` 409 | Users, Administrators of X | "More than one person has signed in with that email address ... choose the person from the list". The picker tells two accounts with one address apart ("account ending ...") and assigns by id |
 | `jurisdiction_disabled` 409 | Users, Administrators of X, Approvals | "That jurisdiction is switched off ... A super administrator can switch it on again" |
 | `too_many_pending_requests` 409 | access request form | "... Withdraw one of them, then ask again." Each pending request has Withdraw on the same page, and the message goes when one is withdrawn |
+| `already_assigned` 409 | access request form | "You already have that role in that jurisdiction ..." The form does not offer a role the user holds in the chosen jurisdiction, so this is only a fallback |
 | `permission_denied` 403 | Jurisdictions, saving | "Only a super administrator can rename or switch off a jurisdiction" |
 
 ## How permissions drive the UI
@@ -135,12 +147,13 @@ that are nobody's material render in any state.
 | UI | Needs |
 |---|---|
 | Header: Admin link, home-page Admin tile, `/admin` | `admin.access` |
-| Header: Wording link, `/jurisdiction-wording` | `jurisdiction.wording.edit` and a jurisdiction in the active context (a super administrator holds the permission but works in none: the API answers 403 `no_jurisdiction`, so the page points to Admin, Jurisdictions) |
+| Header account menu: Request access, `/request-access` | `access.request` |
 | Header/home: Dictation, `/record`, `/upload`, `/speech-demo`, dictation list, backup recovery, dictation help | `dictation.use` and the dictation flag (below) |
 | Header/home: hearing recordings, `/recording/**` | `recording.own` (and the jurisdiction using them) |
-| Admin tab Document Content | `legal_text.manage` |
-| Admin tab Templates | `templates.manage` |
-| Admin tab Users | `users.manage` (its Role history view: `role_audit.read`) |
+| Admin tab Document Content (with the legal frameworks) | `legal_text.manage` |
+| Admin tab Templates | `templates.manage`; the active context's jurisdiction, never `GET /api/admin/jurisdictions` |
+| Admin tab Users | `users.manage` (its Role history view, and History per person: `role_audit.read`) |
+| Admin tab User accounts | `accounts.manage` (Role history per person: `role_audit.read`) |
 | Admin tab Approvals | `access.approve` |
 | Admin tab Jurisdictions | `jurisdictions.manage` or `jurisdiction.create` (settings: `jurisdictions.manage`; Add jurisdiction: `jurisdiction.create`; Administrators of a jurisdiction: `jurisdiction_admin.assign`, which only a super administrator holds). A system administrator has none of them, so no Jurisdictions tab (DIAAT-403) |
 | Admin tab Super administrators | `jurisdiction_super_admin.assign` |
@@ -148,11 +161,45 @@ that are nobody's material render in any state.
 | Recording "History" | `recording.audit.read` |
 | Onboarding check, dictation list loading | `app.access`, `dictation.use` |
 
+### Roles and screens (DIAAT-406)
+
+What each role sees, as the API's permissions for it make the screens above show:
+
+| Role (acting in it) | Dictation, Recordings | Document Content | Templates | Users | Approvals | Jurisdictions | User accounts | Super administrators, Feature flags | Request access |
+|---|---|---|---|---|---|---|---|---|---|
+| Judge | yes | | | | | | | | yes |
+| Legal text manager | | yes | | | | | | | yes |
+| Jurisdiction administrator | | | yes (its jurisdiction) | yes (Judge, Legal text manager, deactivate, role history: its jurisdiction) | yes (only role that approves) | | | | yes |
+| Jurisdiction super administrator | | | | | | yes (settings, screen wording, add, appoint and remove administrators, itself included) | yes (deactivate and reactivate anyone but itself, role history across all jurisdictions) | | yes |
+| System administrator | | | | | | | | yes | |
+
+Screen wording is edited only by the super administrator, in Jurisdictions
+(`/api/admin/jurisdictions/{code}/wording`). The in-jurisdiction editor
+(`/jurisdiction-wording`, `GET`/`PUT /api/jurisdictions/wording`) is gone.
+
+Who gives what: the system administrator gives the super administrator role, the
+super administrator gives jurisdiction administrator (from Jurisdictions), the
+jurisdiction administrator gives Judge and Legal text manager (from Users); each may
+give that role to themselves. Judges and legal text managers ask for access and a
+jurisdiction administrator approves.
+
+A user can hold roles in one or more jurisdictions, in any combination (for
+example Judge in IAC, Judge and Legal text manager in Employment, and jurisdiction
+administrator in a third, all at once). "One jurisdiction" only means each
+assignment names exactly one jurisdiction (JSA and SA are global). It never limits
+how many jurisdictions a person can be in. The switcher lists all of them, the
+Users screen gives one person several roles and shows each as its own chip, and a
+user who holds roles asks for more from Request access in the header's account
+menu (`app/request-access/page.tsx`, the same form and `POST /api/access-requests`
+as the no-access page, without the roles they already hold there). Its Check again
+mints now and refreshes the tab's roles, so an approved role reaches the switcher
+without a reload; a filled-in form, or a request being sent or withdrawn, stops a
+context switch until it is sent or cleared.
+
 The path-to-permission table for pages is `lib/access/routes.ts`; the route
 layouts (`app/record/layout.tsx` and the others) use it, and a page at its
-address without the permission shows "This is not available in your role". Templates is
-still a placeholder (templates belong to another epic); every other tab is a
-working screen, described under "Administration" below.
+address without the permission shows "This is not available in your role". Every tab
+is a working screen, described under "Administration" below.
 
 The only role values in the web are the two on the access request form
 (`lib/access/requestable-roles.ts`: what `POST /api/access-requests` accepts),
@@ -175,29 +222,42 @@ show what they are given and show the API's own message when it refuses.
 A role change reaches the person at their next token re-mint, so the screens say
 "takes effect within a few minutes".
 
-* **Users** (`components/admin/users-panel.tsx`, `GET /api/admin/users`): paged
-  (25), searchable by email, filterable by jurisdiction, each user's roles as
-  chips per jurisdiction. The roles a caller can give or take away are exactly
-  `GET /api/admin/roles`: the add form offers those and the remove button shows
-  only on a chip whose role is in that list. A jurisdiction administrator is
-  therefore never offered JurisdictionAdministrator, because the API does not
-  list it for them (a test drives this from the list, with the list changed).
+* **Users** (`components/admin/users-panel.tsx`, `GET /api/admin/users`): the
+  jurisdiction administrator's, for the jurisdiction they are working in (the API
+  returns only that jurisdiction's assignments to them). Paged (25), searchable by
+  email, each of a user's roles there as its own chip. The roles a caller can give
+  or take away are exactly `GET /api/admin/roles`: the add form offers those and the
+  remove button shows only on a chip whose role is in that list and in the caller's
+  jurisdiction. A jurisdiction administrator is therefore never offered
+  JurisdictionAdministrator, because the API does not list it for them (a test drives
+  this from the list, with the list changed).
   The add form takes a signed-in user (picked from a search as you type, by id)
   or an email (pending until first sign-in), a jurisdiction and one or more roles
-  (one `POST /api/admin/assignments` per role; a refused role stays ticked and the
-  API's reason is shown). Removing a role (`DELETE /api/admin/assignments/{id}`)
+  (one `POST /api/admin/assignments` per role, so one person can be given Judge and
+  Legal text manager at once; a refused role stays ticked and the API's reason is
+  shown). Removing a role (`DELETE /api/admin/assignments/{id}`)
   and deactivating (`POST .../deactivate`) ask first; reactivating does not.
   There is no Deactivate button on your own row, nor on a row with a role that is
   not in `GET /api/admin/roles` (the API refuses both: 403 `cannot_deactivate_self`,
   `assignment_not_allowed`).
-  Role history (`GET /api/admin/role-history`, 50 a page) is a second view, shown
-  only with `role_audit.read`. A row's `actor.id` is null when a system
+  Role history (`GET /api/admin/role-history`, 50 a page; `components/admin/role-history.tsx`)
+  is a second view, shown only with `role_audit.read`; each person's row also has
+  History, the same view narrowed with `user=<id>` (DIAAT-406; the API keeps it to the
+  administrator's jurisdiction). A row's `actor.id` is null when a system
   administrator made the change with their own permissions (the API sends
   `email: "system administrator"`, no person): it reads "System administrator"
   (`actorLabel`); an address the API did give is shown; a row missing its actor or
   target does not break the list.
-* **Approvals** (`approvals-panel.tsx`, `GET /api/admin/access-requests?status=pending`):
-  approve or reject with an optional reason. The email link is
+* **User accounts** (`user-accounts-panel.tsx`, `accounts.manage`: the super
+  administrator's, DIAAT-406): every account (`GET /api/admin/users`), searchable by
+  email, with its state; Deactivate (asks first) and Reactivate for anyone but
+  yourself or someone not signed in yet (`POST /api/admin/users/{id}/deactivate|reactivate`;
+  the API answers 403 `cannot_deactivate_self` for yourself), and Role history per
+  person: their changes across all jurisdictions (`role-history?user=<id>`). It gives no
+  roles.
+* **Approvals** (`approvals-panel.tsx`, `GET /api/admin/access-requests?status=pending`,
+  `access.approve`: the jurisdiction administrator only): approve or reject with an
+  optional reason. The email link is
   `/admin?tab=approvals&request=<id>`: the Admin page opens that tab (if the
   caller has it, else the first one they have) and the panel highlights that
   request and scrolls to it. The link carries only the id and grants nothing: the
@@ -206,24 +266,29 @@ A role change reaches the person at their next token re-mint, so the screens say
   waiting for your decision" that confirms nothing about it. An administrator's own
   request in the queue shows who and what but no Approve, Reject or reason box, only
   "This is your own request": nobody decides their own (403 `own_request`).
-* **Jurisdictions** (`jurisdictions-panel.tsx`): settings for
-  `jurisdictions.manage`, *Add jurisdiction* only for `jurisdiction.create`, and,
-  for `jurisdiction_admin.assign`, *Administrators of X*: the JurisdictionAdministrator
-  assignments of that jurisdiction, added by email or by picking a signed-in user,
-  removed by assignment id (`components/admin/role-holders.tsx`). `auto_enrol` and
-  the judge/admin member endpoints are gone. Changing a jurisdiction's name or its
-  Enabled switch needs `jurisdiction.create` (a jurisdiction administrator changes
-  only the settings: template, hearing recordings, wording): for a holder of
-  `jurisdictions.manage` without it the editor shows name and Enabled disabled, with
-  a note, and sends the name and `enabled` the jurisdiction already has (which the
-  API accepts; anything else is 403 `permission_denied`). A JurisdictionAdministrator
-  is always given in exactly one jurisdiction, the one open here; holding it in several
-  is several assignments, each its own context in the switcher.
+* **Jurisdictions** (`jurisdictions-panel.tsx`, the super administrator's): settings
+  (template, hearing recordings, screen wording) for `jurisdictions.manage`, *Add
+  jurisdiction* only for `jurisdiction.create`, and, for `jurisdiction_admin.assign`,
+  *Administrators of X*: the JurisdictionAdministrator assignments of that
+  jurisdiction, added by email, by picking a signed-in user or with *Add me*, removed
+  by assignment id, one's own included (`components/admin/role-holders.tsx`).
+  `auto_enrol` and the judge/admin member endpoints are gone. A jurisdiction's
+  templates are not edited here (DIAAT-406: they are its administrator's, under
+  Templates). Changing a jurisdiction's name or its Enabled switch needs
+  `jurisdiction.create`: for a holder of `jurisdictions.manage` without it (no role
+  since DIAAT-406) the editor shows name and Enabled disabled, with a note, and sends
+  the name and `enabled` the jurisdiction already has. A JurisdictionAdministrator is
+  always given in exactly one jurisdiction, the one open here; holding it in several
+  is several assignments, each its own jurisdiction in the switcher.
+* **Templates** (`templates-editor.tsx`, `templates.manage`: the jurisdiction
+  administrator's): the Word templates of the jurisdiction the tab works in, the
+  active context's (`/api/admin/jurisdictions/{code}/templates`; the API answers 403
+  `jurisdiction_not_in_scope` for any other).
 * **Super administrators** (`super-administrators-panel.tsx`): the holders of the
   global JurisdictionSuperAdministrator role, always for all jurisdictions (no
   jurisdiction picker), with add (by email, by picking, or *Add me*) and remove,
-  oneself included. It is one "All jurisdictions" context in the switcher. The Users
-  screen gives roles in one chosen jurisdiction and never offers this role.
+  oneself included. It is a role under "All jurisdictions" in the switcher. The Users
+  screen gives roles in one jurisdiction and never offers this role.
 * **Feature flags** (`feature-flags-panel.tsx`, `GET/PUT /api/admin/feature-flags`):
   a switch per flag; shows what the API stored, last changed by whom.
 
@@ -367,10 +432,11 @@ session lives in the dev server's memory: restarting `yarn dev` signs everyone o
 |---|---|---|
 | `judge-et` | Judge in ET | Dictation and Recordings; Admin is "not available in your role" |
 | `judge-iac` | Judge in IAC | the same, with the IAC's words ("Hearing recordings") |
-| `multi` | Judge in ET, administrator in IAC | "Choose where and as what"; the header menu switches or leaves |
-| `jadmin-iac`, `jadmin-et` | administrator of IAC / ET | Admin: Templates, Users, Approvals, Jurisdictions; Wording; no Document Content |
-| `legal-iac` | legal text manager in IAC | Admin: Document Content (editable), Templates; nothing else |
-| `jsuper` | super administrator (global) | Admin: Users (everyone), Approvals, Jurisdictions (add one, appoint administrators); no Wording link |
+| `multi` | Judge in ET, administrator in IAC | "Choose where and as what"; the header's two controls switch, its account menu leaves |
+| `many` | Judge in IAC, Judge and legal text manager in ET, administrator in SSCS (mock API; seed it in the API to use it there) | "Choose where and as what"; three jurisdictions in the header, two roles under ET |
+| `jadmin-iac`, `jadmin-et` | administrator of IAC / ET | Admin: Templates, Users, Approvals; no Jurisdictions, no Document Content |
+| `legal-iac` | legal text manager in IAC | Admin: Document Content (editable); nothing else |
+| `jsuper` | super administrator (global) | Admin: Jurisdictions (settings and screen wording, add one, appoint administrators, Add me), User accounts (deactivate, reactivate, role history); nothing else |
 | `sysadmin` | none (system administrator) | Admin: Super administrators, Feature flags |
 | `no-role` | none | "You do not have access yet" with the request form |
 
@@ -386,25 +452,22 @@ session lives in the dev server's memory: restarting `yarn dev` signs everyone o
   someone, read **Role history**. A deactivated person who has the app open gets "Your
   account has been deactivated" on their next call.
 * *Jurisdictions.* As `jsuper`: Add jurisdiction `UT`, then Administrators of UT, add an
-  email. As `sysadmin`: Super administrators, **Add me**, then remove it again.
+  email, then **Add me** and remove yourself again. As `sysadmin`: Super administrators,
+  **Add me**, then remove it again.
+* *More access.* As `judge-et`: the account menu in the header, **Request access**, ask
+  for IAC / Judge (ET / Judge is not offered: you hold it). As `jadmin-iac`, approve it.
 * *Feature flag.* As `sysadmin`: Feature flags, switch `dictation_enabled` off. As
   `judge-et` (reload): Dictation is gone, `/record` goes to the home page. The API
   answers its dictation routes 403 `dictation_disabled`; a tab already open hides
   dictation as soon as it meets one. Switch it back on.
 * *Giving yourself a role.* As `jadmin-iac`: Users, type `jadmin-iac@localhost.test`
-  and tick Judge: Add works, as for anyone (a role below your own). Remove it again.
-* *Refusals the screens avoid.* As `jadmin-iac`: Jurisdictions,
-  IAC: Name and Enabled are disabled, with a note; Save still works for the settings.
-  Approvals, for a request of your own (an administrator asking for another role has no
-  button for it in the app; from the browser console on any page:
-  `fetch('/api/access-requests',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jurisdiction:'IAC',roles:['LegalTextManager']})})`):
-  the request is listed, with "This is your own request" instead of Approve and Reject.
+  and tick Judge and Legal text manager: Add works, as for anyone. Remove them again.
+* *Refusals the screens avoid.* As `jadmin-iac`: Request access, ask for IAC / Legal
+  text manager; then Admin, Approvals: the request is listed, with "This is your own
+  request" instead of Approve and Reject.
   As `jsuper`, add a jurisdiction with Enabled off, then add an administrator to it:
   "That jurisdiction is switched off". As `no-role` with five requests pending, a sixth is
   refused with "Withdraw one of them" (withdraw one on the same page, send again).
-* *History of a system administrator's change.* As `sysadmin`: Super administrators, add
-  someone by email. As `jsuper`: Users, Role history: the row reads "Done by System
-  administrator".
 * *Token expiry.* Start the API with `APP_JWT_TTL_SECONDS=75`, sign in as `multi` and
   choose IAC administrator. Leave the tab open and use it: about every 20 s the web mints
   again from the persona (the stand-in for the Entra ID token) with the chosen context
@@ -473,23 +536,30 @@ caller.
 node scripts/dev-mock-api.mjs        # http://127.0.0.1:8000  (PORT=... to change)
 ```
 
-It implements the contract for the nine personas (`judge-et`, `judge-iac`,
-`multi`, `jadmin-iac`, `jadmin-et`, `legal-iac`, `jsuper`, `sysadmin`, `no-role`)
+It implements the contract for the ten personas (`judge-et`, `judge-iac`,
+`multi`, `many`, `jadmin-iac`, `jadmin-et`, `legal-iac`, `jsuper`, `sysadmin`, `no-role`)
 with in-memory state, so every admin screen can be driven end to end: the
 no-context endpoints (session, permissions, context, leave, public jurisdictions,
 access requests, `GET /api/flags`, `GET /api/jurisdictions/current`), and
 `GET /api/admin/roles`, `GET /api/admin/users`, `POST /api/admin/assignments`,
 `DELETE /api/admin/assignments/{id}`, `POST /api/admin/users/{id}/deactivate` and
 `reactivate`, `GET /api/admin/role-history`, the access request queue and its
-approve/reject, `GET`/`PUT /api/admin/jurisdictions`, `GET`/`PUT /api/admin/feature-flags`,
+approve/reject, `GET`/`PUT /api/admin/jurisdictions`, `GET /api/admin/jurisdictions/wording-keys`,
+`GET /api/admin/jurisdictions/{code}/templates` (empty), `GET`/`PUT /api/admin/feature-flags`,
 and `GET /api/v1/jobs`, `/jobs/{id}` and `/jobs/{id}/history` (two seeded
 recordings, owned by `judge-et` and `judge-iac`). The role map is a copy of the
-contract's, and the assignment rules of section 1 are enforced as the real API
-will (a jurisdiction administrator gives Judge and LegalTextManager in the active
-jurisdiction only; a super administrator also JurisdictionAdministrator; a system
-administrator JurisdictionSuperAdministrator only; the same for oneself as for anyone;
-nobody but a system administrator removes their own admin role, nobody deactivates
-themselves, nobody grants SystemAdministrator).
+contract's as DIAAT-406 changed it, and the assignment rules of section 1 are enforced
+as the real API will (a jurisdiction administrator gives Judge and LegalTextManager in
+the active jurisdiction only; a super administrator JurisdictionAdministrator, anywhere;
+a system administrator JurisdictionSuperAdministrator only; the same for oneself as for
+anyone, removing included; nobody deactivates themselves, nobody grants
+SystemAdministrator). It lists users to a super administrator with their
+JurisdictionAdministrator assignments only, and to a system administrator with their
+JurisdictionSuperAdministrator ones; lets a super administrator (`accounts.manage`)
+deactivate anyone but itself and read every jurisdiction's role history, with
+`user=<id>` narrowing it to one person; takes access requests from users who hold roles
+(409 `already_assigned` for a role held there); and gives no contexts beyond the
+stored assignments. It has no `/api/jurisdictions/wording`.
 `tests/unit/dev-mock-api.test.ts` starts it and checks those rules.
 
 What a token may do is what it carried when minted, as in the real API, so a role
@@ -530,7 +600,12 @@ no-access, 409, dev picker), `jurisdiction-switch.test.tsx` (switch, leave),
 `runtime-flags-route.test.ts`, `dictation-feature-flag.test.ts` (the proxy and the
 fallback), `recording-history.test.tsx` and the history route test under
 `tests/recording/unit`, `user-settings-access.test.tsx`, `no-role-strings.test.ts`,
-`dev-mock-api.test.ts`. `tests/access-helpers.ts` has a `MeResponse` for each
+`dev-mock-api.test.ts`. DIAAT-406: `jurisdiction-switch.test.tsx` (the two controls),
+`legal-wording-admin.test.tsx` (the tabs of each role), `admin-users-panel.test.tsx`
+(Judge and Legal text manager to one person, chips not collapsed),
+`request-access.test.tsx`, `jurisdictions-panel.test.tsx` (Add me, no templates),
+`admin-user-accounts.test.tsx` (search, deactivate and reactivate, one person's history)
+and `route-guards.test.tsx`. `tests/access-helpers.ts` has a `MeResponse` for each
 persona shape; its role names and role map are test data copied from the contract.
 
 The API's review-fix changes (DIAAT-373, final web pass) are covered in

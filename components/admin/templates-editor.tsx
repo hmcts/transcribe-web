@@ -80,27 +80,18 @@ function statusOf(template: AdminTemplate): string {
   return { draft: "Draft", test: "Test group", live: "Live" }[template.stage];
 }
 
-/** A change under way, or edits not saved: what the open field list reports to the
- * list, and the list to the jurisdictions panel. */
-export interface EditorState {
+/** A change under way, or edits not saved: what the open field list reports to the list. */
+interface EditorState {
   busy: boolean;
   unsaved: boolean;
 }
 
-export const IDLE: EditorState = { busy: false, unsaved: false };
+const IDLE: EditorState = { busy: false, unsaved: false };
 
 const byName = (a: AdminTemplate, b: AdminTemplate) =>
   a.name.localeCompare(b.name);
 
-export function TemplatesEditor({
-  code,
-  onStateChange,
-}: {
-  code: string;
-  /** For the jurisdictions panel: it stops leaving this jurisdiction while busy,
-   * and asks before dropping unsaved edits. */
-  onStateChange?: (state: EditorState) => void;
-}) {
+export function TemplatesEditor({ code }: { code: string }) {
   const [templates, setTemplates] = useState<AdminTemplate[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [editor, setEditor] = useState<EditorState>(IDLE);
@@ -113,10 +104,6 @@ export function TemplatesEditor({
   useJurisdictionSwitchGuard({ busy: uploading, unsaved: false });
   const fileInput = useRef<HTMLInputElement>(null);
   const busy = uploading || editor.busy;
-  useEffect(() => {
-    onStateChange?.({ busy, unsaved: editor.unsaved });
-  }, [busy, editor.unsaved, onStateChange]);
-  useEffect(() => () => onStateChange?.(IDLE), [onStateChange]);
 
   const load = useCallback(async () => {
     try {

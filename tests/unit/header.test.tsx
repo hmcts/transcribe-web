@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MeResponse } from "@/lib/access/types";
 import { ME } from "../access-helpers";
@@ -142,11 +142,10 @@ describe("Header", () => {
       [
         "a jurisdiction administrator",
         ME.jurisdictionAdministrator,
-        { admin: true, wording: true, dictation: false, recordings: false, help: true },
+        { admin: true, wording: false, dictation: false, recordings: false, help: true },
       ],
       [
-        // Holds the permission, but works in no one jurisdiction (the API answers
-        // 403 no_jurisdiction): it changes wording from Admin, Jurisdictions.
+        // DIAAT-406: screen wording is changed in Admin, Jurisdictions only.
         "a jurisdiction super administrator",
         ME.jurisdictionSuperAdministrator,
         { admin: true, wording: false, dictation: false, recordings: false, help: true },
@@ -171,12 +170,13 @@ describe("Header", () => {
       expect(shown(persona)).toEqual(expected);
     });
 
-    it("links the wording editor to its page", () => {
-      mockPersona = ME.jurisdictionAdministrator;
-      const { getByRole } = render(<Header />);
-      expect(getByRole("link", { name: /Wording/ }).getAttribute("href")).toBe(
-        "/jurisdiction-wording"
-      );
+    it("has no Wording link even with jurisdiction.wording.edit in a jurisdiction (DIAAT-406)", () => {
+      mockPersona = {
+        ...ME.jurisdictionAdministrator,
+        permissions: [...ME.jurisdictionAdministrator.permissions, "jurisdiction.wording.edit"],
+      };
+      const { queryByRole } = render(<Header />);
+      expect(queryByRole("link", { name: /Wording/ })).toBeNull();
     });
 
     it("leaves dictation and recordings out of the mobile menu for any other role", () => {
@@ -200,20 +200,53 @@ describe("Header", () => {
     });
   });
 
-  describe("the context switcher (DIAAT-390)", () => {
-    it("names where and as what the user works, and offers the other pair", () => {
+  describe("the context switcher (DIAAT-390, DIAAT-406)", () => {
+    it("shows the jurisdiction and the role the user works as, in two labelled controls", () => {
       mockPersona = ME.multiAsAdministrator;
+      const nav = within(render(<Header />).getByRole("navigation"));
+      const jurisdiction = nav.getByLabelText("Jurisdiction") as HTMLSelectElement;
+      const role = nav.getByLabelText("Role") as HTMLSelectElement;
+      expect(jurisdiction.value).toBe("IAC");
+      expect([...jurisdiction.options].map((o) => o.textContent)).toEqual([
+        "Employment Tribunal",
+        "Immigration and Asylum Chamber",
+      ]);
+      expect([...role.options].map((o) => o.textContent)).toEqual(["Jurisdiction administrator"]);
+    });
+
+    it("is in the narrow-screen menu too, with visible labels", () => {
+      mockPersona = ME.manyJurisdictions;
       render(<Header />);
-      const trigger = screen.getAllByRole("button", {
-        name: /Working in Immigration and Asylum Chamber as jurisdiction administrator/i,
-      })[0];
-      expect(trigger).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Open navigation menu" }));
+      const menu = within(screen.getByRole("dialog"));
+      expect((menu.getByLabelText("Jurisdiction") as HTMLSelectElement).value).toBe("ET");
+      expect(menu.getByText("Jurisdiction").className).not.toContain("sr-only");
+      expect(
+        [...(menu.getByLabelText("Role") as HTMLSelectElement).options].map((o) => o.textContent)
+      ).toEqual(["Judge", "Legal text manager"]);
+    });
+
+    it("closes the narrow-screen menu when Request access is chosen, so the page is not behind it", async () => {
+      mockPersona = ME.manyJurisdictions;
+      render(<Header />);
+      fireEvent.click(screen.getByRole("button", { name: "Open navigation menu" }));
+      const menu = within(screen.getByRole("dialog"));
+      fireEvent.pointerDown(menu.getByRole("button", { name: /Your access/ }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      const link = (await screen.findByText("Request access")).closest("a") as HTMLAnchorElement;
+      expect(link.getAttribute("href")).toBe("/request-access");
+      fireEvent.click(link);
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     });
 
     it("is not shown to a user with no role", () => {
       mockPersona = ME.noAccess;
       render(<Header />);
-      expect(screen.queryByRole("button", { name: /Switch or leave/ })).toBeNull();
+      expect(screen.queryByLabelText("Jurisdiction")).toBeNull();
+      expect(screen.queryByRole("button", { name: /Your access/ })).toBeNull();
     });
 
     it("has no persona picker outside local development", () => {

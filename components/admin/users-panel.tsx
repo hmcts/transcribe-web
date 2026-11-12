@@ -4,6 +4,7 @@ import { Loader2, Plus, Search, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Pager, SELECT_CLASS } from "@/components/admin/pager";
+import { RoleHistory } from "@/components/admin/role-history";
 import {
   hasTarget,
   NOBODY,
@@ -26,21 +27,16 @@ import {
 } from "@/components/ui/table";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { JURISDICTION_SUPER_ADMINISTRATOR } from "@/lib/access/assignable-roles";
-import { fetchAdminJurisdictions } from "@/lib/admin-jurisdictions-api";
 import { errorMessage } from "@/lib/admin-request";
 import {
   type AdminAssignment,
   type AdminUser,
-  actorLabel,
   assignRoles,
   deactivateUser,
   deleteAssignment,
-  describeRoleChange,
   fetchAdminRoles,
   fetchAdminUsers,
-  fetchRoleHistory,
   reactivateUser,
-  type RoleHistoryPage,
 } from "@/lib/admin-users-api";
 import {
   type JurisdictionRef,
@@ -57,7 +53,6 @@ import { useAccess } from "@/providers/access";
  */
 
 const PAGE_SIZE = 25;
-const HISTORY_PAGE_SIZE = 50;
 const SEARCH_DELAY_MS = 300;
 
 export const TAKES_EFFECT =
@@ -67,33 +62,17 @@ function whereLabel(jurisdiction: JurisdictionRef | null): string {
   return jurisdiction ? jurisdiction.code : "All jurisdictions";
 }
 
-/** The jurisdictions the caller can work with: the API's list when they may
- * manage jurisdictions, else (or until it loads) the active context's only,
- * never the others the user holds roles in (DIAAT-403). */
+/** The jurisdiction the caller manages users in: the active context's only, never
+ * the others the user holds roles in (DIAAT-403, DIAAT-406). */
 function useCallerJurisdictions(): JurisdictionRef[] {
-  const { can, active } = useAccess();
-  const manage = can("jurisdictions.manage");
-  const [listed, setListed] = useState<JurisdictionRef[] | null>(null);
-  useEffect(() => {
-    if (!manage) return;
-    let current = true;
-    fetchAdminJurisdictions()
-      .then((list) => {
-        if (current) {
-          setListed(list.map((j) => ({ code: j.code, name: j.name })));
-        }
-      })
-      .catch(() => undefined);
-    return () => {
-      current = false;
-    };
-  }, [manage]);
-  return listed ?? (active?.jurisdiction ? [active.jurisdiction] : []);
+  const { active } = useAccess();
+  return active?.jurisdiction ? [active.jurisdiction] : [];
 }
 
 export function UsersPanel() {
   const { can } = useAccess();
   const [view, setView] = useState<"people" | "history">("people");
+  const [historyOf, setHistoryOf] = useState<AdminUser | null>(null);
   const showHistory = can("role_audit.read");
   const jurisdictions = useCallerJurisdictions();
 
@@ -120,7 +99,10 @@ export function UsersPanel() {
               size="sm"
               variant={view === "history" ? "default" : "outline"}
               aria-pressed={view === "history"}
-              onClick={() => setView("history")}
+              onClick={() => {
+                setHistoryOf(null);
+                setView("history");
+              }}
             >
               Role history
             </Button>
@@ -128,9 +110,23 @@ export function UsersPanel() {
         )}
       </div>
       {view === "history" && showHistory ? (
-        <RoleHistorySection jurisdictions={jurisdictions} />
+        <RoleHistory
+          key={historyOf?.id ?? "everyone"}
+          user={historyOf}
+          onShowAll={() => setHistoryOf(null)}
+        />
       ) : (
-        <PeopleSection jurisdictions={jurisdictions} />
+        <PeopleSection
+          jurisdictions={jurisdictions}
+          onHistory={
+            showHistory
+              ? (user) => {
+                  setHistoryOf(user);
+                  setView("history");
+                }
+              : undefined
+          }
+        />
       )}
     </div>
   );
@@ -140,14 +136,20 @@ export function UsersPanel() {
 // People
 // ---------------------------------------------------------------------------
 
-function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) {
+function PeopleSection({
+  jurisdictions,
+  onHistory,
+}: {
+  jurisdictions: JurisdictionRef[];
+  /** Show the role history of one person (with `role_audit.read`). */
+  onHistory?: (user: AdminUser) => void;
+}) {
   const { me } = useAccess();
   const myId = me?.user.id;
   const [roles, setRoles] = useState<string[] | null>(null);
   const [rolesError, setRolesError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [search, setSearch] = useState("");
-  const [filter, setFilter] = useState("");
   const [page, setPage] = useState(1);
   const [data, setData] = useState<{
     items: AdminUser[];
@@ -187,7 +189,6 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
     try {
       const result = await fetchAdminUsers({
         search,
-        jurisdiction: filter || null,
         page,
         pageSize: PAGE_SIZE,
       });
@@ -199,7 +200,7 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
     } finally {
       if (mine === latest.current) setLoading(false);
     }
-  }, [search, filter, page]);
+  }, [search, page]);
 
   useEffect(() => {
     void load();
@@ -252,27 +253,6 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
               />
             </div>
           </div>
-          {jurisdictions.length > 1 && (
-            <div className="space-y-1">
-              <Label htmlFor="users-jurisdiction">Filter by jurisdiction</Label>
-              <select
-                id="users-jurisdiction"
-                className={SELECT_CLASS}
-                value={filter}
-                onChange={(e) => {
-                  setFilter(e.target.value);
-                  setPage(1);
-                }}
-              >
-                <option value="">All of mine</option>
-                {jurisdictions.map((j) => (
-                  <option key={j.code} value={j.code}>
-                    {j.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
         </div>
 
         {error ? (
@@ -317,6 +297,7 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
                     user={user}
                     isMe={user.id === myId}
                     assignable={roles ?? []}
+                    scope={jurisdictions.map((j) => j.code)}
                     confirming={confirming}
                     onConfirming={setConfirming}
                     busy={busy}
@@ -326,6 +307,7 @@ function PeopleSection({ jurisdictions }: { jurisdictions: JurisdictionRef[] }) 
                         `Removed ${roleLabel(assignment.role)} from ${user.email}`
                       )
                     }
+                    onHistory={onHistory && (() => onHistory(user))}
                     onSetActive={(active) =>
                       run(
                         () =>
@@ -357,21 +339,26 @@ function UserRow({
   user,
   isMe,
   assignable,
+  scope,
   confirming,
   onConfirming,
   busy,
   onRemove,
   onSetActive,
+  onHistory,
 }: {
   user: AdminUser;
   isMe: boolean;
   /** The roles the API says the caller may assign (and so remove). */
   assignable: string[];
+  /** The jurisdictions the caller manages: a role elsewhere is not theirs to remove. */
+  scope: string[];
   confirming: string | null;
   onConfirming: (key: string | null) => void;
   busy: boolean;
   onRemove: (assignment: AdminAssignment) => void;
   onSetActive: (active: boolean) => void;
+  onHistory?: () => void;
 }) {
   const deactivateKey = `deactivate:${user.id}`;
   const canDeactivate = user.assignments.every((a) =>
@@ -398,7 +385,9 @@ function UserRow({
           <ul className="flex flex-wrap gap-1.5" aria-label={`Roles of ${user.email}`}>
             {user.assignments.map((assignment) => {
               const text = `${roleLabel(assignment.role)} in ${whereLabel(assignment.jurisdiction)}`;
-              const removable = assignable.includes(assignment.role);
+              const removable =
+                assignable.includes(assignment.role) &&
+                scope.includes(assignment.jurisdiction?.code ?? "");
               return (
                 <li
                   key={assignment.id}
@@ -507,6 +496,18 @@ function UserRow({
             onClick={() => onSetActive(true)}
           >
             Reactivate
+          </Button>
+        )}
+        {onHistory && !user.pending && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="ml-1"
+            aria-label={`Role history of ${user.email}`}
+            onClick={onHistory}
+          >
+            History
           </Button>
         )}
       </TableCell>
@@ -658,145 +659,6 @@ function AddRolesForm({
             Add
           </Button>
         </form>
-      )}
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Role-change history
-// ---------------------------------------------------------------------------
-
-function formatTime(timestamp: string): string {
-  const parsed = new Date(timestamp);
-  return Number.isNaN(parsed.getTime())
-    ? timestamp
-    : parsed.toLocaleString("en-GB", {
-        day: "numeric",
-        month: "short",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-}
-
-function RoleHistorySection({
-  jurisdictions,
-}: {
-  jurisdictions: JurisdictionRef[];
-}) {
-  const [filter, setFilter] = useState("");
-  const [page, setPage] = useState(1);
-  const [data, setData] = useState<RoleHistoryPage | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    let current = true;
-    setLoading(true);
-    setError(null);
-    fetchRoleHistory({
-      jurisdiction: filter || null,
-      page,
-      pageSize: HISTORY_PAGE_SIZE,
-    })
-      .then((result) => current && setData(result))
-      .catch((err) => current && setError(errorMessage(err)))
-      .finally(() => current && setLoading(false));
-    return () => {
-      current = false;
-    };
-  }, [filter, page]);
-
-  return (
-    <section aria-labelledby="role-history-heading" className="space-y-3">
-      <h3 id="role-history-heading" className="text-lg font-semibold">
-        Role change history
-      </h3>
-      <p className="text-sm text-muted-foreground">
-        Who gave or removed a role, deactivated someone or decided a request,
-        newest first.
-      </p>
-      {jurisdictions.length > 1 && (
-        <div className="space-y-1">
-          <Label htmlFor="history-jurisdiction">Filter by jurisdiction</Label>
-          <select
-            id="history-jurisdiction"
-            className={SELECT_CLASS}
-            value={filter}
-            onChange={(e) => {
-              setFilter(e.target.value);
-              setPage(1);
-            }}
-          >
-            <option value="">All of mine</option>
-            {jurisdictions.map((j) => (
-              <option key={j.code} value={j.code}>
-                {j.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      )}
-      {error ? (
-        <p role="alert" className="py-4 text-destructive">
-          {error}
-        </p>
-      ) : !data ? (
-        <div className="flex justify-center py-8" role="status">
-          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" aria-hidden />
-          <span className="sr-only">Loading the history</span>
-        </div>
-      ) : data.items.length === 0 ? (
-        <p className="py-4 text-sm text-muted-foreground">
-          No role changes have been recorded.
-        </p>
-      ) : (
-        <>
-          <Table aria-busy={loading}>
-            <TableHeader>
-              <TableRow>
-                <TableHead>When</TableHead>
-                <TableHead>Change</TableHead>
-                <TableHead>Person</TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead>Jurisdiction</TableHead>
-                <TableHead>Done by</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {data.items.map((entry) => (
-                <TableRow key={entry.id}>
-                  <TableCell className="whitespace-nowrap">
-                    {formatTime(entry.timestamp)}
-                  </TableCell>
-                  <TableCell>{describeRoleChange(entry.change)}</TableCell>
-                  <TableCell>{entry.target?.email ?? ""}</TableCell>
-                  <TableCell>{entry.role ? roleLabel(entry.role) : ""}</TableCell>
-                  <TableCell>{entry.jurisdiction ?? ""}</TableCell>
-                  <TableCell>
-                    {actorLabel(entry)}
-                    {entry.actor_context && (
-                      <span className="block text-xs text-muted-foreground">
-                        as {roleLabel(entry.actor_context.role).toLowerCase()}
-                        {entry.actor_context.jurisdiction
-                          ? ` in ${entry.actor_context.jurisdiction}`
-                          : ""}
-                      </span>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-          <Pager
-            page={page}
-            pageSize={HISTORY_PAGE_SIZE}
-            total={data.total}
-            onPage={setPage}
-            disabled={loading}
-          />
-        </>
       )}
     </section>
   );

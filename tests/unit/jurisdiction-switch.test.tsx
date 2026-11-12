@@ -3,9 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { MeResponse } from "@/lib/access/types";
 import { ME } from "../access-helpers";
 
-// DIAAT-332, DIAAT-390: a user with several roles switches from the header, and
-// can leave a jurisdiction. The tab's work is saved first; if it cannot be, the
-// tab stays where it is.
+// DIAAT-332, DIAAT-390, DIAAT-406: a user with several roles switches from the
+// header, with one control for the jurisdiction and one for the role in it, and can
+// leave a jurisdiction. The tab's work is saved first; if it cannot be, the tab
+// stays where it is.
 
 let pathname = "/";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
@@ -54,24 +55,36 @@ class ResizeObserverStub {
   }
 }
 
-async function openSwitcher(me: MeResponse = ME.multiAsAdministrator) {
+async function showSwitcher(me: MeResponse = ME.multiAsAdministrator) {
   api.fetchMe.mockResolvedValue(me);
   render(
     <AccessProvider>
       <ContextSwitcher />
     </AccessProvider>
   );
-  const trigger = await screen.findByRole("button", {
-    name: /Working in .* as .*\. Switch or leave/,
-  });
-  // Radix opens its menu on pointer down.
-  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
-  return trigger;
+  return {
+    jurisdiction: (await screen.findByLabelText("Jurisdiction")) as HTMLSelectElement,
+    role: screen.getByLabelText("Role") as HTMLSelectElement,
+  };
 }
 
+const optionsOf = (select: HTMLSelectElement) =>
+  [...select.options].map((option) => option.textContent);
+
+async function openSwitcher(me: MeResponse = ME.multiAsAdministrator) {
+  const controls = await showSwitcher(me);
+  const trigger = screen.getByRole("button", { name: /Your access/ });
+  // Radix opens its menu on pointer down.
+  fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+  return controls;
+}
+
+/** From administrator in IAC to ET, where the user is a judge only. */
 const chooseJudge = async () =>
   act(async () => {
-    fireEvent.click(await screen.findByRole("menuitem", { name: /Employment Tribunal: Judge/ }));
+    fireEvent.change(await screen.findByLabelText("Jurisdiction"), {
+      target: { value: "ET" },
+    });
   });
 
 describe("switching context", () => {
@@ -100,31 +113,92 @@ describe("switching context", () => {
       </AccessProvider>
     );
     await screen.findByText("loaded");
-    expect(screen.queryByRole("button", { name: /Switch or leave/ })).toBeNull();
+    expect(screen.queryByLabelText("Jurisdiction")).toBeNull();
+    expect(screen.queryByRole("button", { name: /Your access/ })).toBeNull();
   });
 
-  it("offers a user with one pair no other pair, only leaving and signing out", async () => {
-    await openSwitcher(ME.judge);
+  it("offers a user with one pair no other pair, and asking for more, leaving and signing out", async () => {
+    const { jurisdiction, role } = await openSwitcher(ME.judge);
 
-    expect(screen.queryByRole("menuitem", { name: /: Jurisdiction/ })).toBeNull();
-    expect(await screen.findByRole("menuitem", { name: "Leave Employment Tribunal" })).toBeTruthy();
+    expect(optionsOf(jurisdiction)).toEqual(["Employment Tribunal"]);
+    expect(optionsOf(role)).toEqual(["Judge"]);
+    expect(
+      (await screen.findByText("Request access")).closest("a")?.getAttribute("href")
+    ).toBe("/request-access");
+    expect(screen.getByRole("menuitem", { name: "Leave Employment Tribunal" })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "Sign out" })).toBeTruthy();
   });
 
-  it("offers a jurisdiction administrator in two jurisdictions each as its own context (DIAAT-403)", async () => {
-    await openSwitcher(ME.jurisdictionAdministratorInTwo);
+  it("lists every jurisdiction the user holds a role in, and the roles they hold in the chosen one (DIAAT-406)", async () => {
+    const { jurisdiction, role } = await showSwitcher(ME.manyJurisdictions);
 
-    expect(
-      await screen.findByRole("menuitem", { name: /Employment Tribunal: Jurisdiction administrator/ })
-    ).toBeTruthy();
-    expect(screen.queryByRole("menuitem", { name: /All jurisdictions: Jurisdiction administrator/ })).toBeNull();
+    expect(optionsOf(jurisdiction)).toEqual([
+      "Immigration and Asylum Chamber",
+      "Employment Tribunal",
+      "Social Security and Child Support",
+      "All jurisdictions",
+    ]);
+    expect(jurisdiction.value).toBe("ET");
+    expect(optionsOf(role)).toEqual(["Judge", "Legal text manager"]);
+    expect(role.value).toBe("Judge");
+  });
+
+  it("switches role within the jurisdiction from the role control (DIAAT-406)", async () => {
+    api.postContext.mockResolvedValue(ME.manyJurisdictions);
+    const { role } = await showSwitcher(ME.manyJurisdictions);
+    await act(async () => {
+      fireEvent.change(role, { target: { value: "LegalTextManager" } });
+    });
+
+    expect(api.postContext).toHaveBeenCalledWith({ jurisdiction: "ET", role: "LegalTextManager" });
+    await waitFor(() => expect(assign).toHaveBeenCalled());
+  });
+
+  it("keeps the role when the new jurisdiction has it, else takes the first role there (DIAAT-406)", async () => {
+    api.postContext.mockResolvedValue(ME.manyJurisdictions);
+    const { jurisdiction } = await showSwitcher(ME.manyJurisdictions);
+    await act(async () => {
+      fireEvent.change(jurisdiction, { target: { value: "IAC" } });
+    });
+    expect(api.postContext).toHaveBeenLastCalledWith({ jurisdiction: "IAC", role: "Judge" });
+  });
+
+  it("takes the first role held in a jurisdiction without the current one (DIAAT-406)", async () => {
+    api.postContext.mockResolvedValue(ME.manyJurisdictions);
+    const { jurisdiction } = await showSwitcher(ME.manyJurisdictions);
+    await act(async () => {
+      fireEvent.change(jurisdiction, { target: { value: "SSCS" } });
+    });
+    expect(api.postContext).toHaveBeenLastCalledWith({
+      jurisdiction: "SSCS",
+      role: "JurisdictionAdministrator",
+    });
+  });
+
+  it("switches to the global roles under All jurisdictions (DIAAT-406)", async () => {
+    api.postContext.mockResolvedValue(ME.manyJurisdictions);
+    const { jurisdiction } = await showSwitcher(ME.manyJurisdictions);
+    await act(async () => {
+      fireEvent.change(jurisdiction, { target: { value: "-" } });
+    });
+    expect(api.postContext).toHaveBeenLastCalledWith({
+      jurisdiction: null,
+      role: "JurisdictionSuperAdministrator",
+    });
+  });
+
+  it("offers a jurisdiction administrator in two jurisdictions each jurisdiction (DIAAT-403)", async () => {
+    const { jurisdiction, role } = await showSwitcher(ME.jurisdictionAdministratorInTwo);
+
+    expect(optionsOf(jurisdiction)).toEqual(["Employment Tribunal", "Immigration and Asylum Chamber"]);
+    expect(optionsOf(role)).toEqual(["Jurisdiction administrator"]);
   });
 
   it("shows a super administrator one context for all jurisdictions, not one per jurisdiction (DIAAT-403)", async () => {
-    const trigger = await openSwitcher(ME.jurisdictionSuperAdministrator);
+    const { jurisdiction, role } = await showSwitcher(ME.jurisdictionSuperAdministrator);
 
-    expect(trigger.getAttribute("aria-label") ?? trigger.textContent).toMatch(/All jurisdictions/);
-    expect(screen.queryByRole("menuitem", { name: /(Employment Tribunal|Immigration and Asylum Chamber): Jurisdiction super/ })).toBeNull();
+    expect(optionsOf(jurisdiction)).toEqual(["All jurisdictions"]);
+    expect(optionsOf(role)).toEqual(["Jurisdiction super administrator"]);
   });
 
   it("saves the tab's work, switches with the server, then reloads the tab in the new context", async () => {
@@ -134,7 +208,7 @@ describe("switching context", () => {
       order.push("saved");
     });
     try {
-      await openSwitcher();
+      await showSwitcher();
       const before = getTabContext();
       await chooseJudge();
 
@@ -142,9 +216,8 @@ describe("switching context", () => {
       // Saved before the switch, and again just before leaving.
       expect(order).toEqual(["saved", "saved"]);
       // Stays disabled while the tab reloads.
-      expect(
-        (screen.getByRole("button", { name: /Switch or leave/ }) as HTMLButtonElement).disabled
-      ).toBe(true);
+      expect((screen.getByLabelText("Jurisdiction") as HTMLSelectElement).disabled).toBe(true);
+      expect((screen.getByLabelText("Role") as HTMLSelectElement).disabled).toBe(true);
       expect(api.postContext).toHaveBeenCalledWith({ jurisdiction: "ET", role: "Judge" });
       // The tab keeps its old context until the document really reloads: the recorder's "leave this
       // page?" prompt can be cancelled, and a tab that had taken the new context would then autosave
@@ -158,7 +231,7 @@ describe("switching context", () => {
 
   it("says the work is saved when only the switch failed", async () => {
     api.postContext.mockRejectedValue(new AccessApiError("Not yours", 403, "context_not_available"));
-    await openSwitcher();
+    await showSwitcher();
     await chooseJudge();
 
     await waitFor(() => expect(toastError).toHaveBeenCalled());
@@ -166,6 +239,7 @@ describe("switching context", () => {
       "Your work is saved, but the change did not work"
     );
     expect(assign).not.toHaveBeenCalled();
+    expect((screen.getByLabelText("Jurisdiction") as HTMLSelectElement).value).toBe("IAC");
     // Nothing changed: the tab still names the context it works in.
     expect(getTabContext()).toEqual({
       jurisdiction: "IAC",
@@ -178,7 +252,7 @@ describe("switching context", () => {
       throw new JurisdictionSwitchError("busy");
     });
     try {
-      await openSwitcher();
+      await showSwitcher();
       await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
@@ -196,7 +270,7 @@ describe("switching context", () => {
       throw new Error("save failed");
     });
     try {
-      await openSwitcher();
+      await showSwitcher();
       await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
@@ -211,25 +285,34 @@ describe("switching context", () => {
   });
 
   it("offers a system administrator their SystemAdministrator context with their other roles (DIAAT-403)", async () => {
-    await openSwitcher(ME.sysadminMultiAsJudge);
+    const { jurisdiction } = await showSwitcher(ME.sysadminMultiAsSystem);
 
-    expect(
-      await screen.findByRole("menuitem", { name: /All jurisdictions: System administrator/ })
-    ).toBeTruthy();
-    expect(
-      screen.getByRole("menuitem", { name: /All jurisdictions: Jurisdiction super administrator/ })
-    ).toBeTruthy();
+    expect(optionsOf(jurisdiction)).toEqual(["Employment Tribunal", "All jurisdictions"]);
+    expect(optionsOf(screen.getByLabelText("Role") as HTMLSelectElement)).toEqual([
+      "Jurisdiction super administrator",
+      "System administrator",
+    ]);
   });
 
-  it("switches a system administrator to their SystemAdministrator context, and back to Judge off the Admin page", async () => {
+  it("takes a system administrator acting as Judge to their first global role under All jurisdictions", async () => {
+    api.postContext.mockResolvedValue(ME.sysadminMultiAsSuper);
+    const { jurisdiction } = await showSwitcher(ME.sysadminMultiAsJudge);
+    await act(async () => {
+      fireEvent.change(jurisdiction, { target: { value: "-" } });
+    });
+    expect(api.postContext).toHaveBeenCalledWith({
+      jurisdiction: null,
+      role: "JurisdictionSuperAdministrator",
+    });
+  });
+
+  it("switches a system administrator to their SystemAdministrator context from the role control, staying on Admin", async () => {
     pathname = "/admin";
     vi.stubGlobal("location", { ...window.location, assign, pathname });
     api.postContext.mockResolvedValue(ME.sysadminMultiAsSystem);
-    await openSwitcher(ME.sysadminMultiAsJudge);
+    const { role } = await showSwitcher(ME.sysadminMultiAsSuper);
     await act(async () => {
-      fireEvent.click(
-        await screen.findByRole("menuitem", { name: /All jurisdictions: System administrator/ })
-      );
+      fireEvent.change(role, { target: { value: "SystemAdministrator" } });
     });
 
     expect(api.postContext).toHaveBeenCalledWith({ jurisdiction: null, role: "SystemAdministrator" });
@@ -241,7 +324,7 @@ describe("switching context", () => {
     pathname = "/admin";
     vi.stubGlobal("location", { ...window.location, assign, pathname });
     api.postContext.mockResolvedValue(ME.multiAsJudge);
-    await openSwitcher();
+    await showSwitcher();
     await chooseJudge();
 
     // A judge has no admin permission: home.
@@ -273,7 +356,7 @@ describe("a switch whose final save fails", () => {
       if (saves === 2) throw new Error("save failed");
     });
     try {
-      await openSwitcher();
+      await showSwitcher();
       await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
@@ -293,7 +376,7 @@ describe("a switch whose final save fails", () => {
       throw new JurisdictionSwitchError("unsaved");
     });
     try {
-      await openSwitcher();
+      await showSwitcher();
       await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());

@@ -4,7 +4,7 @@ import AdminLayout from "@/app/admin/layout";
 import RecordLayout from "@/app/record/layout";
 import RecordingLayout from "@/app/recording/layout";
 import UploadLayout from "@/app/upload/layout";
-import WordingLayout from "@/app/jurisdiction-wording/layout";
+import RequestAccessLayout from "@/app/request-access/layout";
 import SpeechDemoLayout from "@/app/speech-demo/layout";
 import { isPathAllowed, landingAfterSwitch } from "@/lib/access/routes";
 import type { MeResponse } from "@/lib/access/types";
@@ -39,22 +39,18 @@ const AREAS: [string, Layout, string][] = [
   ["/speech-demo", SpeechDemoLayout as Layout, "dictation"],
   ["/recording", RecordingLayout as Layout, "recordings"],
   ["/admin", AdminLayout as Layout, "admin"],
-  ["/jurisdiction-wording", WordingLayout as Layout, "wording"],
+  ["/request-access", RequestAccessLayout as Layout, "request access"],
 ];
 
 // Which areas each persona may open, as the permissions the API gave them say.
 const OPENS: [string, MeResponse, string[]][] = [
-  ["a judge", ME.judge, ["/record", "/upload", "/speech-demo", "/recording"]],
-  ["a legal text manager", ME.legalTextManager, ["/admin"]],
-  [
-    "a jurisdiction administrator",
-    ME.jurisdictionAdministrator,
-    ["/admin", "/jurisdiction-wording"],
-  ],
+  ["a judge", ME.judge, ["/record", "/upload", "/speech-demo", "/recording", "/request-access"]],
+  ["a legal text manager", ME.legalTextManager, ["/admin", "/request-access"]],
+  ["a jurisdiction administrator", ME.jurisdictionAdministrator, ["/admin", "/request-access"]],
   [
     "a jurisdiction super administrator",
     ME.jurisdictionSuperAdministrator,
-    ["/admin", "/jurisdiction-wording"],
+    ["/admin", "/request-access"],
   ],
   ["a system administrator with no jurisdiction", ME.sysadminOnly, ["/admin"]],
 ];
@@ -118,7 +114,6 @@ describe("where a tab lands after a switch", () => {
   it("leaves a page the new context may not use, for the home page", () => {
     expect(landingAfterSwitch("/record", administrator)).toBe("/");
     expect(landingAfterSwitch("/admin", judge)).toBe("/");
-    expect(landingAfterSwitch("/jurisdiction-wording", judge)).toBe("/");
   });
 
   it("never carries a page about one item to the new context", () => {

@@ -5,7 +5,7 @@
  * API. DEVELOPMENT ONLY: it signs nothing, stores nothing on disk and trusts
  * every caller. Never deploy it and never point a real environment at it.
  *
- * It implements the contract (authz-contract.md, section 3) for the nine local
+ * It implements the contract (authz-contract.md, section 3) for the ten local
  * personas (section 4), with in-memory state that lasts until it is restarted, so
  * every admin screen can be driven end to end:
  *
@@ -22,23 +22,31 @@
  *   GET    /api/admin/access-requests?status=pending
  *   POST   /api/admin/access-requests/{id}/approve|reject
  *   GET    /api/admin/jurisdictions     PUT /api/admin/jurisdictions/{code}
+ *   GET    /api/admin/jurisdictions/wording-keys
+ *   GET    /api/admin/jurisdictions/{code}/templates   (an empty list)
  *   GET    /api/admin/feature-flags     PUT /api/admin/feature-flags/{name}
  *   GET    /api/v1/jobs, /api/v1/jobs/{id}, /api/v1/jobs/{id}/history   (two seeded recordings)
  *   GET    /api/admin/me, /api/templates, /api/transcriptions-metadata (empty; 403 dictation_disabled
- *          with the flag off), /api/jurisdictions/wording
+ *          with the flag off)
  *
  * Checked against the real API (phase 7): response shapes, status codes and refusal codes of the
  * endpoints above match it, except that this mock keeps its state in memory, signs nothing, and
  * does not implement the rest of the API (dictation, uploads, document content...: 404
  * `mock_not_implemented`).
  *
- * The assignment rules of section 1 are enforced as the real API will: a
+ * The assignment rules of section 1 are enforced as the real API will (DIAAT-406): a
  * jurisdiction administrator assigns Judge and LegalTextManager in the active
- * jurisdiction only; a super administrator also assigns JurisdictionAdministrator;
- * the system administrator assigns JurisdictionSuperAdministrator only. Giving a role
- * to yourself follows the same rules as giving it to anyone (DIAAT-403); nobody but the
- * system administrator removes their own admin role, nobody deactivates themselves,
- * and nobody grants SystemAdministrator.
+ * jurisdiction only; a super administrator assigns JurisdictionAdministrator, in any
+ * jurisdiction; the system administrator assigns JurisdictionSuperAdministrator only.
+ * Giving or removing a role for yourself follows the same rules as for anyone (a super
+ * administrator may appoint and remove themselves as a jurisdiction administrator);
+ * nobody deactivates themselves, and nobody grants SystemAdministrator. A jurisdiction
+ * administrator's Judge and LegalTextManager roles are stored assignments like anyone's,
+ * never derived from the administrator role. The super administrator (accounts.manage)
+ * deactivates and reactivates any account but its own, and reads the role history of
+ * every jurisdiction; a jurisdiction administrator deactivates only people whose every
+ * role is Judge or LegalTextManager in its jurisdiction, and reads its own history.
+ * The role history takes `user=<id>` for the changes made to one person.
  *
  * "Tokens" are `mock.<base64url JSON>`: the claims of section 2, unsigned. As in
  * the real API, what a token may do is what it carried when it was minted: a role
@@ -66,23 +74,25 @@ const TTL_SECONDS = Number(process.env.APP_JWT_TTL_SECONDS ?? 300);
 // ---- reference data ----------------------------------------------------------
 const ET = { code: "ET", name: "Employment Tribunal" };
 const IAC = { code: "IAC", name: "Immigration and Asylum Chamber" };
+const SSCS = { code: "SSCS", name: "Social Security and Child Support" };
 
 /** Jurisdiction records. `version` changes on every save (a stale save is a 409). */
 const jurisdictions = [
   { ...ET, enabled: true, template: null, hearing_recordings: true, wording: {}, version: "v1" },
   { ...IAC, enabled: true, template: "iac_decision", hearing_recordings: true, wording: {}, version: "v1" },
+  { ...SSCS, enabled: true, template: null, hearing_recordings: false, wording: {}, version: "v1" },
 ];
 const refOf = (code) => {
   const j = jurisdictions.find((x) => x.code === code);
   return j ? { code: j.code, name: j.name } : null;
 };
 
-// The contract's role map (section 1). Mock copy: the real API owns it.
+// The contract's role map (section 1, as DIAAT-406 changed it). Mock copy: the real API owns it.
 const BASIC = ["app.access", "context.switch", "access.request"];
 const JUDGE = [...BASIC, "dictation.use", "recording.upload", "recording.own", "documents.export", "recording.audit.read", "document_content.read"];
-const LEGAL = [...BASIC, "admin.access", "legal_text.manage", "templates.manage", "document_content.read", "document_content.write"];
-const JADMIN = [...BASIC, "admin.access", "users.manage", "access.approve", "role_audit.read", "templates.manage", "jurisdictions.manage", "jurisdiction.wording.edit", "jurisdiction.features"];
-const JSUPER = [...JADMIN, "jurisdiction.create", "jurisdiction_admin.assign"];
+const LEGAL = [...BASIC, "admin.access", "legal_text.manage", "document_content.read", "document_content.write"];
+const JADMIN = [...BASIC, "admin.access", "users.manage", "access.approve", "role_audit.read", "templates.manage"];
+const JSUPER = [...BASIC, "admin.access", "jurisdictions.manage", "jurisdiction.create", "jurisdiction_admin.assign", "jurisdiction.wording.edit", "jurisdiction.features", "accounts.manage", "role_audit.read"];
 const SYSADMIN = ["admin.access", "feature_flags.manage", "system.settings", "security.alert_test", "jurisdiction_super_admin.assign"];
 const ROLE_PERMISSIONS = {
   Judge: JUDGE,
@@ -92,8 +102,6 @@ const ROLE_PERMISSIONS = {
 };
 const STORED_ROLES = Object.keys(ROLE_PERMISSIONS);
 const REQUESTABLE = ["Judge", "LegalTextManager"];
-// The roles nobody but the system administrator removes from themselves.
-const ADMIN_ROLES = ["JurisdictionAdministrator", "JurisdictionSuperAdministrator"];
 
 const a = (code, role) => ({ id: randomUUID(), jurisdiction: code ? refOf(code) : null, role });
 const PERSONAS = {
@@ -103,6 +111,11 @@ const PERSONAS = {
   "jadmin-iac": { assignments: [["IAC", "JurisdictionAdministrator"]], sysadmin: false },
   "jadmin-et": { assignments: [["ET", "JurisdictionAdministrator"]], sysadmin: false },
   "legal-iac": { assignments: [["IAC", "LegalTextManager"]], sysadmin: false },
+  // DIAAT-406: roles in several jurisdictions, in any combination.
+  many: {
+    assignments: [["IAC", "Judge"], ["ET", "Judge"], ["ET", "LegalTextManager"], ["SSCS", "JurisdictionAdministrator"]],
+    sysadmin: false,
+  },
   jsuper: { assignments: [[null, "JurisdictionSuperAdministrator"]], sysadmin: false },
   sysadmin: { assignments: [], sysadmin: true },
   "no-role": { assignments: [], sysadmin: false },
@@ -343,15 +356,25 @@ const intParam = (value, fallback) => {
   return Number.isInteger(n) && n > 0 ? n : fallback;
 };
 
-/** The user rows the contract's list returns, for what `claims` may see. */
+/**
+ * The user rows the contract's list returns, for what `claims` may see: a jurisdiction
+ * administrator the assignments in their jurisdiction; a super administrator everyone,
+ * with their JurisdictionAdministrator assignments only; the system administrator
+ * everyone, with their JurisdictionSuperAdministrator assignments only (DIAAT-406).
+ */
 function listUsers(claims, search, jurisdictionFilter, roleFilter) {
   const perms = permissionsOf(claims);
-  const everywhere = perms.includes("jurisdiction_super_admin.assign") || perms.includes("jurisdiction_admin.assign");
-  const scope = everywhere ? null : claims.ctx?.jurisdiction?.code ?? "";
+  const shownRole = perms.includes("jurisdiction_super_admin.assign")
+    ? "JurisdictionSuperAdministrator"
+    : perms.includes("jurisdiction_admin.assign")
+      ? "JurisdictionAdministrator"
+      : null;
+  const scope = shownRole ? null : claims.ctx?.jurisdiction?.code ?? "";
   const needle = (search ?? "").trim().toLowerCase();
   const rows = [];
   const view = (assignments) =>
     assignments
+      .filter((p) => shownRole === null || p.role === shownRole)
       .filter((p) => scope === null || (p.jurisdiction?.code ?? null) === scope)
       .filter((p) => !jurisdictionFilter || (p.jurisdiction?.code ?? null) === jurisdictionFilter)
       .map((p) => ({ id: p.id, jurisdiction: p.jurisdiction, role: p.role }));
@@ -463,6 +486,10 @@ const server = createServer(async (req, res) => {
     if (roles.length === 0) return refuse(res, 400, "roles_required", "Ask for at least one role");
     if (roles.some((r) => !REQUESTABLE.includes(r))) {
       return refuse(res, 400, "role_not_requestable", "Only Judge and LegalTextManager can be requested");
+    }
+    // DIAAT-406: a user with roles may ask for more, but not for one they hold there.
+    if (roles.some((r) => holds(user, jurisdiction.code, r))) {
+      return refuse(res, 409, "already_assigned", "You already have that role in that jurisdiction");
     }
     const duplicate = user.requests.find(
       (r) => r.status === "pending" && r.jurisdiction.code === jurisdiction.code && [...r.roles].sort().join() === [...roles].sort().join()
@@ -601,7 +628,7 @@ const server = createServer(async (req, res) => {
   }
 
   if (method === "GET" && path === "/api/admin/users") {
-    if (!needAny("users.manage", "jurisdiction_super_admin.assign")) return;
+    if (!needAny("users.manage", "jurisdiction_admin.assign", "jurisdiction_super_admin.assign")) return;
     const rows = listUsers(claims, q.get("search"), q.get("jurisdiction"), q.get("role"));
     const pageSize = intParam(q.get("page_size"), 25);
     const page = intParam(q.get("page"), 1);
@@ -648,9 +675,6 @@ const server = createServer(async (req, res) => {
     const code = found.jurisdiction?.code ?? null;
     if (!assignable().includes(found.role)) return notAllowed(res, "You cannot remove that role");
     if (code !== null && !reaches(code)) return refuse(res, 404, "not_found", "No such assignment");
-    if (holder.id === user.id && !actingAsSystem(claims) && ADMIN_ROLES.includes(found.role)) {
-      return notAllowed(res, "You cannot remove your own administrator role");
-    }
     holder.assignments = holder.assignments.filter((p) => p.id !== found.id);
     if (holder.assignments.length === 0 && pendingByEmail.get(holder.email) === holder) {
       pendingByEmail.delete(holder.email);
@@ -661,13 +685,20 @@ const server = createServer(async (req, res) => {
 
   const setActive = /^\/api\/admin\/users\/([^/]+)\/(deactivate|reactivate)$/.exec(path);
   if (method === "POST" && setActive) {
-    if (!need("users.manage")) return;
+    if (!needAny("users.manage", "accounts.manage")) return;
     const target = userById(setActive[1]);
     if (!target) return refuse(res, 404, "user_not_found", "No such user");
     if (target.id === user.id) return refuse(res, 403, "cannot_deactivate_self", "You cannot deactivate yourself");
-    const scoped = !permissions.includes("jurisdiction_admin.assign");
-    if (scoped && !target.assignments.some((p) => p.jurisdiction?.code === claims.ctx?.jurisdiction?.code)) {
-      return refuse(res, 404, "user_not_found", "No such user");
+    // A super administrator (accounts.manage) deactivates anyone else; a jurisdiction
+    // administrator only someone whose every role is Judge or LegalTextManager there.
+    if (!permissions.includes("accounts.manage")) {
+      const here = claims.ctx?.jurisdiction?.code;
+      if (!target.assignments.some((p) => p.jurisdiction?.code === here)) {
+        return refuse(res, 404, "user_not_found", "No such user");
+      }
+      if (target.sysadmin || !target.assignments.every((p) => p.jurisdiction?.code === here && REQUESTABLE.includes(p.role))) {
+        return notAllowed(res, "That person holds a role you cannot give");
+      }
     }
     target.is_active = setActive[2] === "reactivate";
     recordChange(claims, target.is_active ? "user.reactivated" : "user.deactivated", target, claims.ctx?.jurisdiction?.code ?? null, null);
@@ -676,12 +707,16 @@ const server = createServer(async (req, res) => {
 
   if (method === "GET" && path === "/api/admin/role-history") {
     if (!need("role_audit.read")) return;
-    const everywhere = permissions.includes("jurisdiction_admin.assign");
-    const scope = everywhere ? null : claims.ctx?.jurisdiction?.code ?? "";
+    // A super administrator reads every jurisdiction's and the global rows; a
+    // jurisdiction administrator its own jurisdiction's. `user=`: changes to that user.
+    const everywhere = claims.ctx.jurisdiction === null;
+    const scope = everywhere ? null : claims.ctx.jurisdiction.code;
     const wanted = q.get("jurisdiction");
+    const about = q.get("user");
     const rows = roleHistory
       .filter((e) => scope === null || e.jurisdiction === scope)
       .filter((e) => !wanted || e.jurisdiction === wanted)
+      .filter((e) => !about || e.target.id === about)
       .reverse();
     const pageSize = intParam(q.get("page_size"), 50);
     const page = intParam(q.get("page"), 1);
@@ -737,7 +772,17 @@ const server = createServer(async (req, res) => {
     return send(res, 200, jurisdictions.filter((j) => reaches(j.code)).map(adminShape));
   }
   if (method === "GET" && path === "/api/admin/jurisdictions/wording-keys") {
+    if (!need("jurisdictions.manage")) return;
     return send(res, 200, { keys: { "home.intro": "Introduction under the welcome heading", "help.subtitle": "Under the service name" } });
+  }
+  // Templates: the jurisdiction administrator's, in their own jurisdiction only (DIAAT-406).
+  const templates = /^\/api\/admin\/jurisdictions\/([^/]+)\/templates$/.exec(path);
+  if (method === "GET" && templates) {
+    if (!need("templates.manage")) return;
+    if (decodeURIComponent(templates[1]) !== claims.ctx.jurisdiction?.code) {
+      return refuse(res, 403, "jurisdiction_not_in_scope", "That is not the jurisdiction you are working in");
+    }
+    return send(res, 200, []);
   }
   const putJurisdiction = /^\/api\/admin\/jurisdictions\/([^/]+)$/.exec(path);
   if (method === "PUT" && putJurisdiction) {
@@ -797,12 +842,6 @@ const server = createServer(async (req, res) => {
       anonymity: { statuses: [] },
     });
   }
-  if (method === "GET" && path === "/api/jurisdictions/wording") {
-    if (!need("jurisdiction.wording.edit")) return;
-    if (!claims.ctx?.jurisdiction) return refuse(res, 403, "no_jurisdiction", "The role you are working as has no jurisdiction.");
-    return send(res, 200, { code: claims.ctx.jurisdiction.code, name: claims.ctx.jurisdiction.name, keys: { "home.intro": "Introduction under the welcome heading" }, wording: {}, version: "v1" });
-  }
-
   return refuse(res, 404, "mock_not_implemented", `The mock API does not implement ${method} ${path}`);
 });
 

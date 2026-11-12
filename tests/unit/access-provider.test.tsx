@@ -1,5 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AccessRequest, } from "@/lib/access/types";
 import { ME } from "../access-helpers";
@@ -409,6 +410,52 @@ describe("a user with no access yet (DIAAT-384, DIAAT-396)", () => {
 
     await waitFor(() => expect(toast.message).toHaveBeenCalledWith("Nothing has changed yet."));
     expect(screen.queryByText(/status:/)).toBeNull();
+  });
+});
+
+describe("checking again while a switch is under way (DIAAT-406)", () => {
+  function SwitchThenCheck() {
+    const { assignments, switchContext, checkAgain } = useAccess();
+    const [checked, setChecked] = useState("");
+    const target = assignments.find((a) => a.role === "JurisdictionAdministrator");
+    return (
+      <div>
+        <button type="button" onClick={() => target && void switchContext(target).catch(() => undefined)}>
+          switch
+        </button>
+        <button
+          type="button"
+          onClick={async () => setChecked((await checkAgain())?.active?.role ?? "none")}
+        >
+          check
+        </button>
+        <p>checked: {checked}</p>
+      </div>
+    );
+  }
+
+  it("does not refresh the session, so the context the switch chose is kept", async () => {
+    vi.stubGlobal("location", { ...window.location, assign, pathname: "/", search: "" });
+    api.fetchMe.mockResolvedValue(ME.multiAsAdministrator);
+    let finish: (me: unknown) => void = () => undefined;
+    api.postContext.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    render(
+      <AccessProvider>
+        <SwitchThenCheck />
+      </AccessProvider>
+    );
+
+    await userEvent.click(await screen.findByRole("button", { name: "switch" }));
+    await userEvent.click(screen.getByRole("button", { name: "check" }));
+
+    expect(await screen.findByText(/checked: \S/)).toBeTruthy();
+    expect(api.postRefreshSession).not.toHaveBeenCalled();
+    finish(ME.multiAsAdministrator);
+    await waitFor(() => expect(assign).toHaveBeenCalled());
   });
 });
 
