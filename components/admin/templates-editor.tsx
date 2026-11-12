@@ -10,10 +10,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { SignOffFields } from "@/components/admin/sign-off";
 import { TemplatePreview } from "@/components/admin/template-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -35,6 +35,13 @@ import { Textarea } from "@/components/ui/textarea";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import {
+  NO_SIGN_OFF,
+  SIGN_OFF_MISSING,
+  type SignOffDraft,
+  signedOffText,
+  signOffToSend,
+} from "@/lib/sign-off";
+import {
   type AdminTemplate,
   BENCHNOTES_SOURCES,
   type BenchNotesSource,
@@ -44,9 +51,11 @@ import {
   LIST_TYPES,
   ownValue,
   saveTemplate,
+  TEMPLATE_STAGES,
   type TemplateField,
   type TemplateFieldType,
   TemplateRefusedError,
+  type TemplateStage,
   type TemplateValues,
   uploadTemplate,
 } from "@/lib/templates-api";
@@ -55,8 +64,9 @@ import {
  * A jurisdiction's Word templates (DIAAT-344). Uploading one lists its fill-in boxes as
  * fields; the admin sets each field's label, type, whether it is required and its
  * options, and their order, but cannot add one. A template is saved only with every
- * box linked, and only then can judges choose it. Before that (DIAAT-346) the admin
- * previews it with sample details.
+ * box linked, and only then can it leave draft. Before that (DIAAT-346) the admin
+ * previews it with sample details. DIAAT-347: it goes to the jurisdiction's test group
+ * first, then to all its judges with the service lead's sign-off.
  */
 
 const DOCX_ACCEPT =
@@ -67,7 +77,7 @@ const message = (error: unknown) =>
 
 function statusOf(template: AdminTemplate): string {
   if (template.problems.length > 0) return "Incomplete";
-  return template.enabled ? "Available to judges" : "Off";
+  return { draft: "Draft", test: "Test group", live: "Live" }[template.stage];
 }
 
 /** A change under way, or edits not saved: what the open field list reports to the
@@ -256,7 +266,7 @@ export function TemplatesEditor({
                 <TableCell>
                   <Badge
                     variant={
-                      t.enabled && t.problems.length === 0
+                      t.stage === "live" && t.problems.length === 0
                         ? "default"
                         : "secondary"
                     }
@@ -320,7 +330,12 @@ function TemplateFieldsEditor({
 }) {
   const [name, setName] = useState(template.name);
   const [service, setService] = useState(template.service ?? "");
-  const [enabled, setEnabled] = useState(template.enabled);
+  const [stage, setStage] = useState<TemplateStage>(template.stage);
+  const [signOff, setSignOff] = useState<SignOffDraft>(NO_SIGN_OFF);
+  const [signOffError, setSignOffError] = useState<string | null>(null);
+  const ids = useId();
+  // Going live, not saving one already live: the service lead's sign-off (DIAAT-347).
+  const needsSignOff = stage === "live" && template.stage !== "live";
   const [fields, setFields] = useState<TemplateField[]>(template.fields);
   // Each list's options as typed, one per line, by tag.
   const [optionText, setOptionText] = useState<Record<string, string>>(() =>
@@ -335,7 +350,7 @@ function TemplateFieldsEditor({
 
   const linked = new Set(fields.map((f) => f.tag));
   const unlinked = template.boxes.filter((b) => !linked.has(b.key));
-  const form = JSON.stringify({ name, service, enabled, fields, optionText });
+  const form = JSON.stringify({ name, service, stage, fields, optionText });
   const [savedForm] = useState(form);
   const unsaved = form !== savedForm;
   useJurisdictionSwitchGuard({ busy, unsaved });
@@ -390,12 +405,19 @@ function TemplateFieldsEditor({
   }
 
   async function save() {
+    const sign_off = needsSignOff ? signOffToSend(signOff) : undefined;
+    if (sign_off === null) {
+      setSignOffError(SIGN_OFF_MISSING);
+      return;
+    }
+    setSignOffError(null);
     setBusy(true);
     try {
       const saved = await saveTemplate(code, template.id, {
         name,
         service: service.trim() || null,
-        enabled,
+        stage,
+        sign_off,
         version: template.version,
         fields: fields.map((f) => ({
           ...f,
@@ -495,14 +517,46 @@ function TemplateFieldsEditor({
             />
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <Checkbox
-            id="template-enabled"
-            checked={enabled}
-            onCheckedChange={(value) => setEnabled(value === true)}
-          />
-          <Label htmlFor="template-enabled">Available to judges</Label>
+        <div className="space-y-1">
+          <Label htmlFor={`${ids}-stage`}>Who can choose it</Label>
+          <Select
+            value={stage}
+            onValueChange={(v) => {
+              setStage(v as TemplateStage);
+              setSignOffError(null);
+            }}
+          >
+            <SelectTrigger
+              id={`${ids}-stage`}
+              aria-describedby={`${ids}-stage-hint`}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TEMPLATE_STAGES.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p id={`${ids}-stage-hint`} className="text-xs text-muted-foreground">
+            {template.stage === "live" && template.sign_off
+              ? `${signedOffText(template.sign_off)}.`
+              : "Its test group: the users marked as testers there, and its administrators."}
+          </p>
         </div>
+        {needsSignOff && (
+          <SignOffFields
+            id={`${ids}-sign-off`}
+            value={signOff}
+            onChange={(value) => {
+              setSignOff(value);
+              setSignOffError(null);
+            }}
+            error={signOffError}
+          />
+        )}
 
         {problems.length > 0 && (
           <div

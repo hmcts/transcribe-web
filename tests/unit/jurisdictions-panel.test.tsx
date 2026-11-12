@@ -452,6 +452,47 @@ describe("JurisdictionsPanel", () => {
     await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved_changes" });
   });
 
+  it("switches a jurisdiction on for everyone only with the service lead's sign-off (DIAAT-347)", async () => {
+    serve({ jurisdictions: [{ ...ET, stage: "test" }] });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    await user.click(screen.getByLabelText("Who sees it"));
+    await user.click(await screen.findByRole("option", { name: "Live: everyone with a role there sees it" }));
+    const signOff = screen.getByRole("group", { name: "Service lead's sign-off" });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(signOff.textContent).toContain("Enter the service lead's name and tick that they have signed it off.");
+    expect(request.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(false);
+
+    await user.type(screen.getByLabelText("Service lead who signed it off"), "A Lead");
+    await user.click(screen.getByLabelText("The service lead has signed this off"));
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(request.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+    const body = JSON.parse(String(put?.[1]?.body));
+    expect([body.stage, body.sign_off]).toEqual(["live", { service_lead: "A Lead", confirmed: true }]);
+  });
+
+  it("shows who signed a live jurisdiction off, and does not ask again", async () => {
+    serve({
+      jurisdictions: [{ ...ET, stage: "live", sign_off: { service_lead: "A Lead", signed_off_at: "2026-11-12T10:00:00" } }],
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+
+    expect(screen.getByText("Signed off by A Lead on 12 November 2026.")).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Service lead's sign-off" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(request.mock.calls.some(([, o]) => o?.method === "PUT")).toBe(true));
+    const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
+    expect(JSON.parse(String(put?.[1]?.body)).sign_off).toBeUndefined();
+  });
+
   it("offers a retry when the list cannot be loaded", async () => {
     serve();
     // The first load's two requests are both refused.

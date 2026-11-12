@@ -67,7 +67,8 @@ const UPLOADED: AdminTemplate = {
   name: "ET judgment",
   service: null,
   file_name: "ET judgment.docx",
-  enabled: false,
+  stage: "draft",
+  sign_off: null,
   boxes: [
     {
       key: "Reference",
@@ -173,9 +174,20 @@ function serve(
         const body = JSON.parse(String(options?.body));
         const existing = list.find((t) => t.id === one[1]);
         if (!existing) return { error: "Not found", status: 404 };
+        const { sign_off, ...fields } = body;
+        // As the API: live with the sign-off sent, kept while it stays live.
         const saved = {
           ...existing,
-          ...body,
+          ...fields,
+          sign_off:
+            body.stage !== "live"
+              ? null
+              : existing.stage === "live"
+                ? existing.sign_off
+                : {
+                    service_lead: sign_off.service_lead,
+                    signed_off_at: "2026-11-12T10:00:00",
+                  },
           problems: [],
           version: `v${Number(existing.version.slice(1)) + 1}`,
         };
@@ -250,14 +262,14 @@ describe("TemplatesEditor", () => {
         ) as HTMLTextAreaElement
       ).value
     ).toBe("Claimant\nRespondent");
-    expect(screen.getByText("Off")).toBeTruthy();
+    expect(screen.getByText("Draft")).toBeTruthy();
     // Only the template's boxes: there is no way to add a field.
     expect(
       screen.queryByRole("button", { name: /add (a )?field/i })
     ).toBeNull();
   });
 
-  it("saves relabelled, retyped and reordered fields and makes it available to judges", async () => {
+  it("saves relabelled, retyped and reordered fields and puts it in the test group", async () => {
     serve([UPLOADED]);
     const user = userEvent.setup();
     const fields = await open(user);
@@ -277,7 +289,16 @@ describe("TemplatesEditor", () => {
     await user.click(
       within(fields).getByRole("button", { name: "Move Case number down" })
     );
-    await user.click(within(fields).getByLabelText("Available to judges"));
+    await user.click(within(fields).getByLabelText("Who can choose it"));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Test: its test group and administrators can choose it",
+      })
+    );
+    // Only going live needs the service lead's sign-off.
+    expect(
+      within(fields).queryByRole("group", { name: "Service lead's sign-off" })
+    ).toBeNull();
     await user.click(within(fields).getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
@@ -287,9 +308,10 @@ describe("TemplatesEditor", () => {
     expect(saved).toMatchObject({
       name: "ET judgment",
       service: null,
-      enabled: true,
+      stage: "test",
       version: "v1",
     });
+    expect(saved.sign_off).toBeUndefined();
     expect(saved.fields.map((f: TemplateField) => f.tag)).toEqual([
       "Party1Title",
       "Reference",
@@ -722,6 +744,90 @@ describe("TemplatesEditor", () => {
   });
 });
 
+describe("Switching a template on for everyone (DIAAT-347)", () => {
+  beforeEach(() => {
+    request.mockReset();
+  });
+
+  async function chooseLive(
+    user: ReturnType<typeof userEvent.setup>,
+    fields: HTMLElement
+  ) {
+    await user.click(within(fields).getByLabelText("Who can choose it"));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Live: all its judges can choose it",
+      })
+    );
+  }
+
+  it("goes live only with the service lead's sign-off, then says who gave it", async () => {
+    serve([{ ...UPLOADED, stage: "test" }]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await chooseLive(user, fields);
+    const signOff = within(fields).getByRole("group", {
+      name: "Service lead's sign-off",
+    });
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    expect(signOff.textContent).toContain(
+      "Enter the service lead's name and tick that they have signed it off."
+    );
+    expect(puts()).toEqual([]);
+
+    await user.click(
+      within(signOff).getByLabelText("Service lead who signed it off")
+    );
+    await user.paste("A Lead");
+    await user.click(
+      within(signOff).getByLabelText("The service lead has signed this off")
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0]).toMatchObject({
+      stage: "live",
+      sign_off: { service_lead: "A Lead", confirmed: true },
+    });
+    const reopened = await screen.findByRole("region", {
+      name: "Fields of ET judgment",
+    });
+    expect(reopened.textContent).toContain(
+      "Signed off by A Lead on 12 November 2026."
+    );
+    expect(
+      within(reopened).queryByRole("group", { name: "Service lead's sign-off" })
+    ).toBeNull();
+    expect(screen.getByText("Live")).toBeTruthy();
+  });
+
+  it("does not ask again when a live template is saved", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        stage: "live",
+        sign_off: {
+          service_lead: "A Lead",
+          signed_off_at: "2026-11-12T10:00:00",
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].stage).toBe("live");
+    expect(puts()[0].sign_off).toBeUndefined();
+  });
+});
+
 describe("Previewing a template (DIAAT-346)", () => {
   let saved: { name: string; blob: Blob }[];
   let click: ReturnType<typeof vi.spyOn>;
@@ -867,6 +973,19 @@ describe("Previewing a template (DIAAT-346)", () => {
     const alert = await within(preview).findByRole("alert");
     expect(alert.textContent).toContain(
       "BenchNotes could not be reached to make the preview. Check your connection and try again."
+    );
+  });
+
+  it("says when only the test group can choose the template", async () => {
+    serve([{ ...UPLOADED, stage: "test" }]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    expect(
+      within(fields).getByRole("region", { name: "Preview ET judgment" })
+        .textContent
+    ).toContain(
+      "Only its test group and administrators can choose this template."
     );
   });
 

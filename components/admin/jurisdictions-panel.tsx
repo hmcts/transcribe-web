@@ -9,6 +9,7 @@ import {
   IDLE,
   TemplatesEditor,
 } from "@/components/admin/templates-editor";
+import { SignOffFields } from "@/components/admin/sign-off";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -41,6 +42,7 @@ import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 import { JURISDICTION_ADMINISTRATOR } from "@/lib/access/assignable-roles";
 import { fetchPublicJurisdictions } from "@/lib/access/api";
 import { describeRefusal } from "@/lib/access/refusal-messages";
+import { NO_SIGN_OFF, SIGN_OFF_MISSING, type SignOffDraft, signedOffText, signOffToSend } from "@/lib/sign-off";
 import { useAccess } from "@/providers/access";
 
 /**
@@ -298,6 +300,11 @@ function JurisdictionEditor({
     jurisdiction ? (jurisdiction.stage ?? "live") : "draft"
   );
   const [enabled, setEnabled] = useState(jurisdiction?.enabled ?? true);
+  const [signOff, setSignOff] = useState<SignOffDraft>(NO_SIGN_OFF);
+  const [signOffError, setSignOffError] = useState<string | null>(null);
+  // Going live, not saving one already live: the service lead's sign-off (DIAAT-347).
+  const needsSignOff =
+    stagesSupported && jurisdiction !== null && stage === "live" && (jurisdiction.stage ?? "live") !== "live";
   const [template, setTemplate] = useState<string>(settings.template ?? "none");
   const [recordings, setRecordings] = useState(
     settings.features?.hearing_recordings ?? false
@@ -331,12 +338,19 @@ function JurisdictionEditor({
 
   async function save() {
     if (duplicate) return;
+    const signOffSent = needsSignOff ? signOffToSend(signOff) : undefined;
+    if (signOffSent === null) {
+      setSignOffError(SIGN_OFF_MISSING);
+      return;
+    }
+    setSignOffError(null);
     setSaving(true);
     try {
       const saved = await saveJurisdiction(code, {
         name,
         // Only to an API that knows them: an older one would ignore them.
         ...(stagesSupported ? { display_name: displayName, service, stage } : {}),
+        ...(signOffSent ? { sign_off: signOffSent } : {}),
         enabled,
         settings: {
           // Only the keys this release knows (a stored one it no longer knows would
@@ -427,7 +441,10 @@ function JurisdictionEditor({
               <Label htmlFor="jurisdiction-stage">Who sees it</Label>
               <Select
                 value={stage}
-                onValueChange={(v) => setStage(v as JurisdictionStage)}
+                onValueChange={(v) => {
+                  setStage(v as JurisdictionStage);
+                  setSignOffError(null);
+                }}
                 disabled={!jurisdiction}
               >
                 <SelectTrigger id="jurisdiction-stage" aria-describedby="jurisdiction-stage-hint">
@@ -442,9 +459,11 @@ function JurisdictionEditor({
                 </SelectContent>
               </Select>
               <p id="jurisdiction-stage-hint" className="text-xs text-muted-foreground">
-                {jurisdiction
-                  ? "Draft: only its administrators. Test: its test group too. Live: everyone with a role there."
-                  : "A new jurisdiction starts as a draft. Add its administrators, then switch it on."}
+                {jurisdiction?.stage === "live" && jurisdiction.sign_off
+                  ? `${signedOffText(jurisdiction.sign_off)}.`
+                  : jurisdiction
+                    ? "Draft: only its administrators. Test: its test group too. Live: everyone with a role there."
+                    : "A new jurisdiction starts as a draft. Add its administrators, then switch it on."}
               </p>
             </div>
           </>
@@ -477,6 +496,18 @@ function JurisdictionEditor({
           />
         </div>
       </div>
+
+      {needsSignOff && (
+        <SignOffFields
+          id="jurisdiction-sign-off"
+          value={signOff}
+          onChange={(value) => {
+            setSignOff(value);
+            setSignOffError(null);
+          }}
+          error={signOffError}
+        />
+      )}
 
       {!stagesSupported && !jurisdiction && (
         <p className="text-sm text-muted-foreground">

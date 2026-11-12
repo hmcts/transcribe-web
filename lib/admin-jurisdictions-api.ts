@@ -1,6 +1,7 @@
 import { AdminApiError } from "@/lib/admin-api";
 import { apiClient } from "@/lib/api-client";
 import type { JurisdictionStage } from "@/lib/jurisdiction-api";
+import type { SignOff } from "@/lib/sign-off";
 
 /**
  * /api/admin/jurisdictions (transcribe-api, DIAAT-356): behind `jurisdictions.manage`
@@ -23,6 +24,8 @@ export interface AdminJurisdiction {
   /** The service it is for, where that applies. */
   service?: string | null;
   stage?: JurisdictionStage;
+  /** The service lead's sign-off it went live with (DIAAT-347); null while not live. */
+  sign_off?: SignOff | null;
   /** What stops it being switched on (out of draft), in plain words. */
   problems?: string[];
   enabled: boolean;
@@ -65,7 +68,8 @@ export async function fetchWordingKeys(): Promise<Record<string, string>> {
 
 /** Create or update; flags left undefined are unchanged. `version`: the one edited,
  * "" for a new jurisdiction (refused if the code exists). Moving it out of draft is
- * refused, with what is missing, until it is ready. */
+ * refused, with what is missing, until it is ready; making it live, without the service
+ * lead's `sign_off` (DIAAT-347). */
 export function saveJurisdiction(
   code: string,
   body: {
@@ -75,6 +79,7 @@ export function saveJurisdiction(
     settings: JurisdictionSettingsData;
     enabled?: boolean;
     stage?: JurisdictionStage;
+    sign_off?: { service_lead: string; confirmed: true };
     version: string;
   }
 ): Promise<AdminJurisdiction> {
