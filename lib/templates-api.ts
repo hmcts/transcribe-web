@@ -343,8 +343,12 @@ function previewFailure(response: {
   problems?: string[];
   status?: number;
 }): TemplateRefusedError {
+  // Not the API's own words: a page it did not write ("HTTP error!"), or a 405, which
+  // the client words for developers before reading any body.
   const own =
-    response.status !== undefined && !/^HTTP error!/.test(response.error ?? "");
+    response.status !== undefined &&
+    response.status !== 405 &&
+    !/^HTTP error!/.test(response.error ?? "");
   return new TemplateRefusedError(
     own
       ? (response.error ?? "")

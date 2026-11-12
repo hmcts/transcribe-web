@@ -824,6 +824,15 @@ describe("Previewing a template (DIAAT-346)", () => {
       "BenchNotes could not make the preview (error 403). Try again, and if it keeps failing, contact the BenchNotes team.",
     ],
     [
+      "a method the server does not take (405)",
+      {
+        error:
+          "Method POST not allowed for /admin/jurisdictions/ET/templates/t1/preview",
+        status: 405,
+      },
+      "BenchNotes could not make the preview (error 405). Try again, and if it keeps failing, contact the BenchNotes team.",
+    ],
+    [
       "no answer at all",
       { error: "Failed to fetch" },
       "BenchNotes could not be reached to make the preview. Check your connection and try again.",
@@ -996,6 +1005,28 @@ describe("Previewing a template (DIAAT-346)", () => {
     const sample = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
     expect((await sentValues(user, preview)).Reference).toBe(
       kept === "today's sample" ? sample : kept
+    );
+  });
+
+  it("keeps cleared answers unanswered through a save", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { fields, preview: first } = await openPreview(user);
+    await user.click(
+      within(first).getByRole("button", { name: "Clear answers" })
+    );
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    const preview = await saveAndReopen(user);
+
+    expect(
+      (within(preview).getByLabelText(/^Reference/) as HTMLInputElement).value
+    ).toBe("");
+    expect(within(preview).getByRole("combobox").textContent).toContain(
+      "Choose"
     );
   });
 

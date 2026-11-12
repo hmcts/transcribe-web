@@ -202,7 +202,10 @@ export function TemplatePreview({
             }}
             errors={errors}
             onClear={() => {
-              onValuesChange({});
+              // Each field left unanswered, not forgotten: a save does not refill it.
+              onValuesChange(
+                Object.fromEntries(form.fields.map((f) => [f.tag, undefined]))
+              );
               setErrors({});
             }}
           />
