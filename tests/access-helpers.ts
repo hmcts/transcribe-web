@@ -114,8 +114,35 @@ export const ME = {
     active: at(null, "JurisdictionSuperAdministrator"),
     permissions: JSUPER,
   }),
-  /** A system administrator with no assignments: system pages only. */
-  sysadminOnly: me({ status: "ready", permissions: SYSADMIN }),
+  /** A system administrator with no assignments: their SystemAdministrator context only. */
+  sysadminOnly: me({
+    status: "ready",
+    assignments: [at(null, "SystemAdministrator")],
+    active: at(null, "SystemAdministrator"),
+    permissions: SYSADMIN,
+  }),
+  /** DIAAT-403: Judge in ET, super administrator and system administrator, acting as Judge. */
+  sysadminMultiAsJudge: me({
+    status: "ready",
+    assignments: [
+      at(ET_REF, "Judge"),
+      at(null, "JurisdictionSuperAdministrator"),
+      at(null, "SystemAdministrator"),
+    ],
+    active: at(ET_REF, "Judge"),
+    permissions: JUDGE,
+  }),
+  /** The same user acting as system administrator. */
+  sysadminMultiAsSystem: me({
+    status: "ready",
+    assignments: [
+      at(ET_REF, "Judge"),
+      at(null, "JurisdictionSuperAdministrator"),
+      at(null, "SystemAdministrator"),
+    ],
+    active: at(null, "SystemAdministrator"),
+    permissions: SYSADMIN,
+  }),
   /** Judge in ET and administrator in IAC, no choice made yet. */
   choose: me({
     status: "choose",

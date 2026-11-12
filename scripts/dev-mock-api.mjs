@@ -137,8 +137,8 @@ function recordChange(claims, change, target, jurisdictionCode, role) {
     timestamp: new Date().toISOString(),
     // A change made through the system administrator's own permissions names no
     // person, as the real API does: `actor.id` is null.
-    actor: actor && !(claims.sysadmin && !claims.ctx) ? { id: actor.id, email: actor.email } : { id: null, email: "system administrator" },
-    actor_context: claims?.ctx ? { jurisdiction: claims.ctx.jurisdiction?.code ?? null, role: claims.ctx.role } : null,
+    actor: actor && !actingAsSystem(claims) ? { id: actor.id, email: actor.email } : { id: null, email: "system administrator" },
+    actor_context: claims?.ctx && !actingAsSystem(claims) ? { jurisdiction: claims.ctx.jurisdiction?.code ?? null, role: claims.ctx.role } : null,
     target: { id: target.id ?? null, email: target.email },
     change,
     jurisdiction: jurisdictionCode ?? null,
@@ -179,7 +179,9 @@ function seedState() {
     reason: null,
   });
   const push = (ago, actor, change, target, code, role) => {
-    recordChange({ persona: actor, ctx: PERSONAS[actor].assignments[0] ? { jurisdiction: refOf(PERSONAS[actor].assignments[0][0]), role: PERSONAS[actor].assignments[0][1] } : null }, change, userFor(target), code, role);
+    const [first] = PERSONAS[actor].assignments;
+    const ctx = first ? { jurisdiction: refOf(first[0]), role: first[1] } : PERSONAS[actor].sysadmin ? SYSTEM_PAIR : null;
+    recordChange({ persona: actor, sysadmin: PERSONAS[actor].sysadmin, ctx }, change, userFor(target), code, role);
     roleHistory[roleHistory.length - 1].timestamp = iso(ago);
   };
   push(3 * day, "jsuper", "assignment.added", "jadmin-iac", "IAC", "JurisdictionAdministrator");
@@ -236,10 +238,14 @@ const backendJob = (job) => ({
 });
 
 const same = (x, y) => (x?.code ?? null) === (y?.code ?? null);
-const holds = (user, jurisdictionCode, role) =>
-  user.assignments.some((p) => (p.jurisdiction?.code ?? null) === jurisdictionCode && p.role === role);
+/** DIAAT-403: a system administrator's own context, offered after their assignments. */
+const SYSTEM_PAIR = { jurisdiction: null, role: "SystemAdministrator" };
 /** An assignment as the contract shows it in MeResponse (no id). */
 const plain = (p) => ({ jurisdiction: p.jurisdiction, role: p.role });
+const pairsOf = (user) => [...user.assignments.map(plain), ...(user.sysadmin ? [SYSTEM_PAIR] : [])];
+const holds = (user, jurisdictionCode, role) =>
+  pairsOf(user).some((p) => (p.jurisdiction?.code ?? null) === jurisdictionCode && p.role === role);
+const actingAsSystem = (claims) => Boolean(claims?.sysadmin) && claims?.ctx?.role === SYSTEM_PAIR.role;
 
 // ---- tokens --------------------------------------------------------------------
 function sign(claims) {
@@ -258,14 +264,14 @@ function verify(header) {
 
 function mint(persona, requested) {
   const user = userFor(persona);
-  const pairs = user.assignments.map(plain);
+  const pairs = pairsOf(user);
   let ctx = null;
   if (requested) {
     const [code, role] = [requested.slice(0, requested.indexOf(":")), requested.slice(requested.indexOf(":") + 1)];
     if (holds(user, code === "-" ? null : code, role)) {
       ctx = pairs.find((p) => p.role === role && (p.jurisdiction?.code ?? "-") === code);
     }
-  } else if (pairs.length === 1 && !user.sysadmin) {
+  } else if (pairs.length === 1) {
     ctx = pairs[0];
   }
   const exp = Math.floor(Date.now() / 1000) + TTL_SECONDS;
@@ -275,23 +281,25 @@ function mint(persona, requested) {
   };
 }
 
+/** The active context's permissions only (DIAAT-403): nothing from the other roles held. */
 function permissionsOf(claims) {
-  const fromRole = claims.ctx ? (ROLE_PERMISSIONS[claims.ctx.role] ?? []) : [];
-  return [...new Set([...fromRole, ...(claims.sysadmin ? SYSADMIN : [])])];
+  if (!claims.ctx) return [];
+  if (claims.ctx.role === SYSTEM_PAIR.role) return claims.sysadmin ? SYSADMIN : [];
+  return ROLE_PERMISSIONS[claims.ctx.role] ?? [];
 }
 
 /** `me` from what the token carries (as the API does), plus the user's live pending requests. */
 function meOf(claims) {
   const user = userFor(claims.persona);
   const pairs = claims.assignments;
-  const status = claims.ctx || (claims.sysadmin && pairs.length === 0) ? "ready" : pairs.length > 0 ? "choose" : "no_access";
+  const status = claims.ctx ? "ready" : pairs.length > 0 ? "choose" : "no_access";
   return {
     user: { id: user.id, email: user.email, name: user.name },
     status,
     assignments: pairs,
     active: claims.ctx,
     // A user with no context still holds access.request (any signed-in user).
-    permissions: claims.ctx || claims.sysadmin ? permissionsOf(claims) : ["access.request"],
+    permissions: claims.ctx ? permissionsOf(claims) : ["access.request"],
     pending_requests: user.requests.filter((r) => r.status === "pending"),
   };
 }
@@ -413,7 +421,7 @@ const server = createServer(async (req, res) => {
     }
   }
 
-  const permissions = claims.ctx || claims.sysadmin ? permissionsOf(claims) : ["access.request"];
+  const permissions = claims.ctx ? permissionsOf(claims) : ["access.request"];
 
   // ---- no-context endpoints -------------------------------------------------
   if (method === "GET" && path === "/api/me/permissions") return send(res, 200, meOf(claims));
@@ -490,16 +498,11 @@ const server = createServer(async (req, res) => {
     return send(res, 200, { dictation_enabled: flags.find((f) => f.name === "dictation_enabled").value });
   }
 
-  // ---- everything else needs a context (or a system administrator) ----------
-  if (!claims.ctx && !claims.sysadmin) {
+  // ---- everything else needs a context, a system administrator's included ----------
+  if (!claims.ctx) {
     return refuse(res, 403, "context_required", "Choose where and as what you are working first");
   }
-  // As the real API: a system administrator with no context who reaches for what a
-  // role has is told to choose a context; acting as a role, `permission_denied`.
-  const denied = (what) =>
-    claims.ctx
-      ? refuse(res, 403, "permission_denied", `Needs ${what}`)
-      : refuse(res, 403, "context_required", "Choose where and as what you are working first");
+  const denied = (what) => refuse(res, 403, "permission_denied", `Needs ${what}`);
   const need = (permission) => {
     if (permissions.includes(permission)) return true;
     denied(permission);
@@ -512,8 +515,8 @@ const server = createServer(async (req, res) => {
   };
 
   if (method === "GET" && path === "/api/jurisdictions/current") {
-    // As the real API: no context is `context_required`, a global role `no_jurisdiction`.
-    if (!claims.ctx) return refuse(res, 403, "context_required", "Choose where and as what you are working first");
+    // As the real API: `app.access`, then a global role is `no_jurisdiction`.
+    if (!need("app.access")) return;
     if (!claims.ctx.jurisdiction) return refuse(res, 403, "no_jurisdiction", "The role you are working as has no jurisdiction.");
     return send(res, 200, materialOf(claims.ctx.jurisdiction.code));
   }
@@ -619,7 +622,7 @@ const server = createServer(async (req, res) => {
     const email = String(body.email ?? "").trim().toLowerCase();
     if (!target && !/^[^\s@]+@[^\s@]+$/.test(email)) return refuse(res, 400, "invalid_email", "Enter a full email address");
     const toSelf = target?.id === user.id;
-    const own = toSelf && claims.sysadmin; // a system administrator may give themselves any role
+    const own = toSelf && actingAsSystem(claims); // acting as system administrator, may give themselves any role
     if (!own) {
       if (toSelf) return notAllowed(res, "You cannot give yourself a role.");
       if (!assignable().includes(role)) return notAllowed(res, "You cannot give that role");
@@ -648,7 +651,7 @@ const server = createServer(async (req, res) => {
     const found = holder?.assignments.find((p) => p.id === assignment[1]);
     if (!holder || !found) return refuse(res, 404, "not_found", "No such assignment");
     const code = found.jurisdiction?.code ?? null;
-    const own = holder.id === user.id && claims.sysadmin;
+    const own = holder.id === user.id && actingAsSystem(claims);
     if (!own) {
       if (!assignable().includes(found.role)) return notAllowed(res, "You cannot remove that role");
       if (code !== null && !reaches(code)) return refuse(res, 404, "not_found", "No such assignment");

@@ -92,7 +92,7 @@ describe("switching context", () => {
   });
 
   it("is not offered to a user with no role", async () => {
-    api.fetchMe.mockResolvedValue(ME.sysadminOnly);
+    api.fetchMe.mockResolvedValue({ ...ME.noAccess, status: "ready" });
     render(
       <AccessProvider>
         <ContextSwitcher />
@@ -192,6 +192,33 @@ describe("switching context", () => {
     } finally {
       unregister();
     }
+  });
+
+  it("offers a system administrator their SystemAdministrator context with their other roles (DIAAT-403)", async () => {
+    await openSwitcher(ME.sysadminMultiAsJudge);
+
+    expect(
+      await screen.findByRole("menuitem", { name: /All jurisdictions: System administrator/ })
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("menuitem", { name: /All jurisdictions: Jurisdiction super administrator/ })
+    ).toBeTruthy();
+  });
+
+  it("switches a system administrator to their SystemAdministrator context, and back to Judge off the Admin page", async () => {
+    pathname = "/admin";
+    vi.stubGlobal("location", { ...window.location, assign, pathname });
+    api.postContext.mockResolvedValue(ME.sysadminMultiAsSystem);
+    await openSwitcher(ME.sysadminMultiAsJudge);
+    await act(async () => {
+      fireEvent.click(
+        await screen.findByRole("menuitem", { name: /All jurisdictions: System administrator/ })
+      );
+    });
+
+    expect(api.postContext).toHaveBeenCalledWith({ jurisdiction: null, role: "SystemAdministrator" });
+    // The new context has admin.access: the page stays, and reloads to ask the API what it may do now.
+    await waitFor(() => expect(assign).toHaveBeenCalledWith("/admin"));
   });
 
   it("stays on the Admin page when the new context may use it, and leaves it when not", async () => {

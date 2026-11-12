@@ -123,9 +123,14 @@ describe("loading who the user is", () => {
       { dictation: "false", admin: "true", active: "-:JurisdictionSuperAdministrator", n: "1" },
     ],
     [
-      "a system administrator with no role",
+      "a system administrator acting as one",
       ME.sysadminOnly,
-      { dictation: "false", admin: "true", active: "none", n: "0" },
+      { dictation: "false", admin: "true", active: "-:SystemAdministrator", n: "1" },
+    ],
+    [
+      "a system administrator who also holds roles, acting as a judge (DIAAT-403)",
+      ME.sysadminMultiAsJudge,
+      { dictation: "true", admin: "false", active: "ET:Judge", n: "3" },
     ],
   ])("lets %s in, with exactly the permissions the API returned", async (_n, me, want) => {
     api.fetchMe.mockResolvedValue(me);
@@ -532,10 +537,10 @@ describe("refusals about who the user is (the API's 403 codes, DIAAT-373)", () =
   });
 
   it("does not ask again when this tab already knows it has no context", async () => {
-    api.fetchMe.mockResolvedValue(ME.sysadminOnly);
+    api.fetchMe.mockResolvedValue(ME.choose);
     refuse("context_required");
     renderProvider();
-    await screen.findByText("status: ready");
+    await screen.findByRole("heading", { name: /Choose where and as what you are working/ });
 
     await act(async () => {
       await fetch("/api/anything");
