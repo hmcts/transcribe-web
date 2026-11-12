@@ -52,8 +52,10 @@ export function SignOffFields({
         </Label>
       </div>
       {error && (
+        // An alert: Save keeps the focus, so the error is announced, not just shown.
         <p
           id={`${id}-error`}
+          role="alert"
           className="text-sm font-medium text-red-600 dark:text-red-400"
         >
           {error}

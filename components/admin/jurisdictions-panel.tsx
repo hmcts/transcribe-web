@@ -300,20 +300,22 @@ function JurisdictionEditor({
     jurisdiction ? (jurisdiction.stage ?? "live") : "draft"
   );
   const [enabled, setEnabled] = useState(jurisdiction?.enabled ?? true);
+  // The copy this form was opened from or last saved, not the list's latest: a change
+  // made meanwhile (even one a refresh has since shown) is refused, not overwritten.
+  // The editor stays open across saves, and the refresh after one may fail.
+  const [stored, setStored] = useState(jurisdiction);
+  const version = stored?.version ?? "";
   const [signOff, setSignOff] = useState<SignOffDraft>(NO_SIGN_OFF);
   const [signOffError, setSignOffError] = useState<string | null>(null);
   // Going live, not saving one already live: the service lead's sign-off (DIAAT-347).
   const needsSignOff =
-    stagesSupported && jurisdiction !== null && stage === "live" && (jurisdiction.stage ?? "live") !== "live";
+    stagesSupported && stored !== null && stage === "live" && (stored.stage ?? "live") !== "live";
   const [template, setTemplate] = useState<string>(settings.template ?? "none");
   const [recordings, setRecordings] = useState(
     settings.features?.hearing_recordings ?? false
   );
   const [wording, setWording] = useState<Record<string, string>>(settings.wording ?? {});
   const [saving, setSaving] = useState(false);
-  // The version this form was opened from, not the list's latest: a change made
-  // meanwhile (even one a refresh has since shown) is refused, not overwritten.
-  const [version, setVersion] = useState(jurisdiction?.version ?? "");
 
   // DIAAT-332: a switch reloads the tab, losing changes not saved, or a save under way.
   const form = JSON.stringify({
@@ -365,7 +367,9 @@ function JurisdictionEditor({
         },
         version,
       });
-      setVersion(saved.version);
+      setStored(saved);
+      // Each go-live is signed off afresh: leaving live clears the stored sign-off.
+      setSignOff(NO_SIGN_OFF);
       setSavedForm(form);
       toast.success(`Saved ${saved.code}`);
       await onSaved(saved.code);
@@ -459,8 +463,8 @@ function JurisdictionEditor({
                 </SelectContent>
               </Select>
               <p id="jurisdiction-stage-hint" className="text-xs text-muted-foreground">
-                {jurisdiction?.stage === "live" && jurisdiction.sign_off
-                  ? `${signedOffText(jurisdiction.sign_off)}.`
+                {stored?.stage === "live" && stored.sign_off
+                  ? `${signedOffText(stored.sign_off)}.`
                   : jurisdiction
                     ? "Draft: only its administrators. Test: its test group too. Live: everyone with a role there."
                     : "A new jurisdiction starts as a draft. Add its administrators, then switch it on."}
