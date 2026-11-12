@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MeResponse } from "@/lib/access/types";
 import { ME } from "../access-helpers";
@@ -228,6 +228,22 @@ describe("Header", () => {
       expect(
         [...(menu.getByLabelText("Role") as HTMLSelectElement).options].map((o) => o.textContent)
       ).toEqual(["Judge", "Legal text manager"]);
+    });
+
+    it("closes the narrow-screen menu when Request access is chosen, so the page is not behind it", async () => {
+      mockPersona = ME.manyJurisdictions;
+      render(<Header />);
+      fireEvent.click(screen.getByRole("button", { name: "Open navigation menu" }));
+      const menu = within(screen.getByRole("dialog"));
+      fireEvent.pointerDown(menu.getByRole("button", { name: /Your access/ }), {
+        button: 0,
+        ctrlKey: false,
+      });
+      const link = (await screen.findByText("Request access")).closest("a") as HTMLAnchorElement;
+      expect(link.getAttribute("href")).toBe("/request-access");
+      fireEvent.click(link);
+
+      await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     });
 
     it("is not shown to a user with no role", () => {

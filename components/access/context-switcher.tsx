@@ -98,10 +98,13 @@ const SELECT_CLASS =
 export function ContextSwitcher({
   className,
   stacked = false,
+  onNavigate,
 }: {
   className?: string;
   /** Visible labels, one control under the other (the narrow-screen menu). */
   stacked?: boolean;
+  /** Called when a link in the account menu is followed (the narrow-screen menu closes). */
+  onNavigate?: () => void;
 }) {
   const { active, assignments, can, switchContext, leaveJurisdiction } =
     useAccess();
@@ -206,7 +209,7 @@ export function ContextSwitcher({
           {can("access.request") && (
             <>
               <DropdownMenuItem asChild>
-                <Link href="/request-access">
+                <Link href="/request-access" onClick={onNavigate}>
                   <UserRoundPlus className="mr-2 size-4" aria-hidden="true" />
                   Request access
                 </Link>

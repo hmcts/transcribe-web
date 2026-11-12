@@ -187,7 +187,10 @@ how many jurisdictions a person can be in. The switcher lists all of them, the
 Users screen gives one person several roles and shows each as its own chip, and a
 user who holds roles asks for more from Request access in the header's account
 menu (`app/request-access/page.tsx`, the same form and `POST /api/access-requests`
-as the no-access page, without the roles they already hold there).
+as the no-access page, without the roles they already hold there). Its Check again
+mints now and refreshes the tab's roles, so an approved role reaches the switcher
+without a reload; a filled-in form, or a request being sent or withdrawn, stops a
+context switch until it is sent or cleared.
 
 The path-to-permission table for pages is `lib/access/routes.ts`; the route
 layouts (`app/record/layout.tsx` and the others) use it, and a page at its

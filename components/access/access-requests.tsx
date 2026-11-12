@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import {
   createAccessRequest,
   fetchMyAccessRequests,
@@ -71,6 +72,14 @@ export function AccessRequests({
   const [sending, setSending] = useState(false);
   const [failed, setFailed] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [withdrawing, setWithdrawing] = useState(false);
+  const drafted = jurisdiction !== "" || roles.length > 0;
+  // A context switch reloads the tab: not while a request is being sent or
+  // withdrawn, nor over a form filled in but not sent.
+  useJurisdictionSwitchGuard({
+    busy: sending || withdrawing,
+    unsaved: drafted,
+  });
 
   const loadRequests = useCallback(async () => {
     try {
@@ -115,7 +124,14 @@ export function AccessRequests({
     }
   };
 
+  const clear = () => {
+    setJurisdiction("");
+    setRoles([]);
+    setFailed(null);
+  };
+
   const withdraw = async (id: string) => {
+    setWithdrawing(true);
     try {
       await withdrawAccessRequest(id);
       // Room for another request: an earlier "too many waiting" no longer stands.
@@ -123,6 +139,8 @@ export function AccessRequests({
       await loadRequests();
     } catch (error) {
       toast.error(message(error, "The request could not be withdrawn."));
+    } finally {
+      setWithdrawing(false);
     }
   };
 
@@ -276,13 +294,23 @@ export function AccessRequests({
               {failed}
             </p>
           )}
-          <div>
+          <div className="flex flex-wrap gap-2">
             <Button
               type="submit"
               disabled={sending || !jurisdiction || wanted.length === 0}
             >
               {sending ? "Sending..." : "Send request"}
             </Button>
+            {drafted && (
+              <Button
+                type="button"
+                variant="outline"
+                disabled={sending}
+                onClick={clear}
+              >
+                Clear
+              </Button>
+            )}
           </div>
         </form>
       </section>

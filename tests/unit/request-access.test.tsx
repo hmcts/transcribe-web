@@ -8,9 +8,16 @@ import { ET_REF, IAC_REF, ME, SSCS_REF } from "../access-helpers";
 // or another role in one of theirs, with the same request as a user with none.
 
 let persona: MeResponse = ME.manyJurisdictions;
-vi.mock("@/providers/access", async () =>
-  (await import("../access-helpers")).mockAccessModule(() => persona)
-);
+const checkAgain = vi.hoisted(() => vi.fn());
+vi.mock("@/providers/access", async () => {
+  const mocked = (await import("../access-helpers")).mockAccessModule(
+    () => persona
+  );
+  return {
+    ...mocked,
+    useAccess: () => ({ ...mocked.useAccess(), checkAgain }),
+  };
+});
 const toast = vi.hoisted(() => ({
   success: vi.fn(),
   error: vi.fn(),
@@ -30,6 +37,7 @@ vi.mock("@/lib/access/api", async (importOriginal) => ({
 
 import RequestAccessPage from "@/app/request-access/page";
 import { AccessApiError } from "@/lib/access/api";
+import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 
 class ResizeObserverStub {
   observe() {
@@ -47,12 +55,12 @@ Element.prototype.scrollIntoView ??= () => undefined;
 
 async function choose(jurisdiction: string) {
   const user = userEvent.setup();
-  render(<RequestAccessPage />);
+  const { rerender } = render(<RequestAccessPage />);
   await user.click(
     await screen.findByRole("combobox", { name: "Jurisdiction" })
   );
   await user.click(await screen.findByRole("option", { name: jurisdiction }));
-  return user;
+  return Object.assign(user, { rerender });
 }
 
 const checkbox = (name: RegExp) =>
@@ -70,6 +78,8 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
       { code: "UT", name: "Upper Tribunal" },
     ]);
     api.fetchMyAccessRequests.mockResolvedValue([]);
+    checkAgain.mockReset();
+    checkAgain.mockImplementation(async () => persona);
   });
 
   it("asks for roles in a jurisdiction the user is not in yet", async () => {
@@ -167,6 +177,124 @@ describe("asking for more access while holding roles (DIAAT-406)", () => {
         name: "Withdraw request for Upper Tribunal",
       })
     ).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Check again" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Check again" })).toBeTruthy();
+  });
+
+  it("checks again for an approval: the roles and requests are read anew, without a reload", async () => {
+    const approved: MeResponse = {
+      ...ME.manyJurisdictions,
+      assignments: [
+        ...ME.manyJurisdictions.assignments,
+        { jurisdiction: { code: "UT", name: "Upper Tribunal" }, role: "Judge" },
+      ],
+    };
+    checkAgain.mockImplementation(async () => {
+      persona = approved;
+      return approved;
+    });
+    const user = await choose("Upper Tribunal");
+    expect(checkbox(/^Judge/).disabled).toBe(false);
+    const asked = api.fetchMyAccessRequests.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Check again" }));
+    expect(checkAgain).toHaveBeenCalledTimes(1);
+    // The access provider adopts the new `me` and renders its consumers again.
+    user.rerender(<RequestAccessPage />);
+
+    await waitFor(() => expect(checkbox(/^Judge/).disabled).toBe(true));
+    expect(api.fetchMyAccessRequests.mock.calls.length).toBeGreaterThan(asked);
+  });
+
+  it("says so when checking again fails", async () => {
+    checkAgain.mockResolvedValue(null);
+    const user = userEvent.setup();
+    render(<RequestAccessPage />);
+    await user.click(
+      await screen.findByRole("button", { name: "Check again" })
+    );
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Could not check just now. Try again."
+      )
+    );
+  });
+
+  it("stops a context switch over a filled-in form until it is sent or cleared", async () => {
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    const user = await choose("Upper Tribunal");
+    await user.click(checkbox(/^Judge/));
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "unsaved_changes",
+    });
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(checkbox(/^Judge/).getAttribute("aria-checked")).toBe("false");
+    expect(screen.queryByRole("button", { name: "Clear" })).toBeNull();
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+  });
+
+  it("stops a context switch while a request is being sent", async () => {
+    let finish: (value: unknown) => void = () => undefined;
+    api.createAccessRequest.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const user = await choose("Upper Tribunal");
+    await user.click(checkbox(/^Judge/));
+    await user.click(screen.getByRole("button", { name: "Send request" }));
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+    finish({
+      id: "r-3",
+      jurisdiction: { code: "UT", name: "Upper Tribunal" },
+      roles: ["Judge"],
+      status: "pending",
+      created_at: "2026-11-12T10:00:00Z",
+      decided_at: null,
+      reason: null,
+    });
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith("Request sent")
+    );
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+  });
+
+  it("stops a context switch while a request is being withdrawn", async () => {
+    api.fetchMyAccessRequests.mockResolvedValue([
+      {
+        id: "r-4",
+        jurisdiction: { code: "UT", name: "Upper Tribunal" },
+        roles: ["Judge"],
+        status: "pending",
+        created_at: "2026-11-12T10:00:00Z",
+        decided_at: null,
+        reason: null,
+      },
+    ]);
+    let finish: (value: unknown) => void = () => undefined;
+    api.withdrawAccessRequest.mockReturnValue(
+      new Promise((resolve) => {
+        finish = resolve;
+      })
+    );
+    const user = userEvent.setup();
+    render(<RequestAccessPage />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Withdraw request for Upper Tribunal",
+      })
+    );
+
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
+    finish({});
+    await waitFor(() =>
+      expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined()
+    );
   });
 });

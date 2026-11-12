@@ -67,6 +67,7 @@ export default function Header() {
   const searchParams = useSearchParams();
   const lastScrollY = useRef(0);
   const [isHidden, setIsHidden] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const showDictation =
     !hideNavLinks && dictationEnabled && can("dictation.use");
   const showRecordings =
@@ -225,7 +226,7 @@ export default function Header() {
           <ThemeToggle />
         </nav>
 
-        <Sheet>
+        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
           <SheetTrigger asChild>
             <Button
               variant="ghost"
@@ -242,7 +243,11 @@ export default function Header() {
             </SheetHeader>
             <div className="flex flex-col gap-2">
               {!hideSwitcher && (
-                <ContextSwitcher stacked className="px-3 pb-2" />
+                <ContextSwitcher
+                  stacked
+                  className="px-3 pb-2"
+                  onNavigate={() => setMenuOpen(false)}
+                />
               )}
               <DevPersonaPicker className="h-10 justify-start px-3 text-sm font-medium" />
               <SheetClose asChild>
