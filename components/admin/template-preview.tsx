@@ -8,6 +8,7 @@ import {
   type AdminTemplate,
   type AvailableTemplate,
   fetchTemplateForm,
+  fittingValue,
   missingValues,
   ownValue,
   previewTemplate,
@@ -85,16 +86,17 @@ export function TemplatePreview({
     try {
       const loaded = await fetchTemplateForm(code, template.id);
       setForm(loaded);
-      // Sample details for the fields not filled in yet (new ones after a save).
+      // The details kept from before, as they fit the saved fields; a sample for each
+      // field not filled in yet (new after a save) or whose answer no longer fits.
       const samples = sampleValues(loaded);
       onValuesChange(
         Object.fromEntries(
-          loaded.fields.map((f) => [
-            f.tag,
-            Object.hasOwn(values, f.tag)
-              ? ownValue(values, f.tag)
-              : ownValue(samples, f.tag),
-          ])
+          loaded.fields.map((f) => {
+            const kept = Object.hasOwn(values, f.tag)
+              ? fittingValue(f, ownValue(values, f.tag))
+              : null;
+            return [f.tag, kept === null ? ownValue(samples, f.tag) : kept];
+          })
         )
       );
     } catch (err) {

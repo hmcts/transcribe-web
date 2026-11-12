@@ -279,6 +279,46 @@ export function sampleValues(
 }
 
 /**
+ * A sample answer kept from before a save, as it fits the field now (the admin may
+ * have changed its type or options since): only the choices still offered, and null
+ * when the field's control could not show it or the API would refuse it, so a new
+ * sample is used instead. An unanswered field (undefined) stays unanswered.
+ */
+export function fittingValue(
+  field: TemplateFormField,
+  value: TemplateValue | undefined
+): TemplateValue | undefined | null {
+  if (value === undefined) return undefined;
+  const offered = new Set(field.options.map((option) => option.value));
+  switch (field.type) {
+    case "yes_no":
+      return typeof value === "boolean" ? value : null;
+    case "multi_select":
+    case "legal_issues": {
+      if (!Array.isArray(value)) return null;
+      const kept = value.filter((choice) => offered.has(choice));
+      return kept.length === 0 && value.length > 0 ? null : kept;
+    }
+    case "dropdown":
+      return typeof value === "string" && (!value || offered.has(value))
+        ? value
+        : null;
+    case "date":
+      return typeof value === "string" &&
+        (!value.trim() || /^\d{4}-\d{2}-\d{2}$/.test(value.trim()))
+        ? value
+        : null;
+    case "number":
+      return typeof value === "string" &&
+        (!value.trim() || Number.isFinite(Number(value.trim())))
+        ? value
+        : null;
+    default:
+      return typeof value === "string" ? value : null;
+  }
+}
+
+/**
  * A failure of the preview, in plain words (TemplateRefusedError, with ``problems``
  * when the API lists them), also when it is not the API's own: a network error, or a
  * page from the firewall.

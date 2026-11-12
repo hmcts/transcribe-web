@@ -106,31 +106,26 @@ const UPLOADED: AdminTemplate = {
   version: "v1",
 };
 
-/** The Hearing Details form the API gives for UPLOADED's preview. */
-const FORM: AvailableTemplate = {
-  id: "t1",
-  name: "ET judgment",
-  service: null,
-  fields: [
-    {
-      tag: "Reference",
-      label: "Reference",
-      type: "text",
-      required: true,
-      options: [],
-    },
-    {
-      tag: "Party1Title",
-      label: "Party1Title",
-      type: "dropdown",
-      required: true,
-      options: [
-        { value: "Claimant", label: "Claimant" },
-        { value: "Respondent", label: "Respondent" },
-      ],
-    },
-  ],
-};
+/** The Hearing Details form the API gives for a template's preview: the fields a
+ * judge fills, as saved. */
+const formOf = (template: AdminTemplate): AvailableTemplate => ({
+  id: template.id,
+  name: template.name,
+  service: template.service,
+  fields: template.fields.flatMap((f) =>
+    f.type === "dictated" || f.type === "benchnotes"
+      ? []
+      : [
+          {
+            tag: f.tag,
+            label: f.label,
+            type: f.type,
+            required: f.required,
+            options: f.options.map((o) => ({ value: o, label: o })),
+          },
+        ]
+  ),
+});
 
 /** A small fake of the API's template routes. ``preview``, ``form``: the answers of
  * the preview and of its form. */
@@ -158,7 +153,11 @@ function serve(
         /^\/admin\/jurisdictions\/ET\/templates\/(\w+)\/(form|preview)$/
       );
       if (part?.[2] === "form" && method === "GET")
-        return form ?? { data: { ...FORM, id: part[1] } };
+        return (
+          form ?? {
+            data: formOf(list.find((t) => t.id === part[1]) ?? UPLOADED),
+          }
+        );
       if (part?.[2] === "preview" && method === "POST") return preview;
       const one = endpoint.match(
         /^\/admin\/jurisdictions\/ET\/templates\/(\w+)$/
@@ -177,7 +176,7 @@ function serve(
           ...existing,
           ...body,
           problems: [],
-          version: "v2",
+          version: `v${Number(existing.version.slice(1)) + 1}`,
         };
         list = list.map((t) => (t.id === saved.id ? saved : t));
         return { data: saved };
@@ -913,6 +912,100 @@ describe("Previewing a template (DIAAT-346)", () => {
       /^Reference/
     )) as HTMLInputElement;
     expect(kept.value).toBe("1234/2026");
+  });
+
+  async function saveAndReopen(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(
+      within(
+        screen.getByRole("region", { name: "Fields of ET judgment" })
+      ).getByRole("button", { name: "Save" })
+    );
+    const reopened = await screen.findByRole("region", {
+      name: "Preview ET judgment",
+    });
+    await user.click(
+      await within(reopened).findByRole("button", {
+        name: "Fill in sample details",
+      })
+    );
+    await within(reopened).findByRole("button", { name: "Download preview" });
+    return reopened;
+  }
+
+  async function chooseType(
+    user: ReturnType<typeof userEvent.setup>,
+    label: string,
+    type: string
+  ) {
+    await user.click(
+      within(
+        screen.getByRole("region", { name: "Fields of ET judgment" })
+      ).getByRole("combobox", { name: `Type of ${label}` })
+    );
+    await user.click(await screen.findByRole("option", { name: type }));
+  }
+
+  async function sentValues(
+    user: ReturnType<typeof userEvent.setup>,
+    preview: HTMLElement
+  ) {
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+    await waitFor(() => expect(previews()).toHaveLength(1));
+    return JSON.parse(String(previews()[0][1]?.body)).values;
+  }
+
+  it("gives a new sample for an answer its field's new type cannot take", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    await openPreview(user); // Reference: "Sample Reference"
+
+    await chooseType(user, "Reference", "Yes / No");
+    const preview = await saveAndReopen(user);
+
+    expect(
+      (
+        within(preview).getByRole("radio", { name: "Yes" }) as HTMLElement
+      ).getAttribute("aria-checked")
+    ).toBe("true");
+    expect(await sentValues(user, preview)).toEqual({
+      Reference: true,
+      Party1Title: "Claimant",
+    });
+  });
+
+  it("drops choices no longer offered, keeping the ones still offered", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: UPLOADED.fields.map((f) =>
+          f.tag === "Party1Title" ? { ...f, type: "multi_select" } : f
+        ),
+      },
+    ]);
+    const user = userEvent.setup();
+    let { preview } = await openPreview(user); // Party1Title: ["Claimant"]
+    await user.click(
+      within(preview).getByRole("checkbox", { name: "Respondent" })
+    );
+
+    const options = within(
+      screen.getByRole("region", { name: "Fields of ET judgment" })
+    ).getByLabelText("Options for Party1Title");
+    await user.clear(options);
+    await user.paste("Respondent\nIntervenor");
+    preview = await saveAndReopen(user);
+
+    expect(
+      within(preview)
+        .getByRole("checkbox", { name: "Respondent" })
+        .getAttribute("aria-checked")
+    ).toBe("true");
+    expect(await sentValues(user, preview)).toEqual({
+      Reference: "Sample Reference",
+      Party1Title: ["Respondent"],
+    });
   });
 
   it("is not offered until every box has a complete field", async () => {
