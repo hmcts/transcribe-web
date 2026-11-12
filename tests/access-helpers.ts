@@ -67,7 +67,6 @@ const SYSADMIN: Permission[] = [
   "system.settings",
   "security.alert_test",
   "jurisdiction_super_admin.assign",
-  "jurisdiction_admin.assign",
 ];
 
 const USER = { id: "u-1", email: "someone@localhost.test", name: "Some One" };
@@ -105,6 +104,13 @@ export const ME = {
   jurisdictionAdministrator: me({
     status: "ready",
     assignments: [at(IAC_REF, "JurisdictionAdministrator")],
+    active: at(IAC_REF, "JurisdictionAdministrator"),
+    permissions: JADMIN,
+  }),
+  /** DIAAT-403: JurisdictionAdministrator in two jurisdictions, one assignment each, acting in IAC. */
+  jurisdictionAdministratorInTwo: me({
+    status: "ready",
+    assignments: [at(ET_REF, "JurisdictionAdministrator"), at(IAC_REF, "JurisdictionAdministrator")],
     active: at(IAC_REF, "JurisdictionAdministrator"),
     permissions: JADMIN,
   }),

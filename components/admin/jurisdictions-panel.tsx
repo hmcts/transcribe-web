@@ -40,7 +40,6 @@ import {
 } from "@/lib/admin-jurisdictions-api";
 import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 import { JURISDICTION_ADMINISTRATOR } from "@/lib/access/assignable-roles";
-import { fetchPublicJurisdictions } from "@/lib/access/api";
 import { describeRefusal } from "@/lib/access/refusal-messages";
 import { NO_SIGN_OFF, SIGN_OFF_MISSING, type SignOffDraft, signedOffText, signOffToSend } from "@/lib/sign-off";
 import { useAccess } from "@/providers/access";
@@ -52,9 +51,9 @@ import { useAccess } from "@/providers/access";
  *  - `jurisdiction.create`: adding a jurisdiction;
  *  - `jurisdiction_admin.assign`: who administers each jurisdiction. That is a
  *    role assignment like any other (given by sign-in email, or to someone who has
- *    signed in), not a setting of the jurisdiction.
- * Someone who holds only the last sees the jurisdictions' names (the public list)
- * and the administrators, and none of the settings.
+ *    signed in), not a setting of the jurisdiction. Only a super administrator holds
+ *    it, and the tab is shown for the first two (DIAAT-403: a system administrator
+ *    gives no jurisdiction role, so it has no Jurisdictions tab).
  *
  * DIAAT-345: a new jurisdiction is a draft only its administrators see. Moved to test,
  * its test group sees it too; live, everyone with a role there. It leaves draft only
@@ -72,8 +71,6 @@ export function JurisdictionsPanel() {
   const canManage = can("jurisdictions.manage");
   const canCreate = can("jurisdiction.create");
   const canAssign = can("jurisdiction_admin.assign");
-  // The admin list is behind manage (or create); without them, the names only.
-  const adminList = canManage || canCreate;
   const [jurisdictions, setJurisdictions] = useState<AdminJurisdiction[]>([]);
   const [wordingKeys, setWordingKeys] = useState<Record<string, string>>({});
   const [selected, setSelected] = useState<string | null>(null);
@@ -94,33 +91,28 @@ export function JurisdictionsPanel() {
     setLoading(true);
     setError(null);
     try {
-      if (adminList) {
-        const [list, keys] = await Promise.all([
-          fetchAdminJurisdictions(),
-          canManage ? fetchWordingKeys() : Promise.resolve({}),
-        ]);
-        setJurisdictions(list);
-        setWordingKeys(keys);
-      } else {
-        setJurisdictions(namesOnly(await fetchPublicJurisdictions()));
-      }
+      const [list, keys] = await Promise.all([
+        fetchAdminJurisdictions(),
+        canManage ? fetchWordingKeys() : Promise.resolve({}),
+      ]);
+      setJurisdictions(list);
+      setWordingKeys(keys);
     } catch (err) {
       setError(message(err));
     } finally {
       setLoading(false);
     }
-  }, [adminList, canManage]);
+  }, [canManage]);
 
   // After a change: the list only, in place, so nothing open is remounted and no
   // unsaved edit is lost.
   const refresh = useCallback(async () => {
-    if (!adminList) return;
     try {
       setJurisdictions(await fetchAdminJurisdictions());
     } catch (err) {
       toast.error(message(err));
     }
-  }, [adminList]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -604,15 +596,4 @@ function CheckboxField({
       <Label htmlFor={id}>{label}</Label>
     </div>
   );
-}
-
-/** The public list's rows, as the table shows them when the settings are not the caller's. */
-function namesOnly(list: { code: string; name: string }[]): AdminJurisdiction[] {
-  return list.map((j) => ({
-    ...j,
-    enabled: true,
-    settings: {},
-    member_count: 0,
-    version: "",
-  }));
 }

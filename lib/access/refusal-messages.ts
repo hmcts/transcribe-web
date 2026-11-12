@@ -8,7 +8,7 @@
  * | code                         | status | where it happens                                   |
  * |------------------------------|--------|----------------------------------------------------|
  * | `own_request`                | 403    | approving or rejecting your own access request      |
- * | `assignment_not_allowed`     | 403    | a role the caller may not give, or giving yourself one |
+ * | `assignment_not_allowed`     | 403    | a role the caller may not give (to anyone, themselves included) |
  * | `ambiguous_email`            | 409    | assigning by an email that more than one user has used |
  * | `jurisdiction_disabled`      | 409    | assigning, or approving, into a disabled jurisdiction |
  * | `too_many_pending_requests`  | 409    | asking for access with the limit of requests waiting |
@@ -26,13 +26,7 @@ export const PERMISSION_DENIED = "permission_denied";
 export const OWN_REQUEST_NOTE =
   "This is your own request. Another administrator has to decide it.";
 
-/** Shown instead of Add when the person picked is the caller. */
-export const SELF_ASSIGNMENT_NOTE =
-  "You cannot give yourself a role. Ask another administrator to add you.";
-
 export interface RefusalContext {
-  /** The role was being given to the caller themselves. */
-  self?: boolean;
   /** The refusal came from saving a jurisdiction's settings. */
   savingJurisdiction?: boolean;
 }
@@ -56,8 +50,6 @@ export function describeRefusal(
   switch (codeOf(error)) {
     case OWN_REQUEST:
       return OWN_REQUEST_NOTE;
-    case ASSIGNMENT_NOT_ALLOWED:
-      return context.self ? SELF_ASSIGNMENT_NOTE : (apiMessage ?? fallback);
     case AMBIGUOUS_EMAIL:
       return "More than one person has signed in with that email address, so it is not clear who you mean. Choose the person from the list that appears as you type, instead of adding the address.";
     case JURISDICTION_DISABLED:
