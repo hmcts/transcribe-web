@@ -134,11 +134,11 @@ export default function Header() {
           href="/"
           onClick={handleHomeClick}
           className="flex h-min items-center gap-2 sm:gap-4"
-          aria-label="Bench Notes home"
-          title="Bench Notes home"
+          aria-label="BenchNotes home"
+          title="BenchNotes home"
         >
           <span className="text-xl font-medium text-foreground">
-            Bench Notes
+            BenchNotes
           </span>
         </Link>
 
@@ -164,12 +164,12 @@ export default function Header() {
                 "flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5",
                 isDictationActive && "bg-foreground/5"
               )}
-              aria-label="Go to dictation"
+              aria-label="Go to decisions"
               aria-current={isDictationActive ? "page" : undefined}
-              title="Go to dictation"
+              title="Go to decisions"
             >
               <Mic className="mr-1 size-5" />
-              <span className="text-base">Dictation</span>
+              <span className="text-base">Decisions</span>
             </Link>
           )}
           {showRecordings && (
@@ -258,7 +258,7 @@ export default function Header() {
                     )}
                   >
                     <Mic className="size-4" />
-                    Dictation
+                    Decisions
                   </Link>
                 </SheetClose>
               )}

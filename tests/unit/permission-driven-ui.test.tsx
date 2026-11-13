@@ -77,8 +77,8 @@ describe("the home page", () => {
   it("offers a judge dictation, hearing recordings and their own dictations", () => {
     render(<WelcomePage />);
 
-    expect(screen.getByRole("button", { name: "Dictation" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: /Hearing recordings/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Write a decision" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Transcribe a recording" })).toBeTruthy();
     expect(screen.getByText("Your recent dictations")).toBeTruthy();
     expect(screen.getByText("Recordings to recover")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Admin" })).toBeNull();
@@ -89,8 +89,8 @@ describe("the home page", () => {
     render(<WelcomePage />);
 
     expect(screen.getByRole("link", { name: "Admin" }).getAttribute("href")).toBe("/admin");
-    expect(screen.queryByRole("button", { name: "Dictation" })).toBeNull();
-    expect(screen.queryByRole("link", { name: /recordings/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Write a decision" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Transcribe a recording" })).toBeNull();
     expect(screen.queryByText("Your recent dictations")).toBeNull();
     expect(screen.queryByText("Recordings to recover")).toBeNull();
     // What anyone can do: ask for support.
@@ -101,9 +101,9 @@ describe("the home page", () => {
     mockPersona = { ...ME.judge, permissions: ME.judge.permissions.filter((p) => p !== "recording.own") };
     render(<WelcomePage />);
 
-    expect(screen.getByRole("button", { name: "Dictation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Write a decision" })).toBeTruthy();
     // Hearing recordings need `recording.own`, whatever the jurisdiction uses.
-    expect(screen.queryByRole("link", { name: /recordings/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Transcribe a recording" })).toBeNull();
   });
 });
 
@@ -120,7 +120,7 @@ describe("the home page of a system administrator with no jurisdiction", () => {
   it("is not redirected when the context has app.access", async () => {
     render(<MainParentComponent />);
 
-    await screen.findByRole("button", { name: "Dictation" });
+    await screen.findByRole("button", { name: "Write a decision" });
     expect(replace).not.toHaveBeenCalled();
     expect(apiClient.request).toHaveBeenCalledWith("/user/onboarding-status");
   });

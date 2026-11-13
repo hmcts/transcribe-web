@@ -166,7 +166,7 @@ describe("as an ET judge (DIAAT-330)", () => {
     mockCode = "ET";
     render(<Header />);
     expect(
-      screen.getAllByRole("link", { name: /go to dictation/i }).length
+      screen.getAllByRole("link", { name: /go to decisions/i }).length
     ).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /recordings/i })).toBeNull();
     // The switcher names the jurisdiction the judge works in ("Employment
@@ -195,7 +195,7 @@ describe("as an ET judge (DIAAT-330)", () => {
     mockCode = "ET";
     render(<HelpPage />);
     // The page heading, and the subtitle in the neutral wording.
-    expect(screen.getAllByText("Getting started with Bench Notes")).toHaveLength(2);
+    expect(screen.getAllByText("Getting started with BenchNotes")).toHaveLength(2);
     expect(screen.queryByText("Hearing Details Form")).toBeNull();
     expect(document.body.textContent).not.toMatch(
       /immigration|asylum|appellant|tribunal/i

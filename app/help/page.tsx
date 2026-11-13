@@ -32,7 +32,7 @@ export default function HelpPage() {
         {/* Page Header */}
         <section className="py-16 text-center">
           <h1 className="mb-4 text-4xl font-bold tracking-tight">
-            Getting started with Bench Notes
+            Getting started with BenchNotes
           </h1>
           <p className="mx-auto max-w-2xl text-xl text-muted-foreground">
             <JurisdictionText wordingKey="help.subtitle" />
@@ -68,14 +68,14 @@ export default function HelpPage() {
             <DecisionTemplateOnly
               otherwise={
                 <p>
-                  Bench Notes supports judicial work with live dictation: speak,
+                  BenchNotes supports judicial work with live dictation: speak,
                   see your words on screen as you go, edit them, and copy them
                   into your own document.
                 </p>
               }
             >
               <p>
-                Bench Notes is an advanced AI-powered tool designed to
+                BenchNotes is an advanced AI-powered tool designed to
                 support judicial work by providing accurate live transcription of
                 oral decisions and accurately transcribing arguments presented
                 orally at Tribunal hearings. By capturing both hearings and

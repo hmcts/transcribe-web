@@ -118,7 +118,7 @@ yarn type-check
 - **Feature flags.** The merged decision makes flags, trunk-based development and
   per-directory CODEOWNERS conditions of accepting the C1 breach. None are in
   place yet.
-- **Product title** is "Bench Notes" in all user-facing text. Identifiers keep
+- **Product title** is "BenchNotes" in all user-facing text. Identifiers keep
   the old name: the `judicial-transcribe-cookie-preferences` cookie and the
   JudicialTranscribe@justice.gov.uk support mailbox.
 - The recording area's nav link is in the header but only renders behind

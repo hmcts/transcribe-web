@@ -281,7 +281,7 @@ describe("a user with no access yet (DIAAT-384, DIAAT-396)", () => {
     renderProvider();
 
     expect(
-      await screen.findByRole("heading", { name: "You do not have access to Bench Notes yet" })
+      await screen.findByRole("heading", { name: "You do not have access to BenchNotes yet" })
     ).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Ask for access" })).toBeTruthy();
     expect(screen.queryByText(/status:/)).toBeNull();
@@ -565,7 +565,7 @@ describe("refusals about who the user is (the API's 403 codes, DIAAT-373)", () =
     renderProvider();
 
     expect(await screen.findByRole("heading", { name: "Your account has been deactivated" })).toBeTruthy();
-    expect(screen.queryByText("Bench Notes could not load")).toBeNull();
+    expect(screen.queryByText("BenchNotes could not load")).toBeNull();
   });
 
   it("asks who the user is again when the session has no context but this tab thinks it has one", async () => {

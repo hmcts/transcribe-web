@@ -45,7 +45,7 @@ const StartNewRecordingButton = React.forwardRef<
         {showIcon && (
           <Mic className={size === "large" ? "size-5" : "mr-2 size-4"} />
         )}
-        Dictation
+        Write a decision
       </Button>
     );
   }

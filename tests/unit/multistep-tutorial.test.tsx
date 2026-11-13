@@ -19,7 +19,7 @@ describe("MultistepTutorial", () => {
 
     expect(
       screen.getByText(
-        "From the home page, select Dictation to open the dictation workspace."
+        "From the home page, select Write a decision to open the dictation workspace."
       )
     ).toBeTruthy();
     expect(previousButton.hasAttribute("disabled")).toBe(true);
@@ -35,7 +35,7 @@ describe("MultistepTutorial", () => {
       container
         .querySelector('[data-quick-start-illustration="start-recording"]')
         ?.getAttribute("aria-label")
-    ).toBe("Illustration of the home page with the Dictation button");
+    ).toBe("Illustration of the home page with the Write a decision button");
 
     fireEvent.click(nextButton);
 
