@@ -160,7 +160,7 @@ describe("DashboardPage", () => {
       render(<DashboardPage />);
       await user.upload(screen.getByLabelText("Audio file input"), file);
       await user.click(
-        screen.getByRole("button", { name: /upload for transcription/i })
+        screen.getByRole("button", { name: /transcribe a recording/i })
       );
 
       await waitFor(() =>
@@ -193,7 +193,7 @@ describe("DashboardPage", () => {
         screen.getByLabelText("Audio file input"),
         new File(["bytes"], "hearing.mp3", { type: "audio/mpeg" })
       );
-      await user.click(screen.getByRole("button", { name: /upload for transcription/i }));
+      await user.click(screen.getByRole("button", { name: /transcribe a recording/i }));
       await waitFor(() =>
         expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true)
       );

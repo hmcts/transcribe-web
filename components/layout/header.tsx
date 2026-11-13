@@ -18,8 +18,8 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import {
+  DECISIONS_HREF,
   DICTATION_BASE_PATH,
-  DICTATION_HREF,
   HEARING_RECORDINGS_HREF,
   isPathActive,
 } from "@/lib/navigation";
@@ -59,7 +59,9 @@ export default function Header() {
     !hideNavLinks && dictationEnabled && can("dictation.use");
   const showRecordings =
     !hideNavLinks && can("recording.own") && hasHearingRecordings;
-  const isDictationActive = isPathActive(pathname, DICTATION_BASE_PATH);
+  const isDecisionsActive =
+    isPathActive(pathname, DECISIONS_HREF) ||
+    isPathActive(pathname, DICTATION_BASE_PATH);
   const isHearingRecordingsActive = isPathActive(
     pathname,
     HEARING_RECORDINGS_HREF
@@ -159,13 +161,13 @@ export default function Header() {
               two unreachable halves rather than one application. */}
           {showDictation && (
             <Link
-              href={DICTATION_HREF}
+              href={DECISIONS_HREF}
               className={cn(
                 "flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5",
-                isDictationActive && "bg-foreground/5"
+                isDecisionsActive && "bg-foreground/5"
               )}
               aria-label="Go to decisions"
-              aria-current={isDictationActive ? "page" : undefined}
+              aria-current={isDecisionsActive ? "page" : undefined}
               title="Go to decisions"
             >
               <Mic className="mr-1 size-5" />
@@ -250,11 +252,11 @@ export default function Header() {
               {showDictation && (
                 <SheetClose asChild>
                   <Link
-                    href={DICTATION_HREF}
-                    aria-current={isDictationActive ? "page" : undefined}
+                    href={DECISIONS_HREF}
+                    aria-current={isDecisionsActive ? "page" : undefined}
                     className={cn(
                       "inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground",
-                      isDictationActive && "bg-foreground/5"
+                      isDecisionsActive && "bg-foreground/5"
                     )}
                   >
                     <Mic className="size-4" />

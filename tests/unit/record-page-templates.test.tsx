@@ -216,7 +216,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       Issues: ["unfair"],
     });
     expect(body).not.toHaveProperty("form_data");
-    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/"));
+    await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/decisions"));
   });
 
   it("names each required field left empty and does not submit", async () => {

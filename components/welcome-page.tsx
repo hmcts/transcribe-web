@@ -4,24 +4,14 @@
 
 "use client";
 
-import { FileAudio, Shield } from "lucide-react";
+import { FileAudio, Mic, Shield } from "lucide-react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import React from "react";
-import BackupRecovery from "@/components/audio/upload/backup-recovery";
-import BackupUploader from "@/components/audio/upload/backup-uploader";
-import MeetingsList from "@/components/meetings-list";
 import { Button } from "@/components/ui/button";
-import StartNewRecordingButton from "@/components/ui/start-new-recording-button";
-import useMediaQuery from "@/hooks/use-media-query";
-import { track } from "@/lib/analytics";
-import type { AudioBackup } from "@/lib/indexeddb-backup";
-import { HEARING_RECORDINGS_HREF } from "@/lib/navigation";
+import { DECISIONS_HREF, HEARING_RECORDINGS_HREF } from "@/lib/navigation";
 import { getFullNameFromEmail } from "@/lib/utils";
 import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useDictationEnabled } from "@/providers/runtime-flags";
-import { useTranscripts } from "@/providers/transcripts";
 import { useUserSettings } from "@/providers/user-settings";
 
 function ContactSupportButton() {
@@ -38,61 +28,20 @@ function ContactSupportButton() {
 }
 
 function WelcomePage() {
-  const { isLoading, transcriptsMetadata } = useTranscripts();
-
   const { user } = useUserSettings();
   const { hasHearingRecordings, wording } = useJurisdiction();
   // DIAAT-373: what the home page offers follows the active context's
   // permissions, never a role name.
   const { can } = useAccess();
-  const router = useRouter();
-
-  const [retryingBackup, setRetryingBackup] =
-    React.useState<AudioBackup | null>(null);
-  const _isMobile = useMediaQuery("(max-width: 768px)");
 
   // DIAAT-392: the runtime flag, else the deploy-time default.
   const dictationEnabled = useDictationEnabled();
-  const canDictate = can("dictation.use");
-  const showDictation = dictationEnabled && canDictate;
+  const showDecisions = dictationEnabled && can("dictation.use");
   const showRecordings = can("recording.own") && hasHearingRecordings;
   const showAdmin = can("admin.access");
 
   const displayName = user?.email ? getFullNameFromEmail(user.email) : "";
   const heading = displayName ? `Welcome back, ${displayName}` : "Welcome back";
-
-  const startMeetingWithMode = (mode: "mic" | "screen" | "upload") => {
-    track("start_new_recording_clicked", { mode });
-    if (mode === "upload") {
-      router.push("/upload");
-      return;
-    }
-    // Navigate to record page with mode parameter
-    router.push(`/record?mode=${mode}`);
-  };
-
-  const handleRetryUpload = async (backup: AudioBackup) => {
-    setRetryingBackup(backup);
-  };
-
-  const handleCloseBackupUploader = () => {
-    setRetryingBackup(null);
-  };
-
-  const handleBackupUploadSuccess = () => {
-    setRetryingBackup(null);
-    // Optionally refresh the backup list or show a success message
-  };
-
-  if (retryingBackup) {
-    return (
-      <BackupUploader
-        backup={retryingBackup}
-        onClose={handleCloseBackupUploader}
-        onUploadSuccess={handleBackupUploadSuccess}
-      />
-    );
-  }
 
   return (
     <div className="relative mx-auto max-w-[1280px] px-4 sm:px-6">
@@ -101,15 +50,18 @@ function WelcomePage() {
         <h1 className="text-5xl font-bold tracking-tight">{heading}</h1>
         <p className="text-muted-foreground prose">{wording("home.intro")}</p>
 
-        {(showDictation || showRecordings || showAdmin) && (
+        {(showDecisions || showRecordings || showAdmin) && (
           <div className="flex flex-col gap-4 mt-12 md:flex-row">
-            {showDictation && (
-              <StartNewRecordingButton
-                onClick={() => startMeetingWithMode("mic")}
-                size="large"
-                fullWidth={false}
-                className="w-full md:w-auto"
-              />
+            {showDecisions && (
+              <Button
+                asChild
+                className="flex w-full items-center justify-center gap-2 py-6 text-lg md:w-auto"
+              >
+                <Link href={DECISIONS_HREF}>
+                  <Mic className="size-5" />
+                  Decisions
+                </Link>
+              </Button>
             )}
             {showRecordings && (
               <Button
@@ -119,7 +71,7 @@ function WelcomePage() {
               >
                 <Link href={HEARING_RECORDINGS_HREF}>
                   <FileAudio className="size-5" />
-                  Transcribe a recording
+                  {wording("nav.recordings")}
                 </Link>
               </Button>
             )}
@@ -138,14 +90,6 @@ function WelcomePage() {
           </div>
         )}
       </section>
-
-      {showDictation && transcriptsMetadata.length > 0 && (
-        <section className="-mt-16 rounded-xl border border-border bg-card p-4 shadow-xl">
-          <MeetingsList isLoading={isLoading} meetings={transcriptsMetadata} />
-        </section>
-      )}
-
-      {showDictation && <BackupRecovery onRetryUpload={handleRetryUpload} />}
 
       <section
         className="mb-20 mt-16 rounded-lg border border-border bg-card p-6"
