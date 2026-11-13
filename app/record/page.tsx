@@ -46,6 +46,10 @@ import {
   dictationHtml,
   dictationText,
 } from "@/lib/dictation-copy";
+import {
+  SUBMISSION_CONTENT_TYPE,
+  SUBMISSION_PATH,
+} from "@/lib/dictation-submission";
 import { IAC_CODE } from "@/lib/jurisdiction-context";
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import {
@@ -812,10 +816,11 @@ export default function RecordPage() {
 
         let response: Response;
         try {
-          response = await fetch("/api/live-transcription/submission", {
+          response = await fetch(SUBMISSION_PATH, {
             method: "POST",
             headers: {
-              "Content-Type": "application/json",
+              // Not application/json: see SUBMISSION_CONTENT_TYPE.
+              "Content-Type": SUBMISSION_CONTENT_TYPE,
               ...(authToken && { Authorization: `Bearer ${authToken}` }),
               // DIAAT-322: made in the jurisdiction this tab works in.
               ...jurisdictionHeaders(),

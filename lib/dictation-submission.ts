@@ -16,6 +16,14 @@ import {
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 
 export const SUBMISSION_PATH = "/api/live-transcription/submission";
+/**
+ * The submission's JSON body is sent as exactly application/octet-stream:
+ * Front Door's WAF blocks the judge's free text (the notes are HTML), and its
+ * BenchNotes allow rule admits only this type on this path, as it does for
+ * uploads (DIAAT-360). Caddy sets it back to application/json for the API
+ * inside the cluster (Caddyfile, @submission), which still validates the body.
+ */
+export const SUBMISSION_CONTENT_TYPE = "application/octet-stream";
 
 export interface SubmitDictationOptions {
   mode: string;
@@ -49,7 +57,7 @@ export async function submitDictation<T = unknown>(
       response = await fetchImpl(SUBMISSION_PATH, {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": SUBMISSION_CONTENT_TYPE,
           ...(authToken && { Authorization: `Bearer ${authToken}` }),
           // DIAAT-322: made in the jurisdiction this tab works in.
           ...jurisdictionHeaders(),

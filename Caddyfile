@@ -66,6 +66,15 @@
 				# Whatever the client sent is discarded; only the session's
 				# token is ever forwarded.
 				request_header -Authorization
+				# The browser sends the dictation submission's JSON as
+				# application/octet-stream, the only type Front Door's WAF allow
+				# rule admits on this path (lib/dictation-submission.ts). The API
+				# reads JSON, so it is set back here, inside the cluster.
+				@submission {
+					method POST
+					path /api/live-transcription/submission
+				}
+				request_header @submission Content-Type application/json
 				forward_auth localhost:3001 {
 					uri /auth/forward
 					copy_headers Authorization
