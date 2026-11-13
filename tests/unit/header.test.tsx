@@ -312,7 +312,7 @@ describe("Header", () => {
     const menu = within(screen.getByRole("dialog"));
     expect(
       menu.getByRole("link", { name: "Decisions" }).getAttribute("href")
-    ).toBe("/record?mode=mic");
+    ).toBe("/decisions");
     expect(
       menu
         .getByRole("link", { name: "Hearing recordings" })
@@ -345,12 +345,12 @@ describe("Header", () => {
     ).toBeTruthy();
   });
 
-  it("links to dictation and hearing recordings as separate entries", () => {
+  it("links to decisions and hearing recordings as separate entries", () => {
     const { getByRole } = render(<Header />);
     const nav = within(getByRole("navigation"));
     expect(
       nav.getByRole("link", { name: "Go to decisions" }).getAttribute("href")
-    ).toBe("/record?mode=mic");
+    ).toBe("/decisions");
     expect(
       nav
         .getByRole("link", { name: "Go to hearing recordings" })
@@ -362,6 +362,7 @@ describe("Header", () => {
   });
 
   it.each([
+    ["/decisions", "Go to decisions", "Go to hearing recordings"],
     ["/record", "Go to decisions", "Go to hearing recordings"],
     ["/recording", "Go to hearing recordings", "Go to decisions"],
     ["/recording/jobs/abc", "Go to hearing recordings", "Go to decisions"],

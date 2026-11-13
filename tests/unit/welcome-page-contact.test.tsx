@@ -81,10 +81,10 @@ describe("WelcomePage contact link", () => {
     expect(link.getAttribute("aria-label")).toBe("Contact us via email");
   });
 
-  it("offers a Transcribe a recording button alongside dictation", () => {
+  it("offers a Recordings button, in the jurisdiction's wording, alongside Decisions", () => {
     render(<WelcomePage />);
     const link = screen.getByRole("link", {
-      name: "Transcribe a recording",
+      name: "Hearing recordings",
     }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/recording");
   });

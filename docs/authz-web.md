@@ -148,7 +148,7 @@ that are nobody's material render in any state.
 |---|---|
 | Header: Admin link, home-page Admin tile, `/admin` | `admin.access` |
 | Header account menu: Request access, `/request-access` | `access.request` |
-| Header/home: Dictation, `/record`, `/upload`, `/speech-demo`, dictation list, backup recovery, dictation help | `dictation.use` and the dictation flag (below) |
+| Header/home: Decisions, `/decisions` (dictation list, backup recovery), `/record`, `/upload`, `/speech-demo`, dictation help | `dictation.use` and the dictation flag (below) |
 | Header/home: hearing recordings, `/recording/**` | `recording.own` (and the jurisdiction using them) |
 | Admin tab Document Content (with the legal frameworks) | `legal_text.manage` |
 | Admin tab Templates | `templates.manage`; the active context's jurisdiction, never `GET /api/admin/jurisdictions` |

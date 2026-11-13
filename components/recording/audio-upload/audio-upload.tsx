@@ -78,7 +78,7 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
         disabled={!selectedFile || uploading}
         className="w-full"
       >
-        {uploading ? "Uploading…" : "Upload for transcription"}
+        {uploading ? "Uploading…" : "Transcribe a recording"}
       </Button>
     </div>
   );
