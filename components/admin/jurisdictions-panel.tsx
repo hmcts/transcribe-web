@@ -74,6 +74,9 @@ export function JurisdictionsPanel() {
   // Bumped to reopen the editor from the server's copy, dropping unsaved edits.
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [creating, setCreating] = useState(false);
+  // Going back to an earlier version (DIAAT-348): the editor reopens when it is done,
+  // so another jurisdiction cannot be opened (and its edits lost) meanwhile.
+  const [restoring, setRestoring] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -146,6 +149,7 @@ export function JurisdictionsPanel() {
         {canCreate && (
           <Button
             size="sm"
+            disabled={restoring}
             onClick={() => {
               setCreating(true);
               setSelected(null);
@@ -177,7 +181,8 @@ export function JurisdictionsPanel() {
                   <button
                     type="button"
                     aria-current={j.code === selected ? "true" : undefined}
-                    className="underline-offset-2 hover:underline"
+                    className="underline-offset-2 hover:underline disabled:opacity-50"
+                    disabled={restoring}
                     onClick={() => {
                       setSelected(j.code);
                       setCreating(false);
@@ -223,13 +228,21 @@ export function JurisdictionsPanel() {
             setSelected(code);
             await refresh();
           }}
-          onRestored={(restored) => {
-            // The API's copy, not a reload (which could fail and reopen the editor with
-            // the content and version from before).
-            setJurisdictions((all) =>
-              all.map((j) => (j.code === restored.code ? restored : j))
-            );
-            setEditorGeneration((g) => g + 1);
+          restoring={restoring}
+          onRestore={async (code, number, version) => {
+            setRestoring(true);
+            try {
+              const restored = await restoreJurisdiction(code, number, version);
+              toast.success(`${code} is back to version ${number}.`);
+              // The API's copy, not a reload (which could fail and reopen the editor
+              // with the content and version from before).
+              setJurisdictions((all) =>
+                all.map((j) => (j.code === restored.code ? restored : j))
+              );
+              setEditorGeneration((g) => g + 1);
+            } finally {
+              setRestoring(false);
+            }
           }}
         />
       )}
@@ -257,7 +270,8 @@ function JurisdictionEditor({
   stagesSupported,
   onSaved,
   onDiscard,
-  onRestored,
+  restoring,
+  onRestore,
 }: {
   jurisdiction: AdminJurisdiction | null;
   /** May change the name and the enabled switch of an existing jurisdiction
@@ -270,8 +284,11 @@ function JurisdictionEditor({
   onSaved: (code: string) => Promise<void>;
   /** Reopen from the server's copy (after a 409, say). */
   onDiscard: () => Promise<void>;
-  /** Gone back to an earlier version (DIAAT-348): reopen from the API's copy. */
-  onRestored: (restored: AdminJurisdiction) => void;
+  /** Going back to an earlier version is under way (DIAAT-348). */
+  restoring: boolean;
+  /** Go back to version `number` of `code`, then reopen from the API's copy; throws
+   * if it is refused. */
+  onRestore: (code: string, number: number, version: string) => Promise<void>;
 }) {
   const settings = jurisdiction?.settings ?? {};
   const [code, setCode] = useState(jurisdiction?.code ?? "");
@@ -299,9 +316,7 @@ function JurisdictionEditor({
   );
   const [wording, setWording] = useState<Record<string, string>>(settings.wording ?? {});
   const [saving, setSaving] = useState(false);
-  // Going back to an earlier version (DIAAT-348): the editor then reopens from the
-  // API's copy, so nothing can be edited meanwhile.
-  const [restoring, setRestoring] = useState(false);
+  // While going back nothing can be edited: the editor then reopens from the API's copy.
   const busy = saving || restoring;
 
   // DIAAT-332: a switch reloads the tab, losing changes not saved, or a save under way.
@@ -579,16 +594,7 @@ function JurisdictionEditor({
           wordingKeys={wordingKeys}
           locked={busy}
           unsaved={form !== savedForm}
-          onRestore={async (number) => {
-            setRestoring(true);
-            try {
-              const restored = await restoreJurisdiction(jurisdiction.code, number, version);
-              toast.success(`${jurisdiction.code} is back to version ${number}.`);
-              onRestored(restored);
-            } finally {
-              setRestoring(false);
-            }
-          }}
+          onRestore={(number) => onRestore(jurisdiction.code, number, version)}
         />
       )}
     </section>

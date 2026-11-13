@@ -642,6 +642,9 @@ describe("JurisdictionsPanel", () => {
     expect(screen.getByLabelText("Under the service name").matches(":disabled")).toBe(true);
     expect(screen.getByRole("button", { name: "Save" })).toHaveProperty("disabled", true);
     expect(screen.getByRole("button", { name: "Discard changes" })).toHaveProperty("disabled", true);
+    // Nor can another be opened, whose edits the reopening would drop.
+    expect(screen.getByRole("button", { name: "ET" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: /Add jurisdiction/ })).toHaveProperty("disabled", true);
     answerRestore();
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("ET is back to version 1."));
     const restore = request.mock.calls.find(([endpoint]) => endpoint.endsWith("/restore"));
@@ -649,6 +652,7 @@ describe("JurisdictionsPanel", () => {
     // The editor reopens from the server's copy, with its version for the next save.
     await waitFor(() => expect(screen.getByLabelText("Under the service name")).toHaveProperty("value", "Employment Tribunal"));
     expect(screen.getByLabelText("Under the service name").matches(":disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: /Add jurisdiction/ })).toHaveProperty("disabled", false);
     await user.click(screen.getByRole("button", { name: "Save" }));
     const save = request.mock.calls.find(([endpoint, options]) => endpoint === "/admin/jurisdictions/ET" && options?.method === "PUT");
     expect(JSON.parse(String(save?.[1]?.body)).version).toBe("restored");
