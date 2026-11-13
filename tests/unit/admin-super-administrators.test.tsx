@@ -28,7 +28,6 @@ const holder = (id: string, email: string, assignmentId: string): AdminUser => (
   name: null,
   is_active: true,
   pending: false,
-  can_set_active: true,
   assignments: [{ id: assignmentId, jurisdiction: null, role: SUPER }],
 });
 
@@ -85,7 +84,6 @@ describe("Super administrators", () => {
         name: null,
         is_active: true,
         pending: false,
-        can_set_active: true,
         assignments: [{ id: "as-8", jurisdiction: { code: "ET", name: "Employment Tribunal" }, role: "Judge" }],
       },
     ]);

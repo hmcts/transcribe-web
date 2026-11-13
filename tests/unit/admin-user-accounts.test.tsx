@@ -29,7 +29,6 @@ const user = (
   name: null,
   is_active: true,
   pending: false,
-  can_set_active: true,
   assignments: [],
   ...over,
 });
@@ -48,29 +47,8 @@ const GONE = user({
   email: "gone@example.test",
   is_active: false,
 });
-const LATER = user({
-  id: "p-1",
-  email: "later@example.test",
-  pending: true,
-  can_set_active: false,
-});
-const SELF = user({
-  id: "u-1",
-  email: "someone@localhost.test",
-  can_set_active: false,
-});
-// The API does not say why (DIAAT-407): here, a SystemAdministrator's account.
-const PROTECTED = user({
-  id: "u-sa",
-  email: "protected@example.test",
-  can_set_active: false,
-});
-const PROTECTED_OFF = user({
-  id: "u-sa-off",
-  email: "protected-off@example.test",
-  is_active: false,
-  can_set_active: false,
-});
+const LATER = user({ id: "p-1", email: "later@example.test", pending: true });
+const SELF = user({ id: "u-1", email: "someone@localhost.test" });
 
 const HISTORY: RoleHistoryEntry[] = [
   {
@@ -279,30 +257,6 @@ describe("user accounts (DIAAT-406)", () => {
     expect(
       screen.queryByRole("button", { name: "Deactivate later@example.test" })
     ).toBeNull();
-  });
-
-  it("offers neither deactivation nor reactivation of an account the API says the caller may not change (DIAAT-407)", async () => {
-    serve([ADMIN, PROTECTED, PROTECTED_OFF]);
-    render(<UserAccountsPanel />);
-    await screen.findByText("protected@example.test");
-
-    for (const email of [
-      "protected@example.test",
-      "protected-off@example.test",
-    ]) {
-      expect(
-        screen.queryByRole("button", { name: `Deactivate ${email}` })
-      ).toBeNull();
-      expect(
-        screen.queryByRole("button", { name: `Reactivate ${email}` })
-      ).toBeNull();
-      expect(
-        screen.getByRole("button", { name: `Role history of ${email}` })
-      ).toBeTruthy();
-    }
-    expect(
-      screen.getByRole("button", { name: "Deactivate admin@example.test" })
-    ).toBeTruthy();
   });
 
   it("shows the API's reason when a deactivation is refused", async () => {

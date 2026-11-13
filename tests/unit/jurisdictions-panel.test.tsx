@@ -95,7 +95,6 @@ function serve({ jurisdictions = [IAC], admins = [] as Holder[] } = {}) {
         name: null,
         is_active: true,
         pending: !!h.pending,
-        can_set_active: !h.pending,
         assignments: [{ id: h.assignmentId, jurisdiction: { code, name: code }, role: "JurisdictionAdministrator" }],
       }));
       return { data: { items, total: items.length, page: 1, page_size: 100 } };

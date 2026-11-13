@@ -252,11 +252,12 @@ A role change reaches the person at their next token re-mint, so the screens say
   target does not break the list.
 * **User accounts** (`user-accounts-panel.tsx`, `accounts.manage`: the super
   administrator's, DIAAT-406): every account (`GET /api/admin/users`), searchable by
-  email, with its state; Deactivate (asks first) and Reactivate only where the row's
-  `can_set_active` is true (`POST /api/admin/users/{id}/deactivate|reactivate`): never
-  yourself, someone not signed in yet, or an account that holds SystemAdministrator
-  (DIAAT-407; the API refuses those with 403 too, and does not say why a row is false),
-  and Role history per
+  email, with its state; Deactivate (asks first) and Reactivate for anyone but
+  yourself or someone not signed in yet (`POST /api/admin/users/{id}/deactivate|reactivate`;
+  the API answers 403 `cannot_deactivate_self` for yourself). An account that holds
+  SystemAdministrator is not marked in the list (DIAAT-403), so it shows the buttons too,
+  and the API refuses with 403 `assignment_not_allowed`, shown as the API's message
+  (DIAAT-407). Role history per
   person: their changes across all jurisdictions (`role-history?user=<id>`). It gives no
   roles.
 * **Approvals** (`approvals-panel.tsx`, `GET /api/admin/access-requests?status=pending`,
