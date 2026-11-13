@@ -23,6 +23,7 @@ import {
   saveTranscription,
   saveTranscriptionJob,
 } from "../lib/database";
+import { DECISIONS_HREF } from "@/lib/navigation";
 import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useDictationEnabled } from "@/providers/runtime-flags";
@@ -180,13 +181,13 @@ function TranscriptsProviderContent({
     };
   }, [refreshMetadata]);
 
-  // Auto-refresh whenever we land on the home page.
+  // Auto-refresh whenever we land on the Decisions page, which lists them.
   // This covers returning from the recorder, where transcriptId stays null
-  // across the navigation from /record back to /.
+  // across the navigation from /record back to /decisions.
   useEffect(() => {
-    const isHomePage = pathname === "/";
+    const isDecisionsPage = pathname === DECISIONS_HREF;
 
-    if (isHomePage && !transcriptId) {
+    if (isDecisionsPage && !transcriptId) {
       refreshMetadata();
       setPollingStartTime(Date.now());
     } else {
@@ -194,7 +195,7 @@ function TranscriptsProviderContent({
     }
   }, [pathname, transcriptId, refreshMetadata]);
 
-  // Poll for new recordings every 5 seconds for the first minute on home page
+  // Poll for new recordings every 5 seconds for the first minute on the Decisions page
   useEffect(() => {
     if (!pollingStartTime || transcriptId) {
       return;
