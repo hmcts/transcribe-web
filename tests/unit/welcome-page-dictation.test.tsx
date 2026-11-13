@@ -69,38 +69,33 @@ vi.mock("@/components/audio/upload/backup-uploader", () => ({
 
 import WelcomePage from "@/components/welcome-page";
 
-describe("WelcomePage Dictation button (DIAAT-366)", () => {
+describe("WelcomePage Decisions button (DIAAT-366, DIAAT-400)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     mockJurisdiction = "IAC";
   });
 
-  it("offers Write a decision when the flag is on", () => {
+  it("offers Decisions, which goes to the Decisions page, when the flag is on", () => {
     vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "true");
     render(<WelcomePage />);
-    expect(screen.getByRole("button", { name: "Write a decision" })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Decisions" }).getAttribute("href")
+    ).toBe("/decisions");
   });
 
-  it("hides Write a decision but keeps Transcribe a recording when the flag is off", () => {
+  it("hides Decisions but keeps hearing recordings when the flag is off", () => {
     vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
     render(<WelcomePage />);
-    expect(screen.queryByRole("button", { name: "Write a decision" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Decisions" })).toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Transcribe a recording" })
+        .getByRole("link", { name: "Hearing recordings" })
         .getAttribute("href")
     ).toBe("/recording");
   });
 
-  it("shows the dictation list and backup re-upload when the flag is on", () => {
+  it("leaves the dictation list and backup re-upload to the Decisions page", () => {
     vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "true");
-    render(<WelcomePage />);
-    expect(screen.getByTestId("meetings-list")).toBeTruthy();
-    expect(screen.getByTestId("backup-recovery")).toBeTruthy();
-  });
-
-  it("hides the dictation list and backup re-upload when the flag is off: the API refuses what they do", () => {
-    vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
     render(<WelcomePage />);
     expect(screen.queryByTestId("meetings-list")).toBeNull();
     expect(screen.queryByTestId("backup-recovery")).toBeNull();

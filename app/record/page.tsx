@@ -61,6 +61,7 @@ import {
 } from "@/lib/dictation-session";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { fetchUserDocumentContent } from "@/lib/document-content-api";
+import { DECISIONS_HREF } from "@/lib/navigation";
 import {
   contentForJurisdiction,
   type DocumentContent,
@@ -871,7 +872,7 @@ export default function RecordPage() {
         // draft, to be offered for restore on the next visit.
         await stopDraftSaves();
         await deleteLiveDraft().catch(console.warn);
-        router.push("/");
+        router.push(DECISIONS_HREF);
         return data;
       } catch (error) {
         // Not after a reported success (clean-up after it failed instead).
