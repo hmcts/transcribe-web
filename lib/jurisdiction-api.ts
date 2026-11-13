@@ -1,4 +1,3 @@
-import { apiClient } from "@/lib/api-client";
 import type { Wording } from "@/lib/jurisdiction-wording";
 
 /** DIAAT-345: draft (only its admins see it), test (its test group too) or live
@@ -25,36 +24,4 @@ export interface CurrentJurisdiction {
   template: "iac_decision" | null;
   features: { hearing_recordings: boolean };
   wording: Wording;
-}
-
-/** /api/jurisdictions/wording (DIAAT-356): the tab's jurisdiction, for whoever holds `jurisdiction.wording.edit`. */
-export interface JurisdictionWording {
-  code: string;
-  name: string;
-  /** Each key the jurisdiction can set, with what it is for. */
-  keys: Record<string, string>;
-  wording: Wording;
-  /** Sent back with a save: a change made meanwhile is refused (409), not undone. */
-  version: string;
-}
-
-async function wordingRequest(options?: RequestInit): Promise<JurisdictionWording> {
-  const response = await apiClient.request<JurisdictionWording>("/jurisdictions/wording", options);
-  if (response.error || !response.data) {
-    throw new Error(response.error ?? "No wording response");
-  }
-  return response.data;
-}
-
-export function fetchJurisdictionWording(): Promise<JurisdictionWording> {
-  return wordingRequest({ cache: "no-store" });
-}
-
-/** Replace the wording loaded at `version`; blank text means the default. Throws
- * with the API's reason. */
-export function saveJurisdictionWording(
-  wording: Wording,
-  version: string
-): Promise<JurisdictionWording> {
-  return wordingRequest({ method: "PUT", body: JSON.stringify({ wording, version }) });
 }

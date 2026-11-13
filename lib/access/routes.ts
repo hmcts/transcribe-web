@@ -22,8 +22,8 @@ export const ROUTE_PERMISSIONS: RoutePermission[] = [
   { prefix: "/recording", anyOf: ["recording.own"], staysAfterSwitch: true },
   { prefix: "/admin", anyOf: ["admin.access"], staysAfterSwitch: true },
   {
-    prefix: "/jurisdiction-wording",
-    anyOf: ["jurisdiction.wording.edit"],
+    prefix: "/request-access",
+    anyOf: ["access.request"],
     staysAfterSwitch: true,
   },
 ];

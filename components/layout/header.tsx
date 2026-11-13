@@ -1,13 +1,6 @@
 "use client";
 
-import {
-  FileAudio,
-  HelpCircle,
-  Menu,
-  Mic,
-  PenLine,
-  Shield,
-} from "lucide-react";
+import { FileAudio, HelpCircle, Menu, Mic, Shield } from "lucide-react";
 import { motion } from "motion/react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
@@ -50,23 +43,18 @@ export default function Header() {
   // DIAAT-373: every link is shown from the permissions of the active context,
   // never from a role name. DIAAT-330: hearing recordings also only where the
   // jurisdiction uses them, in its words.
-  const { can, active } = useAccess();
+  const { can } = useAccess();
   // DIAAT-392: the runtime flag, else the deploy-time default.
   const dictationEnabled = useDictationEnabled();
-  const { current, hasHearingRecordings, wording } = useJurisdiction();
+  const { hasHearingRecordings, wording } = useJurisdiction();
   const canAdmin = can("admin.access");
-  // DIAAT-356: whoever may edit the jurisdiction's wording reaches its editor.
-  // Only while working in a jurisdiction: a global role has none to edit here
-  // (the API answers 403 `no_jurisdiction`), and changes a jurisdiction's wording
-  // from Admin, Jurisdictions.
-  const canEditWording =
-    can("jurisdiction.wording.edit") && Boolean(active?.jurisdiction);
   const recordingsLabel = wording("nav.recordings");
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const lastScrollY = useRef(0);
   const [isHidden, setIsHidden] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const showDictation =
     !hideNavLinks && dictationEnabled && can("dictation.use");
   const showRecordings =
@@ -166,16 +154,6 @@ export default function Header() {
               <span className="text-base">Admin</span>
             </Link>
           )}
-          {!hideNavLinks && canEditWording && (
-            <Link
-              href="/jurisdiction-wording"
-              className="flex h-10 items-center justify-center gap-1 rounded-md px-3 text-foreground transition-colors duration-100 hover:bg-foreground/5"
-              title={`Change ${current?.code ?? ""} wording`}
-            >
-              <PenLine className="mr-1 size-5" />
-              <span className="text-base">Wording</span>
-            </Link>
-          )}
           {/* MERGE NOTE: entry points for both feature areas (dictation and
               hearing recordings). Without nav links the merged app would ship
               two unreachable halves rather than one application. */}
@@ -220,14 +198,12 @@ export default function Header() {
               <span className="text-base">Help</span>
             </Link>
           )}
-          {!hideSwitcher && (
-            <ContextSwitcher className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
-          )}
+          {!hideSwitcher && <ContextSwitcher className="px-1" />}
           <DevPersonaPicker className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />
           <ThemeToggle />
         </nav>
 
-        <Sheet>
+        <Sheet open={menuOpen} onOpenChange={setMenuOpen}>
           <SheetTrigger asChild>
             <Button
               variant="ghost"
@@ -244,7 +220,11 @@ export default function Header() {
             </SheetHeader>
             <div className="flex flex-col gap-2">
               {!hideSwitcher && (
-                <ContextSwitcher className="h-10 justify-start px-3 text-sm font-medium" />
+                <ContextSwitcher
+                  stacked
+                  className="px-3 pb-2"
+                  onNavigate={() => setMenuOpen(false)}
+                />
               )}
               <DevPersonaPicker className="h-10 justify-start px-3 text-sm font-medium" />
               <SheetClose asChild>
@@ -264,17 +244,6 @@ export default function Header() {
                   >
                     <Shield className="size-4" />
                     Admin
-                  </Link>
-                </SheetClose>
-              )}
-              {!hideNavLinks && canEditWording && (
-                <SheetClose asChild>
-                  <Link
-                    href="/jurisdiction-wording"
-                    className="inline-flex h-10 items-center gap-2 rounded-md px-3 text-sm font-medium text-foreground transition-colors hover:bg-foreground/5 hover:text-accent-foreground"
-                  >
-                    <PenLine className="size-4" />
-                    Wording
                   </Link>
                 </SheetClose>
               )}

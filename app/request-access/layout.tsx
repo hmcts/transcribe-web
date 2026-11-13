@@ -4,5 +4,5 @@ import { RequireRoute } from "@/components/access/require-permission";
 /** Only for a role whose permissions include this area (lib/access/routes.ts):
  * at the address, any other role sees "not available in your role". */
 export default function Layout({ children }: { children: React.ReactNode }) {
-  return <RequireRoute prefix="/jurisdiction-wording">{children}</RequireRoute>;
+  return <RequireRoute prefix="/request-access">{children}</RequireRoute>;
 }

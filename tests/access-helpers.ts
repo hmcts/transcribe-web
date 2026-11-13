@@ -21,6 +21,7 @@ import type { AccessValue } from "@/providers/access";
 
 export const ET_REF = { code: "ET", name: "Employment Tribunal" };
 export const IAC_REF = { code: "IAC", name: "Immigration and Asylum Chamber" };
+export const SSCS_REF = { code: "SSCS", name: "Social Security and Child Support" };
 
 const BASIC: Permission[] = [
   "app.access",
@@ -41,7 +42,6 @@ const LEGAL: Permission[] = [
   ...BASIC,
   "admin.access",
   "legal_text.manage",
-  "templates.manage",
   "document_content.read",
   "document_content.write",
 ];
@@ -52,14 +52,17 @@ const JADMIN: Permission[] = [
   "access.approve",
   "role_audit.read",
   "templates.manage",
-  "jurisdictions.manage",
-  "jurisdiction.wording.edit",
-  "jurisdiction.features",
 ];
 const JSUPER: Permission[] = [
-  ...JADMIN,
+  ...BASIC,
+  "admin.access",
+  "jurisdictions.manage",
   "jurisdiction.create",
   "jurisdiction_admin.assign",
+  "jurisdiction.wording.edit",
+  "jurisdiction.features",
+  "accounts.manage",
+  "role_audit.read",
 ];
 const SYSADMIN: Permission[] = [
   "admin.access",
@@ -138,6 +141,17 @@ export const ME = {
     active: at(ET_REF, "Judge"),
     permissions: JUDGE,
   }),
+  /** The same user acting as super administrator. */
+  sysadminMultiAsSuper: me({
+    status: "ready",
+    assignments: [
+      at(ET_REF, "Judge"),
+      at(null, "JurisdictionSuperAdministrator"),
+      at(null, "SystemAdministrator"),
+    ],
+    active: at(null, "JurisdictionSuperAdministrator"),
+    permissions: JSUPER,
+  }),
   /** The same user acting as system administrator. */
   sysadminMultiAsSystem: me({
     status: "ready",
@@ -165,6 +179,20 @@ export const ME = {
   multiAsJudge: me({
     status: "ready",
     assignments: [at(ET_REF, "Judge"), at(IAC_REF, "JurisdictionAdministrator")],
+    active: at(ET_REF, "Judge"),
+    permissions: JUDGE,
+  }),
+  /** DIAAT-406: Judge in IAC, Judge and legal text manager in ET, administrator in SSCS, and
+   * super administrator; acting as Judge in ET. */
+  manyJurisdictions: me({
+    status: "ready",
+    assignments: [
+      at(IAC_REF, "Judge"),
+      at(ET_REF, "Judge"),
+      at(ET_REF, "LegalTextManager"),
+      at(SSCS_REF, "JurisdictionAdministrator"),
+      at(null, "JurisdictionSuperAdministrator"),
+    ],
     active: at(ET_REF, "Judge"),
     permissions: JUDGE,
   }),

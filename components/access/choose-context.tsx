@@ -16,6 +16,15 @@ export function describeAssignment(assignment: Assignment): {
   };
 }
 
+/** The pairs grouped by jurisdiction, in the order the API listed them, global roles last. */
+export function byJurisdiction(assignments: Assignment[]): Assignment[] {
+  const where = (a: Assignment) => a.jurisdiction?.code ?? null;
+  const order = [...new Set(assignments.map(where))].sort(
+    (x, y) => Number(x === null) - Number(y === null)
+  );
+  return order.flatMap((code) => assignments.filter((a) => where(a) === code));
+}
+
 /**
  * After sign-in, for a user with more than one jurisdiction and role who has not
  * chosen yet (DIAAT-390): where and as what they are working. There is no
@@ -48,8 +57,9 @@ export function ChooseContext({
     <div className="mx-auto flex max-w-2xl flex-col justify-center gap-6 py-8">
       <h1 className="text-3xl font-bold">Choose where and as what you are working</h1>
       <p className="text-lg text-muted-foreground">
-        You can work in more than one place or role. Choose the one you are
-        working in now. You can switch later from the top of any page.
+        You can work in more than one jurisdiction, and in more than one role in
+        each. Choose the one you are working in now. You can switch later from
+        the top of any page.
       </p>
       {failed && (
         <p role="alert" className="text-destructive">
@@ -57,7 +67,7 @@ export function ChooseContext({
         </p>
       )}
       <ul className="flex flex-col gap-3">
-        {assignments.map((assignment) => {
+        {byJurisdiction(assignments).map((assignment) => {
           const { where, as } = describeAssignment(assignment);
           const key = assignmentKey(assignment);
           return (

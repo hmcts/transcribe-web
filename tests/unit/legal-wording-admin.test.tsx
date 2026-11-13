@@ -305,21 +305,18 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       return names;
     };
 
-    expect(await tabsFor(ME.legalTextManager)).toEqual([
-      "Document Content",
-      "Templates",
-    ]);
+    // DIAAT-406: the legal text manager has the legal text (and frameworks) only; the
+    // jurisdiction administrator its users, templates and approvals; the super
+    // administrator the jurisdictions, their administrators and user accounts.
+    expect(await tabsFor(ME.legalTextManager)).toEqual(["Document Content"]);
     expect(await tabsFor(ME.jurisdictionAdministrator)).toEqual([
       "Templates",
       "Users",
       "Approvals",
-      "Jurisdictions",
     ]);
     expect(await tabsFor(ME.jurisdictionSuperAdministrator)).toEqual([
-      "Templates",
-      "Users",
-      "Approvals",
       "Jurisdictions",
+      "User accounts",
     ]);
     // DIAAT-403: a system administrator gives only the super administrator role,
     // so it has no Jurisdictions tab.
@@ -332,6 +329,17 @@ describe("Admin area: legal wording of the active jurisdiction (DIAAT-342)", () 
       "Super administrators",
       "Feature flags",
     ]);
+  });
+
+  it("shows a judge no tab at all", async () => {
+    respondWith(wording());
+    mockPersona = ME.judge;
+    render(<AdminPage />);
+
+    expect(
+      await screen.findByText("There is nothing to manage here in your role.")
+    ).toBeTruthy();
+    expect(screen.queryAllByRole("tab")).toEqual([]);
   });
 
   it("shows a system administrator acting as a judge no tab at all (DIAAT-403)", async () => {

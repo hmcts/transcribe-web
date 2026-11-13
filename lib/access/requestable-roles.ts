@@ -22,6 +22,6 @@ export const REQUESTABLE_ROLES: RequestableRole[] = [
   {
     value: "LegalTextManager",
     label: "Legal text manager",
-    description: "Manage legal text and templates",
+    description: "Manage the legal text of documents",
   },
 ];
