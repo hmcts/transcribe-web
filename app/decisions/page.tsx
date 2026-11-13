@@ -31,7 +31,7 @@ export default function DecisionsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background">
       <header className="border-b border-border">
         <div className="mx-auto max-w-5xl px-4 py-4">
           <h1 className="text-xl font-bold text-foreground">Decisions</h1>
@@ -62,6 +62,6 @@ export default function DecisionsPage() {
           <BackupRecovery onRetryUpload={setRetryingBackup} />
         </div>
       )}
-    </main>
+    </div>
   );
 }
