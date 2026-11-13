@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { SettingHistory } from "@/components/admin/setting-history";
 import { SignOffFields } from "@/components/admin/sign-off";
 import { TemplatePreview } from "@/components/admin/template-preview";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { useLeaveGuard } from "@/hooks/use-leave-guard";
+import { fetchTemplateHistory, restoreTemplate } from "@/lib/history-api";
 import {
   NO_SIGN_OFF,
   SIGN_OFF_MISSING,
@@ -98,12 +100,15 @@ export function TemplatesEditor({ code }: { code: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // Going back to an earlier version (DIAAT-348): the field list then reopens from the
+  // API's copy, so nothing in it can be edited meanwhile.
+  const [restoring, setRestoring] = useState(false);
   // Each template's sample details for its preview, by id: kept while its field list
   // reopens after a save, so a fix can be previewed again with the same details.
   const [samples, setSamples] = useState<Record<string, TemplateValues>>({});
-  useJurisdictionSwitchGuard({ busy: uploading, unsaved: false });
+  useJurisdictionSwitchGuard({ busy: uploading || restoring, unsaved: false });
   const fileInput = useRef<HTMLInputElement>(null);
-  const busy = uploading || editor.busy;
+  const busy = uploading || restoring || editor.busy;
 
   const load = useCallback(async () => {
     try {
@@ -272,7 +277,7 @@ export function TemplatesEditor({ code }: { code: string }) {
           key={`${current.id}:${current.version}`}
           code={code}
           template={current}
-          locked={uploading}
+          locked={uploading || restoring}
           onStateChange={setEditor}
           onSaved={applySaved}
           onDeleted={(id) => {
@@ -284,6 +289,33 @@ export function TemplatesEditor({ code }: { code: string }) {
           onSamplesChange={(values) =>
             setSamples((all) => ({ ...all, [current.id]: values }))
           }
+        />
+      )}
+      {current && (
+        // Outside the field list, which reopens after each save: it stays open, and
+        // loads again for the new version (DIAAT-348).
+        <SettingHistory
+          key={current.id}
+          id={`template-history-${current.id}`}
+          load={() => fetchTemplateHistory(code, current.id)}
+          version={current.version}
+          locked={busy}
+          unsaved={editor.unsaved}
+          onRestore={async (number) => {
+            setRestoring(true);
+            try {
+              const restored = await restoreTemplate(
+                code,
+                current.id,
+                number,
+                current.version
+              );
+              toast.success(`${restored.name} is back to version ${number}.`);
+              applySaved(restored);
+            } finally {
+              setRestoring(false);
+            }
+          }}
         />
       )}
     </section>
@@ -302,8 +334,8 @@ function TemplateFieldsEditor({
 }: {
   code: string;
   template: AdminTemplate;
-  /** Another template is being uploaded: it opens when done, so nothing here can
-   * be changed meanwhile. */
+  /** Another template is being uploaded (it opens when done), or this one is going
+   * back to an earlier version (it reopens): nothing here can be changed meanwhile. */
   locked: boolean;
   /** Busy or unsaved: the list stops other changes while busy, and asks before
    * dropping unsaved edits. */

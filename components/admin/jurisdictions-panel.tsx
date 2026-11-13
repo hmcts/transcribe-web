@@ -4,6 +4,7 @@ import { Loader2, Plus, Save } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { RoleHolders } from "@/components/admin/role-holders";
+import { SettingHistory } from "@/components/admin/setting-history";
 import { SignOffFields } from "@/components/admin/sign-off";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,7 @@ import {
 import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 import { JURISDICTION_ADMINISTRATOR } from "@/lib/access/assignable-roles";
 import { describeRefusal } from "@/lib/access/refusal-messages";
+import { fetchJurisdictionHistory, restoreJurisdiction } from "@/lib/history-api";
 import { NO_SIGN_OFF, SIGN_OFF_MISSING, type SignOffDraft, signedOffText, signOffToSend } from "@/lib/sign-off";
 import { useAccess } from "@/providers/access";
 
@@ -72,6 +74,9 @@ export function JurisdictionsPanel() {
   // Bumped to reopen the editor from the server's copy, dropping unsaved edits.
   const [editorGeneration, setEditorGeneration] = useState(0);
   const [creating, setCreating] = useState(false);
+  // Going back to an earlier version (DIAAT-348): the editor reopens when it is done,
+  // so another jurisdiction cannot be opened (and its edits lost) meanwhile.
+  const [restoring, setRestoring] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -144,6 +149,7 @@ export function JurisdictionsPanel() {
         {canCreate && (
           <Button
             size="sm"
+            disabled={restoring}
             onClick={() => {
               setCreating(true);
               setSelected(null);
@@ -175,7 +181,8 @@ export function JurisdictionsPanel() {
                   <button
                     type="button"
                     aria-current={j.code === selected ? "true" : undefined}
-                    className="underline-offset-2 hover:underline"
+                    className="underline-offset-2 hover:underline disabled:opacity-50"
+                    disabled={restoring}
                     onClick={() => {
                       setSelected(j.code);
                       setCreating(false);
@@ -221,6 +228,22 @@ export function JurisdictionsPanel() {
             setSelected(code);
             await refresh();
           }}
+          restoring={restoring}
+          onRestore={async (code, number, version) => {
+            setRestoring(true);
+            try {
+              const restored = await restoreJurisdiction(code, number, version);
+              toast.success(`${code} is back to version ${number}.`);
+              // The API's copy, not a reload (which could fail and reopen the editor
+              // with the content and version from before).
+              setJurisdictions((all) =>
+                all.map((j) => (j.code === restored.code ? restored : j))
+              );
+              setEditorGeneration((g) => g + 1);
+            } finally {
+              setRestoring(false);
+            }
+          }}
         />
       )}
       {canAssign && current && !creating && (
@@ -247,6 +270,8 @@ function JurisdictionEditor({
   stagesSupported,
   onSaved,
   onDiscard,
+  restoring,
+  onRestore,
 }: {
   jurisdiction: AdminJurisdiction | null;
   /** May change the name and the enabled switch of an existing jurisdiction
@@ -259,6 +284,11 @@ function JurisdictionEditor({
   onSaved: (code: string) => Promise<void>;
   /** Reopen from the server's copy (after a 409, say). */
   onDiscard: () => Promise<void>;
+  /** Going back to an earlier version is under way (DIAAT-348). */
+  restoring: boolean;
+  /** Go back to version `number` of `code`, then reopen from the API's copy; throws
+   * if it is refused. */
+  onRestore: (code: string, number: number, version: string) => Promise<void>;
 }) {
   const settings = jurisdiction?.settings ?? {};
   const [code, setCode] = useState(jurisdiction?.code ?? "");
@@ -286,6 +316,8 @@ function JurisdictionEditor({
   );
   const [wording, setWording] = useState<Record<string, string>>(settings.wording ?? {});
   const [saving, setSaving] = useState(false);
+  // While going back nothing can be edited: the editor then reopens from the API's copy.
+  const busy = saving || restoring;
 
   // DIAAT-332: a switch reloads the tab, losing changes not saved, or a save under way.
   const form = JSON.stringify({
@@ -300,7 +332,7 @@ function JurisdictionEditor({
     wording,
   });
   const [savedForm, setSavedForm] = useState(form);
-  useJurisdictionSwitchGuard({ busy: saving, unsaved: form !== savedForm });
+  useJurisdictionSwitchGuard({ busy, unsaved: form !== savedForm });
 
   // Saving creates or replaces: adding one with an existing code would overwrite it.
   const duplicate =
@@ -355,196 +387,215 @@ function JurisdictionEditor({
       <h3 id="jurisdiction-editor" className="text-lg font-semibold">
         {jurisdiction ? `Edit ${jurisdiction.code}` : "Add a jurisdiction"}
       </h3>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <div className="space-y-1">
-          <Label htmlFor="jurisdiction-code">Code</Label>
-          <Input
-            id="jurisdiction-code"
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            disabled={!!jurisdiction}
-            placeholder="ET"
-            maxLength={16}
-            aria-invalid={duplicate || undefined}
-            aria-describedby={duplicate ? "jurisdiction-code-taken" : undefined}
-          />
-          {duplicate && (
-            <p id="jurisdiction-code-taken" className="text-sm text-destructive">
-              {code.trim().toUpperCase()} already exists. Choose it in the list to edit it.
-            </p>
+      <fieldset
+        disabled={restoring}
+        aria-busy={restoring}
+        className="m-0 min-w-0 space-y-4 border-0 p-0"
+      >
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1">
+            <Label htmlFor="jurisdiction-code">Code</Label>
+            <Input
+              id="jurisdiction-code"
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              disabled={!!jurisdiction}
+              placeholder="ET"
+              maxLength={16}
+              aria-invalid={duplicate || undefined}
+              aria-describedby={duplicate ? "jurisdiction-code-taken" : undefined}
+            />
+            {duplicate && (
+              <p id="jurisdiction-code-taken" className="text-sm text-destructive">
+                {code.trim().toUpperCase()} already exists. Choose it in the list to edit it.
+              </p>
+            )}
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="jurisdiction-name">Name</Label>
+            <Input
+              id="jurisdiction-name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Employment Tribunal"
+              disabled={nameLocked}
+              aria-describedby={nameLocked ? "jurisdiction-locked" : undefined}
+            />
+          </div>
+          {stagesSupported && (
+            <>
+              <div className="space-y-1">
+                <Label htmlFor="jurisdiction-display-name">Display name</Label>
+                <Input
+                  id="jurisdiction-display-name"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  placeholder="Employment Tribunals (ET)"
+                  maxLength={200}
+                  aria-describedby="jurisdiction-display-name-hint"
+                />
+                <p id="jurisdiction-display-name-hint" className="text-xs text-muted-foreground">
+                  What users see. Blank: the name.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="jurisdiction-service">Service (where it applies)</Label>
+                <Input
+                  id="jurisdiction-service"
+                  value={service}
+                  onChange={(e) => setService(e.target.value)}
+                  placeholder="England and Wales"
+                  maxLength={200}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="jurisdiction-stage">Who sees it</Label>
+                <Select
+                  value={stage}
+                  onValueChange={(v) => {
+                    setStage(v as JurisdictionStage);
+                    setSignOffError(null);
+                  }}
+                  disabled={!jurisdiction}
+                >
+                  <SelectTrigger id="jurisdiction-stage" aria-describedby="jurisdiction-stage-hint">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STAGES.map((s) => (
+                      <SelectItem key={s.value} value={s.value}>
+                        {s.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p id="jurisdiction-stage-hint" className="text-xs text-muted-foreground">
+                  {stored?.stage === "live" && stored.sign_off
+                    ? `${signedOffText(stored.sign_off)}.`
+                    : jurisdiction
+                      ? "Draft: only its administrators. Test: its test group too. Live: everyone with a role there."
+                      : "A new jurisdiction starts as a draft. Add its administrators, then switch it on."}
+                </p>
+              </div>
+            </>
           )}
+          <div className="space-y-1">
+            <Label htmlFor="jurisdiction-template">Template</Label>
+            <Select value={template} onValueChange={setTemplate}>
+              <SelectTrigger id="jurisdiction-template">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">None: general section, copy the text out</SelectItem>
+                <SelectItem value="iac_decision">IAC decision</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-2 pt-6">
+            <CheckboxField
+              id="jurisdiction-enabled"
+              label="Enabled"
+              checked={enabled}
+              onChange={setEnabled}
+              disabled={nameLocked}
+            />
+            <CheckboxField
+              id="jurisdiction-recordings"
+              label="Uses hearing recordings"
+              checked={recordings}
+              onChange={setRecordings}
+            />
+          </div>
         </div>
-        <div className="space-y-1">
-          <Label htmlFor="jurisdiction-name">Name</Label>
-          <Input
-            id="jurisdiction-name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Employment Tribunal"
-            disabled={nameLocked}
-            aria-describedby={nameLocked ? "jurisdiction-locked" : undefined}
+
+        {needsSignOff && (
+          <SignOffFields
+            id="jurisdiction-sign-off"
+            value={signOff}
+            onChange={(value) => {
+              setSignOff(value);
+              setSignOffError(null);
+            }}
+            error={signOffError}
           />
-        </div>
-        {stagesSupported && (
-          <>
-            <div className="space-y-1">
-              <Label htmlFor="jurisdiction-display-name">Display name</Label>
-              <Input
-                id="jurisdiction-display-name"
-                value={displayName}
-                onChange={(e) => setDisplayName(e.target.value)}
-                placeholder="Employment Tribunals (ET)"
-                maxLength={200}
-                aria-describedby="jurisdiction-display-name-hint"
-              />
-              <p id="jurisdiction-display-name-hint" className="text-xs text-muted-foreground">
-                What users see. Blank: the name.
-              </p>
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="jurisdiction-service">Service (where it applies)</Label>
-              <Input
-                id="jurisdiction-service"
-                value={service}
-                onChange={(e) => setService(e.target.value)}
-                placeholder="England and Wales"
-                maxLength={200}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="jurisdiction-stage">Who sees it</Label>
-              <Select
-                value={stage}
-                onValueChange={(v) => {
-                  setStage(v as JurisdictionStage);
-                  setSignOffError(null);
-                }}
-                disabled={!jurisdiction}
-              >
-                <SelectTrigger id="jurisdiction-stage" aria-describedby="jurisdiction-stage-hint">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {STAGES.map((s) => (
-                    <SelectItem key={s.value} value={s.value}>
-                      {s.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p id="jurisdiction-stage-hint" className="text-xs text-muted-foreground">
-                {stored?.stage === "live" && stored.sign_off
-                  ? `${signedOffText(stored.sign_off)}.`
-                  : jurisdiction
-                    ? "Draft: only its administrators. Test: its test group too. Live: everyone with a role there."
-                    : "A new jurisdiction starts as a draft. Add its administrators, then switch it on."}
-              </p>
-            </div>
-          </>
         )}
-        <div className="space-y-1">
-          <Label htmlFor="jurisdiction-template">Template</Label>
-          <Select value={template} onValueChange={setTemplate}>
-            <SelectTrigger id="jurisdiction-template">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="none">None: general section, copy the text out</SelectItem>
-              <SelectItem value="iac_decision">IAC decision</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2 pt-6">
-          <CheckboxField
-            id="jurisdiction-enabled"
-            label="Enabled"
-            checked={enabled}
-            onChange={setEnabled}
-            disabled={nameLocked}
-          />
-          <CheckboxField
-            id="jurisdiction-recordings"
-            label="Uses hearing recordings"
-            checked={recordings}
-            onChange={setRecordings}
-          />
-        </div>
-      </div>
 
-      {needsSignOff && (
-        <SignOffFields
-          id="jurisdiction-sign-off"
-          value={signOff}
-          onChange={(value) => {
-            setSignOff(value);
-            setSignOffError(null);
-          }}
-          error={signOffError}
-        />
-      )}
-
-      {!stagesSupported && !jurisdiction && (
-        <p className="text-sm text-muted-foreground">
-          It is live for its members as soon as it is enabled: setting one up as a draft
-          needs the latest API.
-        </p>
-      )}
-
-      {jurisdiction?.stage === "draft" && (jurisdiction.problems?.length ?? 0) > 0 && (
-        <div
-          className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
-          aria-labelledby="jurisdiction-not-ready"
-          role="region"
-        >
-          <p id="jurisdiction-not-ready" className="font-medium">
-            Before it can be switched on for testers or everyone:
+        {!stagesSupported && !jurisdiction && (
+          <p className="text-sm text-muted-foreground">
+            It is live for its members as soon as it is enabled: setting one up as a draft
+            needs the latest API.
           </p>
-          <ul className="mt-1 list-disc pl-5">
-            {jurisdiction.problems?.map((problem) => (
-              <li key={problem}>{problem}</li>
+        )}
+
+        {jurisdiction?.stage === "draft" && (jurisdiction.problems?.length ?? 0) > 0 && (
+          <div
+            className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm dark:border-amber-700 dark:bg-amber-950"
+            aria-labelledby="jurisdiction-not-ready"
+            role="region"
+          >
+            <p id="jurisdiction-not-ready" className="font-medium">
+              Before it can be switched on for testers or everyone:
+            </p>
+            <ul className="mt-1 list-disc pl-5">
+              {jurisdiction.problems?.map((problem) => (
+                <li key={problem}>{problem}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {nameLocked && (
+          <p id="jurisdiction-locked" className="text-sm text-muted-foreground">
+            Only a super administrator can rename a jurisdiction or switch it on or
+            off. Its template, hearing recordings and screen wording are yours to
+            change.
+          </p>
+        )}
+
+        <details>
+          <summary className="cursor-pointer text-sm font-medium">
+            Screen wording (blank: the default)
+          </summary>
+          <div className="mt-3 space-y-3">
+            {Object.entries(wordingKeys).map(([key, description]) => (
+              <div key={key} className="space-y-1">
+                <Label htmlFor={`wording-${key}`}>{description}</Label>
+                <Input
+                  id={`wording-${key}`}
+                  value={wording[key] ?? ""}
+                  onChange={(e) => setWording((w) => ({ ...w, [key]: e.target.value }))}
+                  maxLength={500}
+                />
+              </div>
             ))}
-          </ul>
-        </div>
-      )}
-
-      {nameLocked && (
-        <p id="jurisdiction-locked" className="text-sm text-muted-foreground">
-          Only a super administrator can rename a jurisdiction or switch it on or
-          off. Its template, hearing recordings and screen wording are yours to
-          change.
-        </p>
-      )}
-
-      <details>
-        <summary className="cursor-pointer text-sm font-medium">
-          Screen wording (blank: the default)
-        </summary>
-        <div className="mt-3 space-y-3">
-          {Object.entries(wordingKeys).map(([key, description]) => (
-            <div key={key} className="space-y-1">
-              <Label htmlFor={`wording-${key}`}>{description}</Label>
-              <Input
-                id={`wording-${key}`}
-                value={wording[key] ?? ""}
-                onChange={(e) => setWording((w) => ({ ...w, [key]: e.target.value }))}
-                maxLength={500}
-              />
-            </div>
-          ))}
-        </div>
-      </details>
+          </div>
+        </details>
+      </fieldset>
 
       <Button
         onClick={() => void save()}
-        disabled={saving || duplicate || !code.trim() || !name.trim()}
+        disabled={busy || duplicate || !code.trim() || !name.trim()}
       >
         {saving ? <Loader2 className="mr-1 h-4 w-4 animate-spin" /> : <Save className="mr-1 h-4 w-4" />}
         Save
       </Button>
       {jurisdiction && (
-        <Button variant="ghost" className="ml-2" onClick={() => void onDiscard()} disabled={saving}>
+        <Button variant="ghost" className="ml-2" onClick={() => void onDiscard()} disabled={busy}>
           Discard changes
         </Button>
+      )}
+
+      {jurisdiction && (
+        // DIAAT-348: going back reopens the editor from the API's copy.
+        <SettingHistory
+          id="jurisdiction-history"
+          load={() => fetchJurisdictionHistory(jurisdiction.code)}
+          version={version}
+          wordingKeys={wordingKeys}
+          locked={busy}
+          unsaved={form !== savedForm}
+          onRestore={(number) => onRestore(jurisdiction.code, number, version)}
+        />
       )}
     </section>
   );

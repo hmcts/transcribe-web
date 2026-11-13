@@ -1244,3 +1244,173 @@ describe("Previewing a template (DIAAT-346)", () => {
     ).toBe(true);
   });
 });
+
+describe("A template's history, and going back (DIAAT-348)", () => {
+  beforeEach(() => {
+    request.mockReset();
+  });
+
+  const LIVE: AdminTemplate = {
+    ...UPLOADED,
+    stage: "live",
+    sign_off: { service_lead: "A Lead", signed_off_at: "2026-11-12T10:00:00" },
+    fields: UPLOADED.fields.map((f) =>
+      f.tag === "Reference" ? { ...f, label: "Broken" } : f
+    ),
+    version: "v5",
+  };
+
+  /** The template routes, with its history and going back to version 1. */
+  function serveHistory() {
+    serve([LIVE]);
+    const templates = request.getMockImplementation();
+    if (!templates) throw new Error("serve() sets the fake API");
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if (endpoint === "/admin/jurisdictions/ET/templates/t1/history")
+          return {
+            data: {
+              versions: [
+                {
+                  number: 2,
+                  saved_at: "2026-11-12T15:00:00Z",
+                  saved_by: {
+                    id: "u1",
+                    email: "admin@example.test",
+                    name: null,
+                  },
+                  restored_from: null,
+                  first: false,
+                  content_as_now: true,
+                  changes: [
+                    {
+                      setting: "fields.Reference.label",
+                      before: "Reference",
+                      after: "Broken",
+                    },
+                  ],
+                },
+                {
+                  number: 1,
+                  saved_at: "2026-11-12T14:00:00Z",
+                  saved_by: {
+                    id: "u1",
+                    email: "admin@example.test",
+                    name: null,
+                  },
+                  restored_from: null,
+                  first: true,
+                  content_as_now: false,
+                  changes: [],
+                },
+              ],
+            },
+          };
+        if (
+          endpoint ===
+            "/admin/jurisdictions/ET/templates/t1/history/1/restore" &&
+          options?.method === "POST"
+        )
+          return { data: { ...LIVE, fields: UPLOADED.fields, version: "v6" } };
+        return templates(endpoint, options);
+      }
+    );
+  }
+
+  it("shows who changed a field and what it was, and goes back for judges at once", async () => {
+    serveHistory();
+    const user = userEvent.setup();
+    const fields = await open(user);
+    expect(within(fields).getByDisplayValue("Broken")).toBeTruthy();
+    const history = screen.getByRole("region", { name: "History" });
+
+    await user.click(
+      within(history).getByRole("button", { name: "Show who changed what" })
+    );
+    expect(
+      (await within(history).findByText(/Field Reference: question/)).closest(
+        "li"
+      )?.textContent
+    ).toBe("Field Reference: question: was Reference, now Broken");
+    await user.click(
+      within(history).getByRole("button", { name: "Go back to version 1" })
+    );
+    await user.click(
+      within(history).getByRole("button", {
+        name: "Confirm: go back to version 1",
+      })
+    );
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "ET judgment is back to version 1."
+      )
+    );
+    const reopened = await screen.findByRole("region", {
+      name: "Fields of ET judgment",
+    });
+    expect(within(reopened).queryByDisplayValue("Broken")).toBeNull();
+    const restore = request.mock.calls.find(([endpoint]) =>
+      endpoint.endsWith("/restore")
+    );
+    expect(JSON.parse(String(restore?.[1]?.body))).toEqual({ version: "v5" });
+    // Still live, with the sign-off it had: who can choose it is unchanged.
+    expect(within(reopened).getByText(/Signed off by A Lead/)).toBeTruthy();
+  });
+
+  it("locks the fields, the list and uploads until going back is done", async () => {
+    serveHistory();
+    const routes = request.getMockImplementation();
+    if (!routes) throw new Error("serveHistory() sets the fake API");
+    let answerRestore: () => void = () => undefined;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if (endpoint.endsWith("/restore"))
+          await new Promise<void>((resolve) => {
+            answerRestore = resolve;
+          });
+        return routes(endpoint, options);
+      }
+    );
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const history = screen.getByRole("region", { name: "History" });
+    await user.click(
+      within(history).getByRole("button", { name: "Show who changed what" })
+    );
+    await user.click(
+      await within(history).findByRole("button", {
+        name: "Go back to version 1",
+      })
+    );
+    await user.click(
+      within(history).getByRole("button", {
+        name: "Confirm: go back to version 1",
+      })
+    );
+
+    // Edits made now would be dropped when the field list reopens.
+    expect(
+      within(fields).getByDisplayValue("Broken").matches(":disabled")
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "ET judgment" }).matches(":disabled")
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: /Upload a Word template/ })
+        .matches(":disabled")
+    ).toBe(true);
+    answerRestore();
+
+    // The field list reopens (a new one) from the API's copy, open to edits again.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("region", { name: "Fields of ET judgment" }))
+          .getByLabelText(/^Name judges/)
+          .matches(":disabled")
+      ).toBe(false)
+    );
+    expect(screen.queryByDisplayValue("Broken")).toBeNull();
+  });
+});
