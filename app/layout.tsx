@@ -23,8 +23,8 @@ import { UserSettingsProvider } from "@/providers/user-settings";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Bench Notes",
-  description: "Bench Notes",
+  title: "BenchNotes",
+  description: "BenchNotes",
 };
 
 export default async function RootLayout({

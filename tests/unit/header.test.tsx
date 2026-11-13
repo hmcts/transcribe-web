@@ -86,7 +86,7 @@ describe("Header", () => {
     it("leaves Dictation out of the desktop nav and keeps the rest", () => {
       vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
       const nav = within(render(<Header />).getByRole("navigation"));
-      expect(nav.queryByRole("link", { name: "Go to dictation" })).toBeNull();
+      expect(nav.queryByRole("link", { name: "Go to decisions" })).toBeNull();
       expect(
         nav.getByRole("link", { name: "Go to hearing recordings" })
       ).toBeTruthy();
@@ -100,7 +100,7 @@ describe("Header", () => {
         screen.getByRole("button", { name: "Open navigation menu" })
       );
       const menu = within(screen.getByRole("dialog"));
-      expect(menu.queryByRole("link", { name: "Dictation" })).toBeNull();
+      expect(menu.queryByRole("link", { name: "Decisions" })).toBeNull();
       expect(
         menu.getByRole("link", { name: "Hearing recordings" })
       ).toBeTruthy();
@@ -112,7 +112,7 @@ describe("Header", () => {
     const LINKS = {
       admin: "Go to admin",
       wording: "Wording",
-      dictation: "Go to dictation",
+      dictation: "Go to decisions",
       recordings: "Go to hearing recordings",
       help: "Go to help",
     };
@@ -186,7 +186,7 @@ describe("Header", () => {
         screen.getByRole("button", { name: "Open navigation menu" })
       );
       const menu = within(screen.getByRole("dialog"));
-      expect(menu.queryByRole("link", { name: "Dictation" })).toBeNull();
+      expect(menu.queryByRole("link", { name: "Decisions" })).toBeNull();
       expect(menu.queryByRole("link", { name: "Hearing recordings" })).toBeNull();
       expect(menu.getByRole("link", { name: "Admin" }).getAttribute("href")).toBe(
         "/admin"
@@ -255,9 +255,9 @@ describe("Header", () => {
     });
   });
 
-  it("renders the Bench Notes text", () => {
+  it("renders the BenchNotes text", () => {
     const { getByText } = render(<Header />);
-    expect(getByText("Bench Notes")).toBeTruthy();
+    expect(getByText("BenchNotes")).toBeTruthy();
   });
 
   it("does not render the Justice AI logo image", () => {
@@ -272,7 +272,7 @@ describe("Header", () => {
 
   it("has a home link wrapping the logo and title", () => {
     const { getByText } = render(<Header />);
-    const link = getByText("Bench Notes").closest("a");
+    const link = getByText("BenchNotes").closest("a");
     expect(link).toBeTruthy();
     expect((link as HTMLAnchorElement).href).toContain("/");
   });
@@ -291,27 +291,27 @@ describe("Header", () => {
         mockIsRecording = true;
       },
     ],
-  ])("hides Help, Dictation and Hearing recordings when %s", (_, arrange) => {
+  ])("hides Help, Decisions and Hearing recordings when %s", (_, arrange) => {
     arrange();
     const { getByRole } = render(<Header />);
     const nav = within(getByRole("navigation"));
     for (const name of [
       "Go to help",
-      "Go to dictation",
+      "Go to decisions",
       "Go to hearing recordings",
     ]) {
       expect(nav.queryByRole("link", { name })).toBeNull();
     }
   });
 
-  it("lists Dictation and Hearing recordings in the mobile menu", () => {
+  it("lists Decisions and Hearing recordings in the mobile menu", () => {
     render(<Header />);
     fireEvent.click(
       screen.getByRole("button", { name: "Open navigation menu" })
     );
     const menu = within(screen.getByRole("dialog"));
     expect(
-      menu.getByRole("link", { name: "Dictation" }).getAttribute("href")
+      menu.getByRole("link", { name: "Decisions" }).getAttribute("href")
     ).toBe("/record?mode=mic");
     expect(
       menu
@@ -329,7 +329,7 @@ describe("Header", () => {
     );
     const menu = within(screen.getByRole("dialog"));
     expect(menu.getByRole("link", { name: "Home" })).toBeTruthy();
-    for (const name of ["Dictation", "Hearing recordings", "Help"]) {
+    for (const name of ["Decisions", "Hearing recordings", "Help"]) {
       expect(menu.queryByRole("link", { name })).toBeNull();
     }
   });
@@ -339,7 +339,7 @@ describe("Header", () => {
     mockIsRecording = false;
     const { getByRole } = render(<Header />);
     const nav = within(getByRole("navigation"));
-    expect(nav.getByRole("link", { name: "Go to dictation" })).toBeTruthy();
+    expect(nav.getByRole("link", { name: "Go to decisions" })).toBeTruthy();
     expect(
       nav.getByRole("link", { name: "Go to hearing recordings" })
     ).toBeTruthy();
@@ -349,22 +349,22 @@ describe("Header", () => {
     const { getByRole } = render(<Header />);
     const nav = within(getByRole("navigation"));
     expect(
-      nav.getByRole("link", { name: "Go to dictation" }).getAttribute("href")
+      nav.getByRole("link", { name: "Go to decisions" }).getAttribute("href")
     ).toBe("/record?mode=mic");
     expect(
       nav
         .getByRole("link", { name: "Go to hearing recordings" })
         .getAttribute("href")
     ).toBe("/recording");
-    expect(nav.getByText("Dictation")).toBeTruthy();
+    expect(nav.getByText("Decisions")).toBeTruthy();
     expect(nav.getByText("Hearing recordings")).toBeTruthy();
     expect(nav.queryByText("Recordings")).toBeNull();
   });
 
   it.each([
-    ["/record", "Go to dictation", "Go to hearing recordings"],
-    ["/recording", "Go to hearing recordings", "Go to dictation"],
-    ["/recording/jobs/abc", "Go to hearing recordings", "Go to dictation"],
+    ["/record", "Go to decisions", "Go to hearing recordings"],
+    ["/recording", "Go to hearing recordings", "Go to decisions"],
+    ["/recording/jobs/abc", "Go to hearing recordings", "Go to decisions"],
   ])("on %s marks only %s as the current page", (path, active, inactive) => {
     mockPathname = path;
     const { getByRole } = render(<Header />);
@@ -380,7 +380,7 @@ describe("Header", () => {
   it("marks neither feature link as current on the home page", () => {
     const { getByRole } = render(<Header />);
     const nav = within(getByRole("navigation"));
-    for (const name of ["Go to dictation", "Go to hearing recordings"]) {
+    for (const name of ["Go to decisions", "Go to hearing recordings"]) {
       expect(
         nav.getByRole("link", { name }).getAttribute("aria-current")
       ).toBeNull();

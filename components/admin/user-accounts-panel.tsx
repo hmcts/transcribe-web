@@ -130,7 +130,7 @@ export function UserAccountsPanel() {
       <div>
         <h2 className="text-xl font-semibold">User accounts</h2>
         <p className="text-sm text-muted-foreground">
-          Everyone who uses Bench Notes, in every jurisdiction. A deactivated
+          Everyone who uses BenchNotes, in every jurisdiction. A deactivated
           person cannot use it at all until reactivated; their roles are kept.
         </p>
       </div>

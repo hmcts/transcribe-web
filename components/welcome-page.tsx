@@ -119,7 +119,7 @@ function WelcomePage() {
               >
                 <Link href={HEARING_RECORDINGS_HREF}>
                   <FileAudio className="size-5" />
-                  {wording("nav.recordings")}
+                  Transcribe a recording
                 </Link>
               </Button>
             )}

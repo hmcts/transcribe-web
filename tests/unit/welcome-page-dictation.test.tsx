@@ -75,19 +75,19 @@ describe("WelcomePage Dictation button (DIAAT-366)", () => {
     mockJurisdiction = "IAC";
   });
 
-  it("offers Dictation when the flag is on", () => {
+  it("offers Write a decision when the flag is on", () => {
     vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "true");
     render(<WelcomePage />);
-    expect(screen.getByRole("button", { name: "Dictation" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Write a decision" })).toBeTruthy();
   });
 
-  it("hides Dictation but keeps hearing recordings when the flag is off", () => {
+  it("hides Write a decision but keeps Transcribe a recording when the flag is off", () => {
     vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
     render(<WelcomePage />);
-    expect(screen.queryByRole("button", { name: "Dictation" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Write a decision" })).toBeNull();
     expect(
       screen
-        .getByRole("link", { name: "Hearing recordings" })
+        .getByRole("link", { name: "Transcribe a recording" })
         .getAttribute("href")
     ).toBe("/recording");
   });

@@ -6,7 +6,7 @@ describe("StartNewRecordingButton", () => {
   it("is labelled Dictation and calls onClick", () => {
     const onClick = vi.fn();
     render(<StartNewRecordingButton onClick={onClick} />);
-    fireEvent.click(screen.getByRole("button", { name: "Dictation" }));
+    fireEvent.click(screen.getByRole("button", { name: "Write a decision" }));
     expect(onClick).toHaveBeenCalled();
   });
 });

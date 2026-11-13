@@ -515,7 +515,7 @@ cd /home/oleg/code_repos/transcribe-api && set -a; . ./.env; set +a
 **6. If something is off.** `/auth/dev-login` answers 401 "did not accept the
 persona": the API is not running with `ENVIRONMENT=local`, or the persona is not seeded
 (409 `persona_not_seeded`). 502: the API is not up yet. 403 "deactivated": reactivate
-that persona. A blank "Bench Notes could not load" means the API is unreachable from
+that persona. A blank "BenchNotes could not load" means the API is unreachable from
 the dev server (`BACKEND_INTERNAL_URL`). Browser console: a 403 `context_required` or
 409 `context_changed` after you changed a role elsewhere is expected, and the screen
 moves on by itself (see "Working context").

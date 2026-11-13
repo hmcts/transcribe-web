@@ -17,7 +17,7 @@ export function ContextShell({ children }: { children: React.ReactNode }) {
       <header className="border-b border-border bg-background">
         <div className="mx-auto flex h-14 max-w-[1280px] items-center justify-between px-4 sm:px-6">
           <Link href="/" className="text-xl font-medium text-foreground">
-            Bench Notes
+            BenchNotes
           </Link>
           <nav className="flex items-center gap-2" aria-label="Account">
             <DevPersonaPicker className="flex h-10 items-center gap-1 px-3 text-foreground hover:bg-foreground/5" />

@@ -28,7 +28,7 @@ export function NoAccess({
     <div className="mx-auto flex max-w-2xl flex-col gap-8 py-8">
       <section className="flex flex-col gap-3">
         <h1 className="text-3xl font-bold">
-          You do not have access to Bench Notes yet
+          You do not have access to BenchNotes yet
         </h1>
         <p className="text-lg text-muted-foreground">
           You have signed in, but you have not been added to a jurisdiction. Ask

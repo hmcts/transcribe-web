@@ -142,7 +142,7 @@ function JurisdictionLoading() {
 function JurisdictionLoadFailed({ onRetry }: { onRetry: () => void }) {
   return (
     <main className="mx-auto flex min-h-screen max-w-xl flex-col items-center justify-center gap-4 px-4 text-center">
-      <h1 className="text-2xl font-semibold">Bench Notes could not load</h1>
+      <h1 className="text-2xl font-semibold">BenchNotes could not load</h1>
       <p className="text-muted-foreground">
         Check your connection, then try again.
       </p>
