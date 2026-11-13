@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { JurisdictionsPanel } from "@/components/admin/jurisdictions-panel";
@@ -570,6 +570,64 @@ describe("JurisdictionsPanel", () => {
     expect(await screen.findByText("Forbidden")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: "Retry" }));
     expect(await screen.findByRole("button", { name: "IAC" })).toBeTruthy();
+  });
+
+  it("shows who changed the screen text and what it was, and goes back to it (DIAAT-348)", async () => {
+    serve({ jurisdictions: [{ ...ET, stage: "live", settings: { ...ET.settings, wording: { "help.subtitle": "A mistake" } } }] });
+    const jurisdictions = request.getMockImplementation();
+    if (!jurisdictions) throw new Error("serve() sets the fake API");
+    let restored = false;
+    const RESTORED = { ...ET, stage: "live" as const, version: "restored" };
+    request.mockImplementation(async (endpoint: string, options?: RequestInit) => {
+      if (endpoint === "/admin/jurisdictions/ET/history")
+        return {
+          data: {
+            versions: [
+              {
+                number: 2,
+                saved_at: "2026-11-12T15:00:00Z",
+                saved_by: { id: "u1", email: "lead@example.test", name: null },
+                restored_from: null,
+                first: false,
+                content_as_now: true,
+                changes: [{ setting: "settings.wording.help.subtitle", before: "Employment Tribunal", after: "A mistake" }],
+              },
+              {
+                number: 1,
+                saved_at: "2026-11-12T14:00:00Z",
+                saved_by: null,
+                restored_from: null,
+                first: true,
+                content_as_now: false,
+                changes: [],
+              },
+            ],
+          },
+        };
+      if (endpoint === "/admin/jurisdictions/ET/history/1/restore" && options?.method === "POST") {
+        restored = true;
+        return { data: RESTORED };
+      }
+      if (endpoint === "/admin/jurisdictions" && restored) return { data: [RESTORED] };
+      return jurisdictions(endpoint, options);
+    });
+    const user = userEvent.setup();
+    render(<JurisdictionsPanel />);
+    await user.click(await screen.findByRole("button", { name: "ET" }));
+    const history = screen.getByRole("region", { name: "History" });
+
+    await user.click(within(history).getByRole("button", { name: "Show who changed what" }));
+    expect(
+      (await within(history).findByText(/Screen text: Under the service name/)).closest("li")?.textContent
+    ).toBe("Screen text: Under the service name: was Employment Tribunal, now A mistake");
+    await user.click(within(history).getByRole("button", { name: "Go back to version 1" }));
+    await user.click(within(history).getByRole("button", { name: "Confirm: go back to version 1" }));
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith("ET is back to version 1."));
+    const restore = request.mock.calls.find(([endpoint]) => endpoint.endsWith("/restore"));
+    expect(JSON.parse(String(restore?.[1]?.body))).toEqual({ version: ET.version });
+    // The editor reopens from the server's copy.
+    await waitFor(() => expect(screen.getByLabelText("Under the service name")).toHaveProperty("value", "Employment Tribunal"));
   });
 
   describe("by permission", () => {

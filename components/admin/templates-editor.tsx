@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { SettingHistory } from "@/components/admin/setting-history";
 import { SignOffFields } from "@/components/admin/sign-off";
 import { TemplatePreview } from "@/components/admin/template-preview";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +35,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { useLeaveGuard } from "@/hooks/use-leave-guard";
+import { fetchTemplateHistory, restoreTemplate } from "@/lib/history-api";
 import {
   NO_SIGN_OFF,
   SIGN_OFF_MISSING,
@@ -297,6 +299,28 @@ export function TemplatesEditor({
           onSamplesChange={(values) =>
             setSamples((all) => ({ ...all, [current.id]: values }))
           }
+        />
+      )}
+      {current && (
+        // Outside the field list, which reopens after each save: it stays open, and
+        // loads again for the new version (DIAAT-348).
+        <SettingHistory
+          key={current.id}
+          id={`template-history-${current.id}`}
+          load={() => fetchTemplateHistory(code, current.id)}
+          version={current.version}
+          locked={busy}
+          unsaved={editor.unsaved}
+          onRestore={async (number) => {
+            const restored = await restoreTemplate(
+              code,
+              current.id,
+              number,
+              current.version
+            );
+            toast.success(`${restored.name} is back to version ${number}.`);
+            applySaved(restored);
+          }}
         />
       )}
     </section>

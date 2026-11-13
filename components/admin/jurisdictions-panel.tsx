@@ -9,6 +9,7 @@ import {
   IDLE,
   TemplatesEditor,
 } from "@/components/admin/templates-editor";
+import { SettingHistory } from "@/components/admin/setting-history";
 import { SignOffFields } from "@/components/admin/sign-off";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { Badge } from "@/components/ui/badge";
@@ -41,6 +42,7 @@ import {
 import { type JurisdictionStage, stageNote } from "@/lib/jurisdiction-api";
 import { JURISDICTION_ADMINISTRATOR } from "@/lib/access/assignable-roles";
 import { describeRefusal } from "@/lib/access/refusal-messages";
+import { fetchJurisdictionHistory, restoreJurisdiction } from "@/lib/history-api";
 import { NO_SIGN_OFF, SIGN_OFF_MISSING, type SignOffDraft, signedOffText, signOffToSend } from "@/lib/sign-off";
 import { useAccess } from "@/providers/access";
 
@@ -567,6 +569,23 @@ function JurisdictionEditor({
         <Button variant="ghost" className="ml-2" onClick={() => void onDiscard()} disabled={saving}>
           Discard changes
         </Button>
+      )}
+
+      {jurisdiction && (
+        // DIAAT-348: going back reopens the editor from the server's copy, as Discard does.
+        <SettingHistory
+          id="jurisdiction-history"
+          load={() => fetchJurisdictionHistory(jurisdiction.code)}
+          version={version}
+          wordingKeys={wordingKeys}
+          locked={saving}
+          unsaved={form !== savedForm}
+          onRestore={async (number) => {
+            await restoreJurisdiction(jurisdiction.code, number, version);
+            toast.success(`${jurisdiction.code} is back to version ${number}.`);
+            await onDiscard();
+          }}
+        />
       )}
     </section>
   );
