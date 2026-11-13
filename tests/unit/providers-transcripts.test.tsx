@@ -41,10 +41,11 @@ vi.mock("@/lib/database", () => ({
 }));
 
 const mockPush = vi.fn();
+let mockPathname = "/decisions";
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockPush }),
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
   useSearchParams: () => ({
     get: vi.fn().mockReturnValue(null),
     toString: vi.fn().mockReturnValue(""),
@@ -169,7 +170,7 @@ describe("refreshMetadata", () => {
     const updated = [{ id: "t1" } as any, { id: "t2" } as any];
     vi.mocked(getAllTranscriptionMetadata)
       .mockResolvedValueOnce(initial) // initial load ([] deps effect)
-      .mockResolvedValueOnce(initial) // navigation refresh (no transcriptId → home page effect)
+      .mockResolvedValueOnce(initial) // navigation refresh (no transcriptId → Decisions page effect)
       .mockResolvedValueOnce(updated); // explicit refreshMetadata() call
 
     const { result } = renderHook(() => useTranscripts(), { wrapper });
@@ -180,6 +181,34 @@ describe("refreshMetadata", () => {
     });
 
     expect(result.current.transcriptsMetadata).toEqual(updated);
+  });
+});
+
+// ─── refresh on the Decisions page (DIAAT-400) ────────────────────────────────
+
+describe("TranscriptsProvider — the Decisions page, which lists the dictations (DIAAT-400)", () => {
+  afterEach(() => {
+    mockPathname = "/decisions";
+    vi.mocked(getAllTranscriptionMetadata).mockReset();
+  });
+
+  it("refreshes the list on landing on /decisions, as on returning from the recorder", async () => {
+    vi.mocked(getAllTranscriptionMetadata).mockResolvedValue([]);
+    mockPathname = "/decisions";
+    const { result } = renderHook(() => useTranscripts(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    // The initial load, and the refresh for landing on the page.
+    await waitFor(() => expect(getAllTranscriptionMetadata).toHaveBeenCalledTimes(2));
+  });
+
+  it("does not refresh it again on the home page, which no longer shows it", async () => {
+    vi.mocked(getAllTranscriptionMetadata).mockResolvedValue([]);
+    mockPathname = "/";
+    const { result } = renderHook(() => useTranscripts(), { wrapper });
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+
+    expect(getAllTranscriptionMetadata).toHaveBeenCalledTimes(1);
   });
 });
 
