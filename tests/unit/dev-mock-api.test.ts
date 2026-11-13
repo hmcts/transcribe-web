@@ -214,6 +214,23 @@ describe("the mock API: deactivation, history, requests, flags, recordings", () 
     expect([self.status, self.body.detail.code]).toEqual([403, "cannot_deactivate_self"]);
   });
 
+  it("refuses to deactivate or reactivate a SystemAdministrator (DIAAT-407)", async () => {
+    const boss = await session("jsuper");
+    const sys = await session("sysadmin");
+    for (const action of ["deactivate", "reactivate"]) {
+      const refused = await call(boss.token, "POST", `/api/admin/users/${sys.me.user.id}/${action}`);
+      expect([refused.status, refused.body.detail.code]).toEqual([403, "assignment_not_allowed"]);
+    }
+  });
+
+  it("refuses an access request while acting as SystemAdministrator (DIAAT-407)", async () => {
+    const sys = await session("sysadmin");
+    const refused = await call(sys.token, "POST", "/api/access-requests", { jurisdiction: "IAC", roles: ["Judge"] });
+    expect([refused.status, refused.body.detail.code]).toEqual([403, "permission_denied"]);
+    const noRole = await session("no-role");
+    expect((await call(noRole.token, "POST", "/api/access-requests", { jurisdiction: "IAC", roles: ["Judge"] })).status).toBe(201);
+  });
+
   it("lets a jurisdiction administrator deactivate only people whose every role is Judge or LegalTextManager there (DIAAT-406)", async () => {
     const admin = await session("jadmin-iac");
     const many = await session("many", "ET:Judge");

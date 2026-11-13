@@ -191,7 +191,9 @@ how many jurisdictions a person can be in. The switcher lists all of them, the
 Users screen gives one person several roles and shows each as its own chip, and a
 user who holds roles asks for more from Request access in the header's account
 menu (`app/request-access/page.tsx`, the same form and `POST /api/access-requests`
-as the no-access page, without the roles they already hold there). Its Check again
+as the no-access page, without the roles they already hold there). Acting as
+SystemAdministrator there is no Request access, and the API refuses one with 403
+`permission_denied` (DIAAT-407). Its Check again
 mints now and refreshes the tab's roles, so an approved role reaches the switcher
 without a reload; a filled-in form, or a request being sent or withdrawn, stops a
 context switch until it is sent or cleared.
@@ -252,7 +254,10 @@ A role change reaches the person at their next token re-mint, so the screens say
   administrator's, DIAAT-406): every account (`GET /api/admin/users`), searchable by
   email, with its state; Deactivate (asks first) and Reactivate for anyone but
   yourself or someone not signed in yet (`POST /api/admin/users/{id}/deactivate|reactivate`;
-  the API answers 403 `cannot_deactivate_self` for yourself), and Role history per
+  the API answers 403 `cannot_deactivate_self` for yourself). An account that holds
+  SystemAdministrator is not marked in the list (DIAAT-403), so it shows the buttons too,
+  and the API refuses with 403 `assignment_not_allowed`, shown as the API's message
+  (DIAAT-407). Role history per
   person: their changes across all jurisdictions (`role-history?user=<id>`). It gives no
   roles.
 * **Approvals** (`approvals-panel.tsx`, `GET /api/admin/access-requests?status=pending`,
