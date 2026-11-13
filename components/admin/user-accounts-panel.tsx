@@ -33,7 +33,8 @@ const SEARCH_DELAY_MS = 300;
 /**
  * Admin > User accounts (DIAAT-406, `accounts.manage`: the super administrator's).
  * Every account, whatever jurisdictions its roles are in: deactivate or reactivate
- * it (never your own; the API answers 403 `cannot_deactivate_self`), and read the
+ * it where the API says `can_set_active` (never your own, nor a system administrator's:
+ * DIAAT-407), and read the
  * history of its role changes across all jurisdictions. Roles are given elsewhere:
  * jurisdiction administrators under Jurisdictions, the rest by those administrators.
  */
@@ -218,7 +219,7 @@ export function UserAccountsPanel() {
                       )}
                     </TableCell>
                     <TableCell className="text-right align-top">
-                      {user.pending || isMe ? null : confirming === key ? (
+                      {!user.can_set_active ? null : confirming === key ? (
                         <span className="inline-flex gap-1">
                           <Button
                             type="button"

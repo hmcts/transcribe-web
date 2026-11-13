@@ -47,6 +47,7 @@ const person = (over: Partial<AdminUser> & Pick<AdminUser, "id" | "email">): Adm
   name: null,
   is_active: true,
   pending: false,
+  can_set_active: true,
   assignments: [],
   ...over,
 });

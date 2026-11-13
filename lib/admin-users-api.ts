@@ -48,6 +48,11 @@ export interface AdminUser {
   assignments: AdminAssignment[];
   /** Added by email; joins when they first sign in. */
   pending: boolean;
+  /**
+   * Whether the caller may deactivate and reactivate this account (DIAAT-407): false
+   * for their own, a pending row, one out of their reach, and a system administrator's.
+   */
+  can_set_active: boolean;
 }
 
 export interface AdminUserPage {

@@ -46,6 +46,9 @@
  * deactivates and reactivates any account but its own, and reads the role history of
  * every jurisdiction; a jurisdiction administrator deactivates only people whose every
  * role is Judge or LegalTextManager in its jurisdiction, and reads its own history.
+ * Nobody deactivates or reactivates a SystemAdministrator, and the user list's
+ * `can_set_active` says whom the caller may (DIAAT-407). Acting as SystemAdministrator
+ * nobody asks for access.
  * The role history takes `user=<id>` for the changes made to one person.
  *
  * "Tokens" are `mock.<base64url JSON>`: the claims of section 2, unsigned. As in
@@ -362,6 +365,24 @@ const intParam = (value, fallback) => {
  * with their JurisdictionAdministrator assignments only; the system administrator
  * everyone, with their JurisdictionSuperAdministrator assignments only (DIAAT-406).
  */
+function activeChangeRefusal(claims, target) {
+  const perms = permissionsOf(claims);
+  if (!perms.includes("users.manage") && !perms.includes("accounts.manage")) {
+    return [403, "assignment_not_allowed", "You cannot deactivate or reactivate accounts"];
+  }
+  if (target.id === userFor(claims.persona).id) return [403, "cannot_deactivate_self", "You cannot deactivate yourself"];
+  if (!perms.includes("accounts.manage")) {
+    const here = claims.ctx?.jurisdiction?.code;
+    if (!target.assignments.some((p) => p.jurisdiction?.code === here)) return [404, "user_not_found", "No such user"];
+    if (!target.assignments.every((p) => p.jurisdiction?.code === here && REQUESTABLE.includes(p.role))) {
+      return [403, "assignment_not_allowed", "That person holds a role you cannot give"];
+    }
+  }
+  // DIAAT-407: nobody deactivates or reactivates a SystemAdministrator.
+  if (target.sysadmin) return [403, "assignment_not_allowed", "You cannot deactivate or reactivate this account"];
+  return null;
+}
+
 function listUsers(claims, search, jurisdictionFilter, roleFilter) {
   const perms = permissionsOf(claims);
   const shownRole = perms.includes("jurisdiction_super_admin.assign")
@@ -386,14 +407,22 @@ function listUsers(claims, search, jurisdictionFilter, roleFilter) {
     if (!needle && scope !== null && shown.length === 0) continue;
     if (jurisdictionFilter && shown.length === 0 && !needle) continue;
     if (roleFilter && !shown.some((p) => p.role === roleFilter)) continue;
-    rows.push({ id: user.id, email: user.email, name: user.name, is_active: user.is_active, assignments: shown, pending: false });
+    rows.push({
+      id: user.id,
+      email: user.email,
+      name: user.name,
+      is_active: user.is_active,
+      assignments: shown,
+      pending: false,
+      can_set_active: activeChangeRefusal(claims, user) === null,
+    });
   }
   for (const pending of pendingByEmail.values()) {
     if (needle && !pending.email.includes(needle)) continue;
     const shown = view(pending.assignments);
     if (shown.length === 0) continue;
     if (roleFilter && !shown.some((p) => p.role === roleFilter)) continue;
-    rows.push({ id: pending.id, email: pending.email, name: null, is_active: true, assignments: shown, pending: true });
+    rows.push({ id: pending.id, email: pending.email, name: null, is_active: true, assignments: shown, pending: true, can_set_active: false });
   }
   return rows.sort((x, y) => x.email.localeCompare(y.email));
 }
@@ -479,6 +508,8 @@ const server = createServer(async (req, res) => {
   }
 
   if (method === "POST" && path === "/api/access-requests") {
+    // DIAAT-407: in a context, asking needs access.request (the SystemAdministrator context has not got it).
+    if (!permissions.includes("access.request")) return refuse(res, 403, "permission_denied", "Your role does not allow this");
     const body = await readBody(req);
     const jurisdiction = jurisdictions.find((j) => j.code === body.jurisdiction);
     const roles = Array.isArray(body.roles) ? body.roles : [];
@@ -688,18 +719,8 @@ const server = createServer(async (req, res) => {
     if (!needAny("users.manage", "accounts.manage")) return;
     const target = userById(setActive[1]);
     if (!target) return refuse(res, 404, "user_not_found", "No such user");
-    if (target.id === user.id) return refuse(res, 403, "cannot_deactivate_self", "You cannot deactivate yourself");
-    // A super administrator (accounts.manage) deactivates anyone else; a jurisdiction
-    // administrator only someone whose every role is Judge or LegalTextManager there.
-    if (!permissions.includes("accounts.manage")) {
-      const here = claims.ctx?.jurisdiction?.code;
-      if (!target.assignments.some((p) => p.jurisdiction?.code === here)) {
-        return refuse(res, 404, "user_not_found", "No such user");
-      }
-      if (target.sysadmin || !target.assignments.every((p) => p.jurisdiction?.code === here && REQUESTABLE.includes(p.role))) {
-        return notAllowed(res, "That person holds a role you cannot give");
-      }
-    }
+    const refusal = activeChangeRefusal(claims, target);
+    if (refusal) return refuse(res, ...refusal);
     target.is_active = setActive[2] === "reactivate";
     recordChange(claims, target.is_active ? "user.reactivated" : "user.deactivated", target, claims.ctx?.jurisdiction?.code ?? null, null);
     return send(res, 204);
