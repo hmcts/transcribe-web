@@ -52,7 +52,12 @@ async function jurisdictionRequest<T>(
 ): Promise<T> {
   const response = await apiClient.request<T>(endpoint, options);
   if (response.error)
-    throw new AdminApiError(response.error, response.status, response.code);
+    throw new AdminApiError(
+      response.error,
+      response.status,
+      response.code,
+      response.problems
+    );
   return response.data as T;
 }
 

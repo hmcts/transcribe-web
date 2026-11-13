@@ -1357,4 +1357,60 @@ describe("A template's history, and going back (DIAAT-348)", () => {
     // Still live, with the sign-off it had: who can choose it is unchanged.
     expect(within(reopened).getByText(/Signed off by A Lead/)).toBeTruthy();
   });
+
+  it("locks the fields, the list and uploads until going back is done", async () => {
+    serveHistory();
+    const routes = request.getMockImplementation();
+    if (!routes) throw new Error("serveHistory() sets the fake API");
+    let answerRestore: () => void = () => undefined;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if (endpoint.endsWith("/restore"))
+          await new Promise<void>((resolve) => {
+            answerRestore = resolve;
+          });
+        return routes(endpoint, options);
+      }
+    );
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const history = screen.getByRole("region", { name: "History" });
+    await user.click(
+      within(history).getByRole("button", { name: "Show who changed what" })
+    );
+    await user.click(
+      await within(history).findByRole("button", {
+        name: "Go back to version 1",
+      })
+    );
+    await user.click(
+      within(history).getByRole("button", {
+        name: "Confirm: go back to version 1",
+      })
+    );
+
+    // Edits made now would be dropped when the field list reopens.
+    expect(
+      within(fields).getByDisplayValue("Broken").matches(":disabled")
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "ET judgment" }).matches(":disabled")
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: /Upload a Word template/ })
+        .matches(":disabled")
+    ).toBe(true);
+    answerRestore();
+
+    // The field list reopens (a new one) from the API's copy, open to edits again.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("region", { name: "Fields of ET judgment" }))
+          .getByLabelText(/^Name judges/)
+          .matches(":disabled")
+      ).toBe(false)
+    );
+    expect(screen.queryByDisplayValue("Broken")).toBeNull();
+  });
 });

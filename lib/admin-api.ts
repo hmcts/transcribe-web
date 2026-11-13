@@ -20,12 +20,14 @@ export type { AnonymityStatus, DocumentContent, HearingType, LegalFramework };
 // Admin API functions
 // ---------------------------------------------------------------------------
 
-/** A refusal from the API: its message, HTTP status and ``detail.code``. */
+/** A refusal from the API: its message, HTTP status, ``detail.code`` and what it lists
+ * as missing (``detail.problems``), when it does. */
 export class AdminApiError extends Error {
   constructor(
     message: string,
     readonly status?: number,
-    readonly code?: string
+    readonly code?: string,
+    readonly problems: string[] = []
   ) {
     super(message);
     this.name = "AdminApiError";

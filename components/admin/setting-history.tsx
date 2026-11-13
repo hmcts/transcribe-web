@@ -3,6 +3,7 @@
 import { History, Loader2, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
+import { AdminApiError } from "@/lib/admin-api";
 import { type HistoryVersion, settingName, valueText } from "@/lib/history-api";
 import { TemplateRefusedError } from "@/lib/templates-api";
 
@@ -20,7 +21,10 @@ interface Failure {
 function failureOf(err: unknown): Failure {
   return {
     message: err instanceof Error ? err.message : "Something went wrong",
-    problems: err instanceof TemplateRefusedError ? err.problems : [],
+    problems:
+      err instanceof TemplateRefusedError || err instanceof AdminApiError
+        ? err.problems
+        : [],
   };
 }
 
@@ -77,6 +81,9 @@ export function SettingHistory({
   useEffect(() => {
     if (!open) return;
     const asked = ++latest.current;
+    // The old history's buttons would go back from a version no longer current.
+    setVersions(null);
+    setConfirming(null);
     setFailure(null);
     load().then(
       (loaded) => {

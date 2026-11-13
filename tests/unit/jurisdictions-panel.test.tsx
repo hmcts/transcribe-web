@@ -587,6 +587,7 @@ describe("JurisdictionsPanel", () => {
     const jurisdictions = request.getMockImplementation();
     if (!jurisdictions) throw new Error("serve() sets the fake API");
     let restored = false;
+    let answerRestore: () => void = () => undefined;
     const RESTORED = { ...ET, stage: "live" as const, version: "restored" };
     request.mockImplementation(async (endpoint: string, options?: RequestInit) => {
       if (endpoint === "/admin/jurisdictions/ET/history")
@@ -615,10 +616,14 @@ describe("JurisdictionsPanel", () => {
           },
         };
       if (endpoint === "/admin/jurisdictions/ET/history/1/restore" && options?.method === "POST") {
+        await new Promise<void>((resolve) => {
+          answerRestore = resolve;
+        });
         restored = true;
         return { data: RESTORED };
       }
-      if (endpoint === "/admin/jurisdictions" && restored) return { data: [RESTORED] };
+      // The editor reopens from the restore's answer, not from a reload.
+      if (endpoint === "/admin/jurisdictions" && restored) return { error: "Service unavailable", status: 503 };
       return jurisdictions(endpoint, options);
     });
     const user = userEvent.setup();
@@ -633,11 +638,20 @@ describe("JurisdictionsPanel", () => {
     await user.click(within(history).getByRole("button", { name: "Go back to version 1" }));
     await user.click(within(history).getByRole("button", { name: "Confirm: go back to version 1" }));
 
+    // Nothing can be edited or saved meanwhile: the editor reopens when it is done.
+    expect(screen.getByLabelText("Under the service name").matches(":disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "Save" })).toHaveProperty("disabled", true);
+    expect(screen.getByRole("button", { name: "Discard changes" })).toHaveProperty("disabled", true);
+    answerRestore();
     await waitFor(() => expect(toast.success).toHaveBeenCalledWith("ET is back to version 1."));
     const restore = request.mock.calls.find(([endpoint]) => endpoint.endsWith("/restore"));
     expect(JSON.parse(String(restore?.[1]?.body))).toEqual({ version: ET.version });
-    // The editor reopens from the server's copy.
+    // The editor reopens from the server's copy, with its version for the next save.
     await waitFor(() => expect(screen.getByLabelText("Under the service name")).toHaveProperty("value", "Employment Tribunal"));
+    expect(screen.getByLabelText("Under the service name").matches(":disabled")).toBe(false);
+    await user.click(screen.getByRole("button", { name: "Save" }));
+    const save = request.mock.calls.find(([endpoint, options]) => endpoint === "/admin/jurisdictions/ET" && options?.method === "PUT");
+    expect(JSON.parse(String(save?.[1]?.body)).version).toBe("restored");
   });
 
   describe("by permission", () => {
