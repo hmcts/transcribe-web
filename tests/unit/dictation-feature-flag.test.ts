@@ -67,6 +67,7 @@ describe("proxy Dictation gate (DIAAT-366, DIAAT-392)", () => {
 
     describe("and Dictation is off", () => {
       it.each([
+        "/decisions",
         "/record",
         "/record?mode=mic",
         "/record/anything",

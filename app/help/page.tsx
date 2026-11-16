@@ -86,7 +86,9 @@ export default function HelpPage() {
             <h3 id="hearing-details-form">Templates and hearing details</h3>
             <p>
               Your jurisdiction&apos;s templates are set up in BenchNotes by its
-              administrators. Choose one under <strong>Hearing details</strong>{" "}
+              administrators. From the home page, select{" "}
+              <strong>Decisions</strong>, then <strong>Record a decision</strong>.
+              Choose a template under <strong>Hearing details</strong>{" "}
               and answer its questions: some, such as the hearing type, legal
               issues or anonymity, offer your jurisdiction&apos;s own wording.
               Your answers are saved with your dictation as you go.
@@ -108,7 +110,10 @@ export default function HelpPage() {
               <p>
                 Submitting a hearing fills the template with your answers and
                 your dictation, section by section, and generates a Word
-                document. Documents are available for download for 24 hours.
+                document. When processing finishes, go to{" "}
+                <strong>Decisions</strong> and choose{" "}
+                <strong>Download document</strong> for the hearing; documents
+                are available for 24 hours.
                 With no template, copy your text into your own document
                 instead.
               </p>

@@ -59,6 +59,7 @@ import {
   trackDictationPage,
 } from "@/lib/dictation-session";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
+import { DECISIONS_HREF } from "@/lib/navigation";
 import {
   liveTranscriptionSubmissionResponseSchema,
   normalizeOptionalEditorText,
@@ -787,7 +788,7 @@ export default function RecordPage() {
         // draft, to be offered for restore on the next visit.
         await stopDraftSaves();
         await deleteLiveDraft().catch(console.warn);
-        router.push("/");
+        router.push(DECISIONS_HREF);
         return data;
       } catch (error) {
         // Not after a reported success (clean-up after it failed instead).
