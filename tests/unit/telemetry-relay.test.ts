@@ -49,6 +49,27 @@ describe("TelemetryRelay", () => {
     expect(relay.pending).toBe(0);
   });
 
+  it("keeps each batch within the relay's limit in bytes, not characters", async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(response(202));
+    const relay = new TelemetryRelay({ fetchImpl, flushDelayMs: 1000 });
+    // 500 characters, 1,500 bytes each: 25 fit in 30,000 characters but not bytes.
+    for (let i = 0; i < 25; i += 1) {
+      relay.emit({ name: "ui.error", attributes: { "ui.route": "€".repeat(500) } });
+    }
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    const bodies = fetchImpl.mock.calls.map(
+      ([, init]) => (init as RequestInit).body as string
+    );
+    expect(bodies.length).toBeGreaterThan(1);
+    for (const sent of bodies) {
+      expect(new TextEncoder().encode(sent).length).toBeLessThanOrEqual(30_000);
+    }
+    expect(sentBodies(fetchImpl).flat()).toHaveLength(25);
+  });
+
   it("leaves out null, undefined and non-finite values, which would fail the whole batch", async () => {
     const fetchImpl = vi.fn().mockResolvedValue(response(202));
     const relay = new TelemetryRelay({ fetchImpl });

@@ -64,6 +64,12 @@ const FLUSH_DELAY_MS = 5_000;
 const MAX_RETRY_DELAY_MS = 60_000;
 /** Browsers allow 64 KiB of in-flight keepalive bodies per page. */
 const KEEPALIVE_BUDGET_BYTES = 60_000;
+/** Bytes as sent (UTF-8): the limits above are in bytes, and a string's length
+ * counts UTF-16 units, under the size of any text that is not ASCII. */
+const encoder = new TextEncoder();
+function byteLength(text: string): number {
+  return encoder.encode(text).length;
+}
 /** The relay's upper bound for duration_ms (24 h): above it the batch is refused. */
 const MAX_DURATION_MS = 86_400_000;
 /** Before events were kept per account: whose they are is unknown, so dropped. */
@@ -222,9 +228,9 @@ export class TelemetryRelay {
   /** Take up to MAX_BATCH events within MAX_BODY_BYTES from the queue. */
   private takeBatch(): WireEvent[] {
     const batch: WireEvent[] = [];
-    let size = body([]).length;
+    let size = byteLength(body([]));
     while (this.queue.length > 0 && batch.length < MAX_BATCH) {
-      const eventSize = JSON.stringify(this.queue[0]).length + 1;
+      const eventSize = byteLength(JSON.stringify(this.queue[0])) + 1;
       if (size + eventSize > MAX_BODY_BYTES) {
         if (batch.length === 0)
           this.queue.shift(); // can never be sent
@@ -297,13 +303,14 @@ export class TelemetryRelay {
     }
     let outcome: "sent" | "drop" | "retry" | "unauthorised" = "retry";
     const payload = body(batch);
+    const payloadBytes = byteLength(payload);
     // keepalive: the request survives the page being closed while it is in
     // flight. Only within the budget left by other keepalive requests (e.g. a
     // page-hide flush just before the page was shown again): over it, the
     // browser would refuse the request.
     const keepalive =
-      payload.length <= KEEPALIVE_BUDGET_BYTES - this.keepaliveInFlight;
-    if (keepalive) this.keepaliveInFlight += payload.length;
+      payloadBytes <= KEEPALIVE_BUDGET_BYTES - this.keepaliveInFlight;
+    if (keepalive) this.keepaliveInFlight += payloadBytes;
     try {
       const response = await this.fetchImpl()(RELAY_PATH, {
         method: "POST",
@@ -319,7 +326,7 @@ export class TelemetryRelay {
       outcome = "retry"; // network failure
     } finally {
       this.inFlight = false;
-      if (keepalive) this.keepaliveInFlight -= payload.length;
+      if (keepalive) this.keepaliveInFlight -= payloadBytes;
     }
 
     if (owner !== this.account) {
@@ -364,7 +371,8 @@ export class TelemetryRelay {
         const batch = this.takeBatch();
         if (batch.length === 0) break;
         const payload = body(batch);
-        if (payload.length > KEEPALIVE_BUDGET_BYTES - this.keepaliveInFlight) {
+        const payloadBytes = byteLength(payload);
+        if (payloadBytes > KEEPALIVE_BUDGET_BYTES - this.keepaliveInFlight) {
           this.enqueue(batch, true);
           this.persist(this.queue.splice(0));
           break;
@@ -383,7 +391,7 @@ export class TelemetryRelay {
           this.persist(this.queue.splice(0));
           break;
         }
-        this.keepaliveInFlight += payload.length;
+        this.keepaliveInFlight += payloadBytes;
         // A failed send is kept: in storage while the page is hidden (it may be
         // unloading), otherwise queued again for the normal retry.
         void request
@@ -398,7 +406,7 @@ export class TelemetryRelay {
           })
           .catch(() => this.keepAfterHide(batch, undefined, owner))
           .finally(() => {
-            this.keepaliveInFlight -= payload.length;
+            this.keepaliveInFlight -= payloadBytes;
           });
       }
     } catch {

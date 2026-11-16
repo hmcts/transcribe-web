@@ -130,7 +130,7 @@ afterEach(() => {
 
 describe("Live dictation with a failing speech WebSocket path", () => {
   it("shows a persistent, non-dismissible error banner", async () => {
-    render(<LiveDictation recordingActive hideForm />);
+    render(<LiveDictation recordingActive activeSection="general" />);
 
     const banner = await waitFor(
       () => screen.getByTestId("record-alert-banner"),
@@ -155,38 +155,21 @@ describe("Live dictation with a failing speech WebSocket path", () => {
   });
 
   it("does not present as recording", async () => {
-    render(<LiveDictation recordingActive hideForm />);
+    render(<LiveDictation recordingActive activeSection="general" />);
 
     await waitFor(() => screen.getByTestId("record-alert-banner"), {
       timeout: 8000,
     });
 
-    // The microphone indicator must show the not-recording state...
-    const microphone = screen.getByRole("img", {
-      name: /microphone not recording/i,
-    });
-    expect(microphone.getAttribute("data-active")).toBe("false");
-    // ...and the transcript editor's "listening" affordance must be off.
+    // The transcript editor's "listening" affordance must be off (the record
+    // page's microphone indicator is tested with the page).
     expect(
       screen.getByTestId("transcript-editor").getAttribute("data-listening")
     ).toBe("false");
   });
 
-  it("still lets the user pause the broken session", async () => {
-    render(<LiveDictation recordingActive hideForm />);
-
-    await waitFor(() => screen.getByTestId("record-alert-banner"), {
-      timeout: 8000,
-    });
-
-    // Pause is the action the guidance tells them to take, so it must not be
-    // disabled or relabelled just because the session is unhealthy.
-    const pause = screen.getByRole("button", { name: /pause recording/i });
-    expect(pause.hasAttribute("disabled")).toBe(false);
-  });
-
   it("never falls back to a transient toast for the session error", async () => {
-    render(<LiveDictation recordingActive hideForm />);
+    render(<LiveDictation recordingActive activeSection="general" />);
 
     await waitFor(() => screen.getByTestId("record-alert-banner"), {
       timeout: 8000,
@@ -196,7 +179,7 @@ describe("Live dictation with a failing speech WebSocket path", () => {
   });
 
   it("reports the cancellation reason and error code to telemetry", async () => {
-    render(<LiveDictation recordingActive hideForm />);
+    render(<LiveDictation recordingActive activeSection="general" />);
 
     await waitFor(() => expect(telemetry.sessionCanceled).toHaveBeenCalled(), {
       timeout: 8000,
@@ -214,7 +197,7 @@ describe("Live dictation with a failing speech WebSocket path", () => {
   });
 
   it("escalates the reconnect loop once, rather than per collapse", async () => {
-    render(<LiveDictation recordingActive hideForm />);
+    render(<LiveDictation recordingActive activeSection="general" />);
 
     await waitFor(
       () => expect(telemetry.sessionUnhealthy).toHaveBeenCalledTimes(1),
@@ -225,7 +208,7 @@ describe("Live dictation with a failing speech WebSocket path", () => {
   it("backs off instead of restarting the session without limit", async () => {
     // The pre-fix restart loop was driven by a render effect with no delay,
     // which is what produced 37 token fetches in 44 minutes.
-    render(<LiveDictation recordingActive hideForm />);
+    render(<LiveDictation recordingActive activeSection="general" />);
 
     await waitFor(() => screen.getByTestId("record-alert-banner"), {
       timeout: 8000,

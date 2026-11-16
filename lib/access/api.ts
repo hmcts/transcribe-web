@@ -139,7 +139,6 @@ export function withdrawAccessRequest(id: string): Promise<AccessRequest> {
 export interface CurrentJurisdictionResponse {
   code: string;
   name: string;
-  template: "iac_decision" | null;
   features: { hearing_recordings: boolean };
   wording: Wording;
 }

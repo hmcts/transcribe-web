@@ -20,8 +20,6 @@ export function stageNote(stage: JurisdictionStage | undefined): string | null {
 export interface CurrentJurisdiction {
   code: string;
   name: string;
-  /** "iac_decision": the IAC hearing form and decision; null: general section only. */
-  template: "iac_decision" | null;
   features: { hearing_recordings: boolean };
   wording: Wording;
 }

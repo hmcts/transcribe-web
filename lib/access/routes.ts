@@ -18,7 +18,6 @@ export interface RoutePermission {
 export const ROUTE_PERMISSIONS: RoutePermission[] = [
   { prefix: "/record", anyOf: ["dictation.use"], staysAfterSwitch: true },
   { prefix: "/upload", anyOf: ["dictation.use"], staysAfterSwitch: true },
-  { prefix: "/speech-demo", anyOf: ["dictation.use"] },
   { prefix: "/recording", anyOf: ["recording.own"], staysAfterSwitch: true },
   { prefix: "/admin", anyOf: ["admin.access"], staysAfterSwitch: true },
   {

@@ -30,14 +30,13 @@ import {
 const fetchCurrent = vi.mocked(fetchCurrentJurisdiction);
 
 function Probe() {
-  const { current, hasDecisionTemplate, hasHearingRecordings, resolved, jurisdictions } =
+  const { current, hasHearingRecordings, resolved, jurisdictions } =
     useJurisdiction();
   const wording = useWording();
   return (
     <div>
       <p>material for {current?.code}</p>
       <p>{wording("records.column_title")}</p>
-      <p>template: {String(hasDecisionTemplate)}</p>
       <p>recordings: {String(hasHearingRecordings)}</p>
       <p>resolved: {String(resolved)}</p>
       <p>jurisdictions: {jurisdictions.map((j) => j.code).join(",")}</p>
@@ -118,7 +117,6 @@ describe("JurisdictionProvider", () => {
 
     expect(await screen.findByText("material for IAC")).toBeTruthy();
     expect(screen.getByText("Hearing")).toBeTruthy();
-    expect(screen.getByText("template: true")).toBeTruthy();
     expect(screen.getByText("recordings: true")).toBeTruthy();
     expect(screen.getByText("jurisdictions: IAC")).toBeTruthy();
   });
@@ -130,7 +128,6 @@ describe("JurisdictionProvider", () => {
     expect(await screen.findByText("material for ET")).toBeTruthy();
     expect(screen.getByText("Title")).toBeTruthy();
     expect(screen.queryByText("Hearing")).toBeNull();
-    expect(screen.getByText("template: false")).toBeTruthy();
     expect(screen.getByText("recordings: false")).toBeTruthy();
   });
 
@@ -139,7 +136,6 @@ describe("JurisdictionProvider", () => {
     renderProvider();
 
     expect(await screen.findByText("resolved: true")).toBeTruthy();
-    expect(screen.getByText("template: false")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 

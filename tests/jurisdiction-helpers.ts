@@ -22,16 +22,14 @@ export const IAC = iac as CurrentJurisdiction;
 export const ET: CurrentJurisdiction = {
   code: "ET",
   name: "Employment Tribunal",
-  template: null,
   features: { hearing_recordings: false },
   wording: {},
 };
 
-/** A jurisdiction other than the IAC that uses the decision template (DIAAT-342). */
+/** A jurisdiction other than the IAC (DIAAT-342). */
 export const DT: CurrentJurisdiction = {
   code: "DT",
   name: "Decision Tribunal",
-  template: "iac_decision",
   features: { hearing_recordings: false },
   wording: {},
 };

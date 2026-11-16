@@ -18,6 +18,7 @@ import {
 import {
   type AvailableTemplate,
   hasAnswers,
+  hiddenFields,
   ownValue,
   type TemplateFormField,
   type TemplateValue,
@@ -27,7 +28,8 @@ import {
 /**
  * The Hearing Details form of an uploaded template (DIAAT-344): the judge chooses one
  * of the jurisdiction's templates, and fills the fields its admin set up, in their
- * order. BenchNotes fills the rest (the jurisdiction, the year, the judgment).
+ * order. BenchNotes fills the rest (the jurisdiction, the year, the judgment). A
+ * question asked only after another's answer is shown once that answer is given.
  */
 
 function RequiredIndicator() {
@@ -55,6 +57,7 @@ export function TemplateForm({
   onValuesChange,
   errors,
   onClear,
+  startingValues = {},
   headingLevel = 2,
 }: {
   templates: AvailableTemplate[];
@@ -65,6 +68,8 @@ export function TemplateForm({
   errors: Record<string, string>;
   /** Discard every answer (a dropdown or yes/no cannot be unanswered otherwise). */
   onClear: () => void;
+  /** What questions start with until the judge answers (the judge's name...). */
+  startingValues?: TemplateValues;
   /** Its heading's level: 5 inside the admin area's preview (DIAAT-346). */
   headingLevel?: 2 | 5;
 }) {
@@ -72,6 +77,11 @@ export function TemplateForm({
   const Heading = headingLevel === 5 ? "h5" : "h2";
   const set = (tag: string, value: TemplateValue | undefined) =>
     onValuesChange({ ...values, [tag]: value });
+  const shown = (tag: string) =>
+    Object.hasOwn(values, tag)
+      ? ownValue(values, tag)
+      : ownValue(startingValues, tag);
+  const hidden = hiddenFields(template, { ...startingValues, ...values });
 
   return (
     <form className="space-y-6" noValidate onSubmit={(e) => e.preventDefault()}>
@@ -106,15 +116,17 @@ export function TemplateForm({
         )}
       </div>
 
-      {template.fields.map((field) => (
-        <TemplateFieldInput
-          key={`${template.id}:${field.tag}`}
-          field={field}
-          value={ownValue(values, field.tag)}
-          error={ownValue(errors, field.tag)}
-          onChange={(value) => set(field.tag, value)}
-        />
-      ))}
+      {template.fields
+        .filter((field) => !hidden.has(field.tag))
+        .map((field) => (
+          <TemplateFieldInput
+            key={`${template.id}:${field.tag}`}
+            field={field}
+            value={shown(field.tag)}
+            error={ownValue(errors, field.tag)}
+            onChange={(value) => set(field.tag, value)}
+          />
+        ))}
     </form>
   );
 }
@@ -231,7 +243,9 @@ function TemplateFieldInput({
           onChange={(v) => onChange(v || undefined)}
           {...a11y}
         />
-      ) : field.type === "dropdown" ? (
+      ) : field.type === "dropdown" ||
+        field.type === "hearing_type" ||
+        field.type === "anonymity" ? (
         <Select
           value={typeof value === "string" ? value : ""}
           onValueChange={onChange}

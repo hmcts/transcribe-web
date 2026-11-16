@@ -1,5 +1,5 @@
 import type {
-  SectionedTranscript,
+  StoredTranscript,
   TranscriptEntry,
 } from "@/components/audio/dictation/types";
 
@@ -249,9 +249,9 @@ export const redactTranscriptEntry = (
 });
 
 export const redactSectionedTranscript = (
-  transcript: SectionedTranscript,
+  transcript: StoredTranscript,
   context: TranscriptRedactionContext = {}
-): SectionedTranscript => ({
+): StoredTranscript => ({
   background: transcript.background.map((entry) =>
     redactTranscriptEntry(entry, context)
   ),

@@ -3,7 +3,7 @@
 import { format, formatDistanceToNow, isToday, isYesterday } from "date-fns";
 import React from "react";
 import { toast } from "sonner";
-import type { SectionedTranscript } from "@/components/audio/dictation/types";
+import type { StoredTranscript } from "@/components/audio/dictation/types";
 import { MeetingsDataTable } from "@/components/meetings-table/data-table";
 import { TranscriptSheet } from "@/components/meetings-table/transcript-sheet";
 import {
@@ -52,11 +52,11 @@ interface MeetingsListProps {
 }
 
 interface TranscriptViewerResponse {
-  messages: SectionedTranscript;
+  messages: StoredTranscript;
   appellantName?: string | null;
 }
 
-const EMPTY_SECTIONED_TRANSCRIPT: SectionedTranscript = {
+const EMPTY_SECTIONED_TRANSCRIPT: StoredTranscript = {
   background: [],
   evidence: [],
   facts: [],
@@ -64,7 +64,7 @@ const EMPTY_SECTIONED_TRANSCRIPT: SectionedTranscript = {
 
 const buildFallbackTranscript = (
   entries: DialogueEntry[]
-): SectionedTranscript => ({
+): StoredTranscript => ({
   background: entries.map((entry) => {
     const timestampMs =
       typeof entry.start_time === "number"
@@ -93,7 +93,7 @@ function MeetingsList({ isLoading, meetings }: MeetingsListProps) {
   const [meetingToPreview, setMeetingToPreview] =
     React.useState<MeetingRow | null>(null);
   const [previewTranscript, setPreviewTranscript] =
-    React.useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
+    React.useState<StoredTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
   const [previewAppellantName, setPreviewAppellantName] = React.useState<
     string | null
   >(null);
@@ -185,7 +185,7 @@ function MeetingsList({ isLoading, meetings }: MeetingsListProps) {
 
       try {
         const sectionedTranscriptResponse = await apiClient.request<
-          SectionedTranscript | TranscriptViewerResponse
+          StoredTranscript | TranscriptViewerResponse
         >(`/transcriptions/${meeting.id}/sectioned-transcript`);
 
         if (sectionedTranscriptResponse.data) {

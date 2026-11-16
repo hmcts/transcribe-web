@@ -1,10 +1,13 @@
 import { htmlToText } from "html-to-text";
-import type {
-  SectionedTranscript,
-  TranscriptSection,
-} from "@/components/audio/dictation/types";
+import type { SectionedTranscript } from "@/components/audio/dictation/types";
 
-const SECTION_ORDER: TranscriptSection[] = ["background", "evidence", "facts"];
+/** Every section's dictation, in the order the sections were made. */
+function dictatedTexts(transcript: SectionedTranscript): string[] {
+  return Object.values(transcript)
+    .flat()
+    .map((entry) => entry.text.trim())
+    .filter(Boolean);
+}
 
 /** The text of the judge's notes ("" if they are blank): paragraphs, line breaks,
  * bullets and list numbers kept; headings as written; empty items dropped. */
@@ -35,11 +38,7 @@ export function dictationText(
   transcript: SectionedTranscript,
   notesHtml: string
 ): string {
-  const dictated = SECTION_ORDER.flatMap((section) =>
-    transcript[section].map((entry) => entry.text.trim())
-  )
-    .filter(Boolean)
-    .join("\n");
+  const dictated = dictatedTexts(transcript).join("\n");
   const notes = notesText(notesHtml);
   return [dictated, notes].filter(Boolean).join("\n\n");
 }
@@ -63,10 +62,7 @@ export function dictationHtml(
   transcript: SectionedTranscript,
   notesHtml: string
 ): string {
-  const dictated = SECTION_ORDER.flatMap((section) =>
-    transcript[section].map((entry) => entry.text.trim())
-  )
-    .filter(Boolean)
+  const dictated = dictatedTexts(transcript)
     .map((text) => `<p>${escapeHtmlKeepingLineBreaks(text)}</p>`)
     .join("");
   return notesText(notesHtml) ? `${dictated}${notesHtml}` : dictated;

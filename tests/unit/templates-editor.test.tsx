@@ -114,6 +114,9 @@ const formOf = (template: AdminTemplate): AvailableTemplate => ({
   id: template.id,
   name: template.name,
   service: template.service,
+  sections: template.fields
+    .filter((f) => f.type === "dictated")
+    .map((f) => ({ tag: f.tag, label: f.label })),
   fields: template.fields.flatMap((f) =>
     f.type === "dictated" || f.type === "benchnotes"
       ? []
@@ -253,7 +256,7 @@ describe("TemplatesEditor", () => {
     ).toBe("Reference");
     expect(within(fields).getByText("Box Reference, 2 places")).toBeTruthy();
     expect(
-      within(fields).getByText("The judge's dictated judgment")
+      within(fields).getByText(/A section the judge dictates into/)
     ).toBeTruthy();
     expect(
       (
@@ -326,6 +329,101 @@ describe("TemplatesEditor", () => {
       label: "Case number",
       required: false,
       options: [],
+    });
+  });
+
+  it("asks a question only after an answer, starts it with the judge's name and sets its empty text", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", { name: "When to ask Reference" })
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Only after an answer to Party1Title",
+      })
+    );
+    await user.click(within(fields).getByLabelText("Respondent"));
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "What Reference starts with",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "The judge's name, for the judge to change",
+      })
+    );
+    await user.click(
+      within(fields).getByLabelText(
+        "What Party1Title's box prints when left empty"
+      )
+    );
+    await user.paste("Not known");
+    // Only a text question can start with something.
+    expect(
+      within(fields).queryByRole("combobox", {
+        name: "What Party1Title starts with",
+      })
+    ).toBeNull();
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    const [saved] = puts();
+    expect(saved.fields[0]).toMatchObject({
+      tag: "Reference",
+      show_when: { tag: "Party1Title", answers: ["Respondent"] },
+      prefill: "judge_name",
+    });
+    expect(saved.fields[1]).toMatchObject({ empty_text: "Not known" });
+  });
+
+  it("offers the Document Content answers of a question asked from it", async () => {
+    const withHearing: AdminTemplate = {
+      ...UPLOADED,
+      fields: UPLOADED.fields.map((f) =>
+        f.tag === "Party1Title"
+          ? { ...f, label: "Hearing type", type: "hearing_type", options: [] }
+          : f
+      ),
+    };
+    serve([withHearing], undefined, undefined, {
+      data: {
+        ...formOf(withHearing),
+        fields: [
+          {
+            tag: "Party1Title",
+            label: "Hearing type",
+            type: "hearing_type",
+            required: true,
+            options: [
+              { value: "cvp", label: "CVP" },
+              { value: "papers", label: "On the papers" },
+            ],
+          },
+        ],
+      },
+    });
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", { name: "When to ask Reference" })
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Only after an answer to Hearing type",
+      })
+    );
+    await user.click(await within(fields).findByLabelText("CVP"));
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0].show_when).toEqual({
+      tag: "Party1Title",
+      answers: ["cvp"],
     });
   });
 

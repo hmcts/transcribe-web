@@ -4,12 +4,20 @@ import {
   LiveDraftError,
   classifyLiveDraftStatus,
 } from "@/lib/live-draft-errors";
-import type { DictationFormValues } from "@/components/audio/dictation/formData";
 import type { SectionedTranscript } from "@/components/audio/dictation/types";
+import type { TemplateValues } from "@/lib/templates-api";
+
+/** What the draft keeps besides the dictation: the template chosen, its answers and
+ * the notes. A draft from before templates holds the IAC form's fields instead. */
+export interface DraftFormData {
+  template_id?: string;
+  values?: TemplateValues;
+  notes?: string;
+}
 
 export interface LiveDraftApiResponse {
   transcript: SectionedTranscript;
-  form_data: Partial<DictationFormValues>;
+  form_data: DraftFormData;
   saved_at: string; // ISO datetime from backend
 }
 
@@ -95,7 +103,7 @@ export async function getLiveDraft(): Promise<LiveDraftApiResponse | null> {
 
 export async function putLiveDraft(
   transcript: SectionedTranscript,
-  formData: Partial<DictationFormValues>,
+  formData: DraftFormData,
   timeoutMs: number = LIVE_DRAFT_SAVE_TIMEOUT_MS
 ): Promise<void> {
   // The deadline covers the token lookup too, which can also stall.
