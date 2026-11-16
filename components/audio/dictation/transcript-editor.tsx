@@ -147,7 +147,9 @@ export default function TranscriptEditor({
     ];
 
     for (const section of order) {
-      const entries = sectionedTranscript[section] ?? [];
+      const entries = Object.hasOwn(sectionedTranscript, section)
+        ? sectionedTranscript[section] ?? []
+        : [];
       if (entries.length === 0) continue;
 
       const groups: SectionMessageGroup[] = [];
