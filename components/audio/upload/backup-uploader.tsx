@@ -209,7 +209,7 @@ function BackupUploader({
                 variant="outline"
                 className="min-h-[44px] w-auto px-6 py-2 font-medium shadow-sm transition-all duration-200 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 motion-safe:hover:scale-105 motion-safe:active:scale-95 md:text-lg"
               >
-                Return to Home
+                Return to Decisions
               </Button>
               <Button
                 onClick={handleRetryUpload}
