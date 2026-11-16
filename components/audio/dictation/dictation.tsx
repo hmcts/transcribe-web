@@ -296,7 +296,10 @@ export default function LiveDictation({
 
       setSectionedTranscript((prev: SectionedTranscript) => ({
         ...prev,
-        [targetSection]: [...(prev[targetSection] ?? []), newEntry],
+        [targetSection]: [
+          ...(Object.hasOwn(prev, targetSection) ? prev[targetSection] ?? [] : []),
+          newEntry,
+        ],
       }));
 
       delete segmentSectionMapRef.current[segment.id];
