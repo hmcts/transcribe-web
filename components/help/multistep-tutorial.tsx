@@ -685,7 +685,7 @@ const quickStartSteps: QuickStartStep[] = [
     id: "download",
     title: "Download document",
     instruction:
-      "After processing finishes, return to the home page and choose Download document for the hearing you want.",
+      "After processing finishes, go to Decisions and choose Download document for the hearing you want.",
     Illustration: DownloadIllustration,
   },
 ];
@@ -830,7 +830,7 @@ export function MultistepTutorial() {
             </p>
             <div
               role="img"
-              aria-label="Illustration of the home page with the Download document option"
+              aria-label="Illustration of the Decisions page with the Download document option"
               data-quick-start-illustration={quickStartSteps[4].id}
             >
               <DownloadIllustration />

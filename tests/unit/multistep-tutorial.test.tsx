@@ -55,4 +55,22 @@ describe("MultistepTutorial", () => {
       )
     ).toBeTruthy();
   });
+
+  it("sends the user to Decisions to download the document (DIAAT-400)", () => {
+    const { container } = render(<MultistepTutorial />);
+    for (let step = 0; step < 4; step += 1) {
+      fireEvent.click(screen.getAllByRole("button", { name: /Go to next step/ })[0]);
+    }
+
+    expect(
+      screen.getByText(
+        "After processing finishes, go to Decisions and choose Download document for the hearing you want."
+      )
+    ).toBeTruthy();
+    expect(
+      container
+        .querySelector('[data-quick-start-illustration="download"]')
+        ?.getAttribute("aria-label")
+    ).toBe("Illustration of the Decisions page with the Download document option");
+  });
 });
