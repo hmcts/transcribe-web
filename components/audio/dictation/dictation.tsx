@@ -38,6 +38,7 @@ import { useRealtimeTranscription } from "@/hooks/use-realtime-transcription";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
 import { submitDictation } from "@/lib/dictation-submission";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
+import { DECISIONS_HREF } from "@/lib/navigation";
 import { isCapturingSpeech } from "@/lib/speech-session-health";
 import cn, { getJudgeNameFromEmail } from "@/lib/utils";
 import { useWording } from "@/providers/jurisdiction";
@@ -509,7 +510,7 @@ export default function LiveDictation({
           { mode: "mic" }
         );
 
-        router.push("/");
+        router.push(DECISIONS_HREF);
 
         return data;
       } finally {

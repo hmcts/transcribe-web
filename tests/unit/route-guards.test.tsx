@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import AdminLayout from "@/app/admin/layout";
+import DecisionsLayout from "@/app/decisions/layout";
 import RecordLayout from "@/app/record/layout";
 import RecordingLayout from "@/app/recording/layout";
 import UploadLayout from "@/app/upload/layout";
@@ -34,6 +35,7 @@ afterEach(() => {
 type Layout = (props: { children: React.ReactNode }) => React.ReactNode;
 
 const AREAS: [string, Layout, string][] = [
+  ["/decisions", DecisionsLayout as Layout, "dictation"],
   ["/record", RecordLayout as Layout, "dictation"],
   ["/upload", UploadLayout as Layout, "dictation"],
   ["/speech-demo", SpeechDemoLayout as Layout, "dictation"],
@@ -44,7 +46,7 @@ const AREAS: [string, Layout, string][] = [
 
 // Which areas each persona may open, as the permissions the API gave them say.
 const OPENS: [string, MeResponse, string[]][] = [
-  ["a judge", ME.judge, ["/record", "/upload", "/speech-demo", "/recording", "/request-access"]],
+  ["a judge", ME.judge, ["/decisions", "/record", "/upload", "/speech-demo", "/recording", "/request-access"]],
   ["a legal text manager", ME.legalTextManager, ["/admin", "/request-access"]],
   ["a jurisdiction administrator", ME.jurisdictionAdministrator, ["/admin", "/request-access"]],
   [
@@ -101,6 +103,7 @@ describe("where a tab lands after a switch", () => {
   it("stays on a list-level page the new context may use", () => {
     expect(landingAfterSwitch("/admin", administrator)).toBe("/admin");
     expect(landingAfterSwitch("/recording", judge)).toBe("/recording");
+    expect(landingAfterSwitch("/decisions", judge)).toBe("/decisions");
   });
 
   it("keeps the page's query with a page that stays (an email's approval link), and with nothing else", () => {

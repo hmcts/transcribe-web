@@ -85,4 +85,11 @@ describe("BackupUploader", () => {
     const xhr = await retryWith("https://store.blob.core.windows.net/audio/k1?sig=x");
     expect(xhr.headers["X-Jurisdiction"]).toBeUndefined();
   });
+
+  it("returns to the Decisions page it was opened from (DIAAT-400)", async () => {
+    const onClose = vi.fn();
+    render(<BackupUploader backup={backup} onClose={onClose} onUploadSuccess={vi.fn()} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Return to Decisions" }));
+    expect(onClose).toHaveBeenCalled();
+  });
 });

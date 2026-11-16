@@ -59,7 +59,7 @@ function HomePageIllustration() {
           fontSize="18"
           fontWeight="500"
         >
-          Write a decision
+          Record a decision
         </text>
 
         {/* Recent recordings section */}
@@ -657,7 +657,7 @@ const quickStartSteps: QuickStartStep[] = [
     id: "start-recording",
     title: "Start a new recording",
     instruction:
-      "From the home page, select Write a decision to open the dictation workspace.",
+      "From the home page, select Decisions, then Record a decision to open the dictation workspace.",
     Illustration: HomePageIllustration,
   },
   {
@@ -685,7 +685,7 @@ const quickStartSteps: QuickStartStep[] = [
     id: "download",
     title: "Download document",
     instruction:
-      "After processing finishes, return to the home page and choose Download document for the hearing you want.",
+      "After processing finishes, go to Decisions and choose Download document for the hearing you want.",
     Illustration: DownloadIllustration,
   },
 ];
@@ -770,7 +770,7 @@ export function MultistepTutorial() {
             </p>
             <div
               role="img"
-              aria-label="Illustration of the home page with the Write a decision button"
+              aria-label="Illustration of the Decisions page with the Record a decision button"
               data-quick-start-illustration={quickStartSteps[0].id}
             >
               <HomePageIllustration />
@@ -830,7 +830,7 @@ export function MultistepTutorial() {
             </p>
             <div
               role="img"
-              aria-label="Illustration of the home page with the Download document option"
+              aria-label="Illustration of the Decisions page with the Download document option"
               data-quick-start-illustration={quickStartSteps[4].id}
             >
               <DownloadIllustration />
