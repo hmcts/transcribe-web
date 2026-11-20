@@ -1,13 +1,15 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
+import { getLiveDraft, putLiveDraft } from "@/lib/live-draft-api";
 import {
   type AvailableTemplate,
   TemplateRefusedError,
 } from "@/lib/templates-api";
+import { getJudgeNameFromEmail } from "@/lib/utils";
 
 // DIAAT-344: in a jurisdiction without the decision template, a judge chooses one of
 // its uploaded templates and fills that template's own Hearing Details form, then
@@ -15,6 +17,9 @@ import {
 
 const mockFetchTemplates = vi.hoisted(() => vi.fn());
 const mockRouterPush = vi.hoisted(() => vi.fn());
+const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
+const lastEditorProps = vi.hoisted(() => ({ current: null as any }));
+const mockUser = vi.hoisted(() => ({ current: null as any }));
 
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule(() => "ET")
@@ -30,19 +35,22 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/hooks/use-media-query", () => ({ useMediaQuery: () => true }));
 vi.mock("@/providers/user-settings", () => ({
   useUserSettings: () => ({
-    user: null,
+    user: mockUser.current,
     loading: false,
     updateUserSettings: vi.fn(),
   }),
 }));
 vi.mock("@/components/editor/tiptap-editor", () => ({
-  default: () => <div>Notes editor</div>,
+  default: (props: any) => {
+    lastEditorProps.current = props;
+    return <div>Notes editor</div>;
+  },
 }));
 vi.mock("@/components/audio/dictation", () => ({
-  SpeechDemo: () => <div>Transcript area</div>,
-}));
-vi.mock("@/lib/document-content-api", () => ({
-  fetchUserDocumentContent: vi.fn(),
+  SpeechDemo: (props: any) => {
+    lastSpeechDemoProps.current = props;
+    return <div>Transcript area</div>;
+  },
 }));
 vi.mock("@/lib/admin-access", () => ({
   getAdminAccessStatus: vi.fn().mockResolvedValue("unauthorised"),
@@ -123,6 +131,7 @@ const JUDGMENT: AvailableTemplate = {
       options: [{ value: "unfair", label: "Unfair dismissal" }],
     },
   ],
+  sections: [{ tag: "JudgmentText", label: "Judgment" }],
 };
 const REASONS: AvailableTemplate = {
   id: "22222222-2222-4222-8222-222222222222",
@@ -137,6 +146,45 @@ const REASONS: AvailableTemplate = {
       options: [],
     },
   ],
+  sections: [
+    { tag: "Background", label: "Background" },
+    { tag: "Reasons", label: "Reasons" },
+  ],
+};
+
+const LOCATION: AvailableTemplate = {
+  id: "33333333-3333-4333-8333-333333333333",
+  name: "Decision",
+  service: null,
+  fields: [
+    {
+      tag: "JudgeName",
+      label: "Judge's name",
+      type: "text",
+      required: true,
+      options: [],
+      prefill: "judge_name",
+    },
+    {
+      tag: "Location",
+      label: "Hearing location",
+      type: "dropdown",
+      required: true,
+      options: [
+        { value: "Taylor House", label: "Taylor House" },
+        { value: "Other", label: "Other" },
+      ],
+    },
+    {
+      tag: "LocationOther",
+      label: "Specify location",
+      type: "text",
+      required: true,
+      options: [],
+      show_when: { tag: "Location", answers: ["Other"] },
+    },
+  ],
+  sections: [{ tag: "Background", label: "Background" }],
 };
 
 const fetchMock = vi.fn();
@@ -174,6 +222,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
 
   afterEach(() => {
     toast.dismiss();
+    mockUser.current = null;
     vi.unstubAllGlobals();
     vi.clearAllMocks();
   });
@@ -219,6 +268,60 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     await waitFor(() => expect(mockRouterPush).toHaveBeenCalledWith("/decisions"));
   });
 
+  it("asks a question only after the answer it follows, and drops it otherwise", async () => {
+    const user = userEvent.setup();
+    await renderPage([LOCATION]);
+    await screen.findByText("Hearing details");
+    await user.type(screen.getByLabelText(/Judge's name/), "Judge A");
+    expect(screen.queryByLabelText(/Specify location/)).toBeNull();
+
+    const chooseLocation = async (name: string) => {
+      await user.click(
+        screen.getByRole("combobox", { name: /Hearing location/ })
+      );
+      await user.click(await screen.findByRole("option", { name }));
+    };
+    await chooseLocation("Other");
+    await user.type(screen.getByLabelText(/Specify location/), "Leeds");
+    // Not asked once the answer changes: not required, and not sent.
+    await chooseLocation("Taylor House");
+    expect(screen.queryByLabelText(/Specify location/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted().values).toEqual({
+      JudgeName: "Judge A",
+      Location: "Taylor House",
+    });
+  });
+
+  it("starts the judge's name from who is signed in, for the judge to change", async () => {
+    mockUser.current = { email: "tribunaljudge.ann.smith@ejudiciary.net" };
+    const user = userEvent.setup();
+    await renderPage([LOCATION]);
+    await screen.findByText("Hearing details");
+    const name = screen.getByLabelText(/Judge's name/) as HTMLInputElement;
+    expect(name.value).toBe(
+      getJudgeNameFromEmail("tribunaljudge.ann.smith@ejudiciary.net")
+    );
+    expect(name.value).not.toBe("");
+    // A starting value is not an answer of the judge's: nothing to clear.
+    expect(screen.queryByRole("button", { name: /clear answers/i })).toBeNull();
+
+    await user.clear(name);
+    await user.type(name, "Judge Smith");
+    await user.click(
+      screen.getByRole("combobox", { name: /Hearing location/ })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Taylor House" })
+    );
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted().values.JudgeName).toBe("Judge Smith");
+  });
+
   it("names each required field left empty and does not submit", async () => {
     const user = userEvent.setup();
     await renderPage([JUDGMENT]);
@@ -254,19 +357,22 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     });
   });
 
-  it("stops a jurisdiction switch while it has answers, which drafts do not keep", async () => {
+  it("keeps the answers in the draft, saved before a jurisdiction switch", async () => {
     const user = userEvent.setup();
     await renderPage([JUDGMENT]);
     await screen.findByText("Hearing details");
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    expect(vi.mocked(putLiveDraft)).not.toHaveBeenCalled(); // nothing to keep
 
     await user.type(screen.getByLabelText(/Case number/), "1234/2026");
-    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
-      step: "unsaved",
-    });
-
-    await user.clear(screen.getByLabelText(/Case number/));
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    expect(vi.mocked(putLiveDraft)).toHaveBeenLastCalledWith(
+      {},
+      expect.objectContaining({
+        template_id: JUDGMENT.id,
+        values: expect.objectContaining({ Reference: "1234/2026" }),
+      })
+    );
   });
 
   it("clears the answers when the judge chooses another template", async () => {
@@ -298,9 +404,6 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       screen.getByRole("combobox", { name: /First party is the/ })
     );
     await user.click(await screen.findByRole("option", { name: "Claimant" }));
-    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
-      step: "unsaved",
-    });
 
     await user.click(screen.getByRole("button", { name: "Clear answers" }));
     expect(
@@ -353,7 +456,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     );
   });
 
-  it("warns before the tab is closed with answers, which drafts do not keep", async () => {
+  it("warns before the tab is closed with answers, as with dictation", async () => {
     const user = userEvent.setup();
     await renderPage([JUDGMENT]);
     await screen.findByText("Hearing details");
@@ -439,61 +542,6 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     );
   });
 
-  it("asks before an in-app link or Back leaves answers behind", async () => {
-    const user = userEvent.setup();
-    const confirm = vi.spyOn(window, "confirm");
-    await renderPage([JUDGMENT]);
-    await screen.findByText("Hearing details");
-    const help = document.createElement("a");
-    help.href = "/help";
-    help.textContent = "Help";
-    document.body.appendChild(help);
-    // Whether the click got through to the link (the guard stops it before);
-    // jsdom cannot navigate, so the link itself goes nowhere.
-    let reached = false;
-    help.addEventListener("click", (event) => {
-      reached = true;
-      event.preventDefault();
-    });
-    const blocked = () => {
-      reached = false;
-      help.dispatchEvent(
-        new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })
-      );
-      return !reached;
-    };
-    try {
-      confirm.mockReturnValue(false);
-      expect(blocked()).toBe(false); // nothing to lose: the link is followed
-      expect(confirm).not.toHaveBeenCalled();
-
-      await user.type(screen.getByLabelText(/Case number/), "1");
-      expect(blocked()).toBe(true); // stayed
-      expect(confirm).toHaveBeenLastCalledWith(
-        expect.stringMatching(/answers will be lost/)
-      );
-      confirm.mockReturnValue(true);
-      expect(blocked()).toBe(false); // left
-
-      const push = vi.spyOn(window.history, "pushState");
-      const back = vi
-        .spyOn(window.history, "back")
-        .mockImplementation(() => undefined);
-      confirm.mockReturnValue(false);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-      expect(push).toHaveBeenCalled(); // stays on the page
-      expect(back).not.toHaveBeenCalled();
-      confirm.mockReturnValue(true);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-      expect(back).toHaveBeenCalledTimes(1); // past the guard entry
-      push.mockRestore();
-      back.mockRestore();
-    } finally {
-      help.remove();
-      confirm.mockRestore();
-    }
-  });
-
   it("asks before another template clears the answers", async () => {
     const user = userEvent.setup();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
@@ -544,5 +592,91 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       await screen.findByText(/The hearing details do not fit the template/)
     ).toBeTruthy();
     expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  it("dictates into the template's sections, chosen by their names", async () => {
+    const user = userEvent.setup();
+    await renderPage([REASONS]);
+    await screen.findByText("Hearing details");
+
+    const picker = screen.getByRole("group", { name: "Transcript section" });
+    const background = within(picker).getByRole("button", {
+      name: "Background",
+    });
+    const reasons = within(picker).getByRole("button", { name: "Reasons" });
+    expect(background.getAttribute("aria-pressed")).toBe("true"); // the first
+    expect(lastSpeechDemoProps.current.activeSection).toBe("Background");
+    expect(lastSpeechDemoProps.current.showSectionNames).toBe(true);
+    expect(lastSpeechDemoProps.current.sections).toEqual(REASONS.sections);
+
+    await user.click(reasons);
+    expect(reasons.getAttribute("aria-pressed")).toBe("true");
+    expect(lastSpeechDemoProps.current.activeSection).toBe("Reasons");
+  });
+
+  it("has no section picker for a template with one dictated section", async () => {
+    await renderPage([JUDGMENT]);
+    await screen.findByText("Hearing details");
+    expect(
+      screen.queryByRole("group", { name: "Transcript section" })
+    ).toBeNull();
+    expect(lastSpeechDemoProps.current.activeSection).toBe("JudgmentText");
+    expect(lastSpeechDemoProps.current.showSectionNames).toBe(false);
+  });
+
+  it("heads the blank notes with the sections, and keeps notes the judge wrote", async () => {
+    await renderPage([REASONS]);
+    await screen.findByText("Hearing details");
+    await waitFor(() =>
+      expect(lastEditorProps.current.initialContent).toBe(
+        "<h3>Background</h3><ul><li><p></p></li></ul><h3>Reasons</h3><ul><li><p></p></li></ul>"
+      )
+    );
+  });
+
+  it("submits each section's dictation under its tag, with the notes", async () => {
+    const user = userEvent.setup();
+    await renderPage([REASONS]);
+    await screen.findByText("Hearing details");
+    const said = { speaker: "Judge", text: "Agreed.", timestamp: "10:00" };
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange({ Reasons: [said] });
+      lastEditorProps.current.onContentChange("<h3>Reasons</h3><p>Costs.</p>");
+    });
+    await user.click(screen.getByRole("radio", { name: "Yes" }));
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    expect(submitted()).toEqual({
+      template_id: REASONS.id,
+      values: { Agreed: true },
+      messages: { Reasons: [said] },
+      notes: "<h3>Reasons</h3><p>Costs.</p>",
+    });
+  });
+
+  it("restores the template, its answers and the notes with the dictation", async () => {
+    const said = { speaker: "Judge", text: "Heard.", timestamp: "10:00" };
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: { Reasons: [said] },
+      form_data: {
+        template_id: REASONS.id,
+        values: { Agreed: false },
+        notes: "<p>Mine</p>",
+      },
+      saved_at: new Date().toISOString(),
+    });
+    const user = userEvent.setup();
+    await renderPage([JUDGMENT, REASONS]);
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    expect(await screen.findByText("Agreed by the parties")).toBeTruthy();
+    expect(
+      screen.getByRole("radio", { name: "No" }).getAttribute("aria-checked")
+    ).toBe("true");
+    expect(lastSpeechDemoProps.current.initialSectionedTranscript).toEqual({
+      Reasons: [said],
+    });
+    expect(lastEditorProps.current.initialContent).toBe("<p>Mine</p>");
   });
 });

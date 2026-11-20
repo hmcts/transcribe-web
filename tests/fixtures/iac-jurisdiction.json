@@ -2,7 +2,6 @@
   "code": "IAC",
   "name": "Immigration and Asylum Chamber",
   "role": "judge",
-  "template": "iac_decision",
   "features": {
     "hearing_recordings": true
   },

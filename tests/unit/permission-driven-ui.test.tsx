@@ -130,7 +130,7 @@ describe("the help page", () => {
   it("guides a judge through dictation", () => {
     render(<HelpPage />);
 
-    expect(screen.getByText("Quick Start Guide")).toBeTruthy();
+    expect(screen.getByText("Templates and hearing details")).toBeTruthy();
     expect(screen.getByText("Features overview")).toBeTruthy();
     expect(screen.getByText("Troubleshooting")).toBeTruthy();
     expect(screen.getByText("Microphone not working")).toBeTruthy();
@@ -140,7 +140,7 @@ describe("the help page", () => {
     mockPersona = persona;
     render(<HelpPage />);
 
-    for (const heading of ["Quick Start Guide", "Features overview", "Live Transcription", "Troubleshooting"]) {
+    for (const heading of ["Templates and hearing details", "Features overview", "Live Transcription", "Troubleshooting"]) {
       expect(screen.queryByText(heading), heading).toBeNull();
     }
     expect(screen.queryByText("Microphone not working")).toBeNull();

@@ -69,7 +69,6 @@ vi.mock("@/components/audio/upload/backup-uploader", () => ({
 
 import HelpPage from "@/app/help/page";
 import RecordingLayout from "@/app/recording/layout";
-import { DecisionTemplateOnly } from "@/components/jurisdiction/jurisdiction-content";
 import Header from "@/components/layout/header";
 import { MeetingsDataTable } from "@/components/meetings-table/data-table";
 import WelcomePage from "@/components/welcome-page";
@@ -88,14 +87,6 @@ function renderDocumentsList() {
       isBulkDeleting={false}
       isBulkMarkingDone={false}
     />
-  );
-}
-
-function renderTemplateContent() {
-  return render(
-    <DecisionTemplateOnly otherwise={<p>general section only</p>}>
-      <p>hearing form help</p>
-    </DecisionTemplateOnly>
   );
 }
 
@@ -140,20 +131,17 @@ describe("as an IAC judge, nothing changes (DIAAT-331)", () => {
     expect(headings).toEqual(expect.arrayContaining(["Hearing", "Hearing type"]));
   });
 
-  it("the help page has its subtitle and the hearing form's help", () => {
+  it("the help page has its subtitle and the templates' help", () => {
     render(<HelpPage />);
     expect(
       screen.getByText(
         "Getting started with Bench Notes for the First-tier Tribunal Immigration and Asylum Chamber"
       )
     ).toBeTruthy();
-    expect(screen.getByText("Hearing Details Form")).toBeTruthy();
+    expect(screen.getByText("Templates and hearing details")).toBeTruthy();
   });
 
-  it("the hearing form's help and the hearing recordings area are still there", () => {
-    renderTemplateContent();
-    expect(screen.getByText("hearing form help")).toBeTruthy();
-    expect(screen.queryByText("general section only")).toBeNull();
+  it("the hearing recordings area is still there", () => {
     renderRecordingsArea();
     expect(screen.getByText("jobs table")).toBeTruthy();
   });
@@ -196,17 +184,9 @@ describe("as an ET judge (DIAAT-330)", () => {
     render(<HelpPage />);
     // The page heading, and the subtitle in the neutral wording.
     expect(screen.getAllByText("Getting started with BenchNotes")).toHaveLength(2);
-    expect(screen.queryByText("Hearing Details Form")).toBeNull();
     expect(document.body.textContent).not.toMatch(
       /immigration|asylum|appellant|tribunal/i
     );
-  });
-
-  it("gets the general content, not the IAC hearing form's", () => {
-    mockCode = "ET";
-    renderTemplateContent();
-    expect(screen.getByText("general section only")).toBeTruthy();
-    expect(screen.queryByText("hearing form help")).toBeNull();
   });
 
   it("cannot open the hearing recordings area, even from a typed address", () => {

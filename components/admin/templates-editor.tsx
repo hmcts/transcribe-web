@@ -15,6 +15,7 @@ import { SignOffFields } from "@/components/admin/sign-off";
 import { TemplatePreview } from "@/components/admin/template-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -47,15 +48,21 @@ import {
   type AdminTemplate,
   BENCHNOTES_SOURCES,
   type BenchNotesSource,
+  CHOICE_TYPES,
+  CONTENT_TYPES,
   deleteTemplate,
   FIELD_TYPES,
+  fetchTemplateForm,
   fetchTemplates,
   LIST_TYPES,
   ownValue,
+  PREFILLS,
+  type Prefill,
   saveTemplate,
   TEMPLATE_STAGES,
   type TemplateField,
   type TemplateFieldType,
+  type TemplateOption,
   TemplateRefusedError,
   type TemplateStage,
   type TemplateValues,
@@ -68,7 +75,9 @@ import {
  * options, and their order, but cannot add one. A template is saved only with every
  * box linked, and only then can it leave draft. Before that (DIAAT-346) the admin
  * previews it with sample details. DIAAT-347: it goes to the jurisdiction's test group
- * first, then to all its judges with the service lead's sign-off.
+ * first, then to all its judges with the service lead's sign-off. A question can be
+ * asked only after another's answer, start with the judge's name or title, and print
+ * a set text when left empty, as the built-in IAC form did.
  */
 
 const DOCX_ACCEPT =
@@ -365,6 +374,42 @@ function TemplateFieldsEditor({
   const [refused, setRefused] = useState<string[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // The Document Content answers (by field type), for a question asked after one:
+  // loaded from the saved template's judges' form the first time one is needed.
+  const [contentOptions, setContentOptions] = useState<Partial<
+    Record<TemplateFieldType, TemplateOption[]>
+  > | null>(null);
+  const contentRequested = useRef(false);
+  const loadContentOptions = useCallback(() => {
+    if (contentRequested.current) return;
+    contentRequested.current = true;
+    fetchTemplateForm(code, template.id).then(
+      (form) =>
+        setContentOptions(
+          Object.fromEntries(form.fields.map((f) => [f.type, f.options]))
+        ),
+      () => {
+        contentRequested.current = false;
+        setContentOptions({});
+      }
+    );
+  }, [code, template.id]);
+
+  /** The answers a question can be asked after, or null while they are not known. */
+  function answersOf(after: TemplateField): TemplateOption[] | null {
+    if (LIST_TYPES.includes(after.type))
+      return (ownValue(optionText, after.tag) ?? "")
+        .split("\n")
+        .map((o) => o.trim())
+        .filter(Boolean)
+        .map((o) => ({ value: o, label: o }));
+    if (after.type === "yes_no")
+      return [
+        { value: "yes", label: "Yes" },
+        { value: "no", label: "No" },
+      ];
+    return contentOptions?.[after.type] ?? null;
+  }
   const fileInput = useRef<HTMLInputElement>(null);
 
   const linked = new Set(fields.map((f) => f.tag));
@@ -676,6 +721,20 @@ function TemplateFieldsEditor({
                       }
                       onSource={(source) => update(f.tag, { source })}
                     />
+                    {asked && (
+                      <AskedSettings
+                        field={f}
+                        choices={fields.filter(
+                          (other) =>
+                            other.tag !== f.tag &&
+                            CHOICE_TYPES.includes(other.type)
+                        )}
+                        answersOf={answersOf}
+                        contentLoaded={contentOptions !== null}
+                        onNeedContent={loadContentOptions}
+                        onChange={(change) => update(f.tag, change)}
+                      />
+                    )}
                   </TableCell>
                   <TableCell className="align-top">
                     <div className="flex gap-1">
@@ -827,10 +886,10 @@ function FieldConfiguration({
       </div>
     );
   }
-  if (field.type === "legal_issues") {
+  if (CONTENT_TYPES.includes(field.type)) {
     return (
       <span className="text-sm">
-        Existing Legal Issues / Legal Framework capability
+        The jurisdiction's Document Content, kept by its Legal Text Manager
       </span>
     );
   }
@@ -854,7 +913,164 @@ function FieldConfiguration({
     );
   }
   if (field.type === "dictated") {
-    return <span className="text-sm">The judge's dictated judgment</span>;
+    return (
+      <span className="text-sm">
+        A section the judge dictates into, by its label, then their notes under
+        a heading with that label
+      </span>
+    );
   }
   return <span className="text-sm text-muted-foreground">No list needed</span>;
+}
+
+const ALWAYS = "always";
+
+/** A question's settings besides its type: asked only after an answer to another, what
+ * a text one starts with, and what its box prints when left empty. */
+function AskedSettings({
+  field,
+  choices,
+  answersOf,
+  contentLoaded,
+  onNeedContent,
+  onChange,
+}: {
+  field: TemplateField;
+  /** The other questions with set answers. */
+  choices: TemplateField[];
+  answersOf: (after: TemplateField) => TemplateOption[] | null;
+  contentLoaded: boolean;
+  onNeedContent: () => void;
+  onChange: (change: Partial<TemplateField>) => void;
+}) {
+  const name = field.label || field.tag;
+  const ids = useId();
+  const rule = field.show_when ?? null;
+  const after = rule ? choices.find((c) => c.tag === rule.tag) : undefined;
+  const answers = after ? answersOf(after) : null;
+  const needsContent =
+    after !== undefined && CONTENT_TYPES.includes(after.type);
+  useEffect(() => {
+    if (needsContent) onNeedContent();
+  }, [needsContent, onNeedContent]);
+
+  const toggle = (value: string, on: boolean) => {
+    if (!rule) return;
+    const chosen = rule.answers.filter((a) => a !== value);
+    onChange({
+      show_when: { tag: rule.tag, answers: on ? [...chosen, value] : chosen },
+    });
+  };
+
+  return (
+    <div className="mt-3 space-y-3 border-t border-border pt-3">
+      <div className="space-y-1">
+        <Label htmlFor={`${ids}-when`} className="text-xs">
+          Ask it
+        </Label>
+        <Select
+          value={rule ? `field:${rule.tag}` : ALWAYS}
+          onValueChange={(v) =>
+            onChange({
+              show_when:
+                v === ALWAYS
+                  ? null
+                  : { tag: v.slice("field:".length), answers: [] },
+            })
+          }
+        >
+          <SelectTrigger id={`${ids}-when`} aria-label={`When to ask ${name}`}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value={ALWAYS}>Always</SelectItem>
+            {choices.map((c) => (
+              <SelectItem key={c.tag} value={`field:${c.tag}`}>
+                Only after an answer to {c.label || c.tag}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {rule && !after && (
+          <p className="text-xs text-red-600 dark:text-red-400">
+            The question it was asked after has no set answers now: choose
+            again.
+          </p>
+        )}
+        {rule && after && (
+          <fieldset className="space-y-1">
+            <legend className="text-xs">
+              Answers to {after.label || after.tag} that ask it
+            </legend>
+            {answers === null ? (
+              <p className="text-xs text-muted-foreground">
+                {needsContent && contentLoaded
+                  ? `Save the template first: ${after.label || after.tag}'s answers come from its Document Content.`
+                  : "Loading its answers…"}
+              </p>
+            ) : (
+              answers.map((answer, index) => (
+                <div key={answer.value} className="flex items-center gap-2">
+                  <Checkbox
+                    id={`${ids}-answer-${index}`}
+                    checked={rule.answers.includes(answer.value)}
+                    onCheckedChange={(checked) =>
+                      toggle(answer.value, checked === true)
+                    }
+                  />
+                  <Label
+                    htmlFor={`${ids}-answer-${index}`}
+                    className="text-xs font-normal"
+                  >
+                    {answer.label}
+                  </Label>
+                </div>
+              ))
+            )}
+          </fieldset>
+        )}
+      </div>
+      {field.type === "text" && (
+        <div className="space-y-1">
+          <Label htmlFor={`${ids}-prefill`} className="text-xs">
+            Starts with
+          </Label>
+          <Select
+            value={field.prefill ?? "none"}
+            onValueChange={(v) =>
+              onChange({ prefill: v === "none" ? null : (v as Prefill) })
+            }
+          >
+            <SelectTrigger
+              id={`${ids}-prefill`}
+              aria-label={`What ${name} starts with`}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">Nothing</SelectItem>
+              {PREFILLS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>
+                  {p.label}, for the judge to change
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <div className="space-y-1">
+        <Label htmlFor={`${ids}-empty`} className="text-xs">
+          When left empty, print
+        </Label>
+        <Input
+          id={`${ids}-empty`}
+          aria-label={`What ${name}'s box prints when left empty`}
+          placeholder="Nothing: the line is removed"
+          maxLength={5000}
+          value={field.empty_text ?? ""}
+          onChange={(e) => onChange({ empty_text: e.target.value || null })}
+        />
+      </div>
+    </div>
+  );
 }

@@ -43,8 +43,9 @@ import { useAccess } from "@/providers/access";
 
 /**
  * Jurisdictions (DIAAT-356, DIAAT-394), shown by permission:
- *  - `jurisdictions.manage`: each jurisdiction's settings (name, template, hearing
- *    recordings, screen wording), for the ones the API lists for the caller;
+ *  - `jurisdictions.manage`: each jurisdiction's settings (name, hearing recordings,
+ *    screen wording), for the ones the API lists for the caller. Its templates are
+ *    uploaded in the Templates tab;
  *  - `jurisdiction.create`: adding a jurisdiction;
  *  - `jurisdiction_admin.assign`: who administers each jurisdiction. That is a
  *    role assignment like any other (given by sign-in email, or to someone who has
@@ -310,7 +311,6 @@ function JurisdictionEditor({
   // Going live, not saving one already live: the service lead's sign-off (DIAAT-347).
   const needsSignOff =
     stagesSupported && stored !== null && stage === "live" && (stored.stage ?? "live") !== "live";
-  const [template, setTemplate] = useState<string>(settings.template ?? "none");
   const [recordings, setRecordings] = useState(
     settings.features?.hearing_recordings ?? false
   );
@@ -327,7 +327,6 @@ function JurisdictionEditor({
     service,
     stage,
     enabled,
-    template,
     recordings,
     wording,
   });
@@ -364,7 +363,6 @@ function JurisdictionEditor({
               ([key, text]) => key in wordingKeys && text.trim()
             )
           ),
-          template: template === "iac_decision" ? "iac_decision" : null,
           features: { hearing_recordings: recordings },
         },
         version,
@@ -479,18 +477,6 @@ function JurisdictionEditor({
               </div>
             </>
           )}
-          <div className="space-y-1">
-            <Label htmlFor="jurisdiction-template">Template</Label>
-            <Select value={template} onValueChange={setTemplate}>
-              <SelectTrigger id="jurisdiction-template">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None: general section, copy the text out</SelectItem>
-                <SelectItem value="iac_decision">IAC decision</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
           <div className="space-y-2 pt-6">
             <CheckboxField
               id="jurisdiction-enabled"
@@ -547,8 +533,7 @@ function JurisdictionEditor({
         {nameLocked && (
           <p id="jurisdiction-locked" className="text-sm text-muted-foreground">
             Only a super administrator can rename a jurisdiction or switch it on or
-            off. Its template, hearing recordings and screen wording are yours to
-            change.
+            off. Its hearing recordings and screen wording are yours to change.
           </p>
         )}
 

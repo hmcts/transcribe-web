@@ -21,11 +21,14 @@ const mockSetIsRecording = vi.hoisted(() => vi.fn());
 const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
 const lastEditorProps = vi.hoisted(() => ({ current: null as any }));
 const lastFormProps = vi.hoisted(() => ({ current: null as any }));
+const mockFetchTemplates = vi.hoisted(() => vi.fn());
 const mockGetLiveDraft = vi.hoisted(() => vi.fn());
 const mockPutLiveDraft = vi.hoisted(() => vi.fn());
 const mockDeleteLiveDraft = vi.hoisted(() => vi.fn());
 
-// DIAAT-322: the record page as the IAC sees it, unless a test says otherwise.
+// DIAAT-322: the record page as the IAC sees it, unless a test says otherwise:
+// with an uploaded decision template whose dictated sections are Background,
+// Evidence and Facts.
 let mockJurisdiction: "IAC" | "ET" = "IAC";
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule(
@@ -63,16 +66,44 @@ vi.mock("@/components/audio/dictation", () => ({
   },
 }));
 
-vi.mock("@/components/audio/dictation/dictation-form", () => ({
-  default: (props: any) => {
+vi.mock("@/components/audio/dictation/template-form", () => ({
+  TemplateForm: (props: any) => {
     lastFormProps.current = props;
     return <div>Dictation form</div>;
   },
 }));
 
-vi.mock("@/lib/document-content-api", () => ({
-  fetchUserDocumentContent: vi.fn().mockResolvedValue(undefined),
+vi.mock("@/lib/templates-api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/templates-api")>()),
+  fetchAvailableTemplates: mockFetchTemplates,
 }));
+
+const DECISION = {
+  id: "22222222-2222-4222-8222-222222222222",
+  name: "Decision",
+  service: null,
+  fields: [
+    {
+      tag: "Appellant",
+      label: "Appellant",
+      type: "text" as const,
+      required: true,
+      options: [],
+    },
+  ],
+  sections: [
+    { tag: "background", label: "Background" },
+    { tag: "evidence", label: "Evidence" },
+    { tag: "facts", label: "Facts" },
+  ],
+};
+
+// The IAC has its decision template; the ET none (DIAAT-333: copy the text out).
+beforeEach(() => {
+  mockFetchTemplates.mockImplementation(async () =>
+    mockJurisdiction === "IAC" ? [DECISION] : []
+  );
+});
 
 
 vi.mock("@/lib/auth-utils", () => ({
@@ -115,7 +146,7 @@ const TEST_TRANSCRIPT = {
 const SAVED_AT_RECENT = new Date(Date.now() - 5 * 60 * 1000).toISOString();
 
 describe("Record page accessibility", () => {
-  it("keeps the recording control in the footer and removes empty workspace tabs from the initial tab order", () => {
+  it("keeps the recording control in the footer, and the workspace tabs in the tab order", () => {
     mockGetLiveDraft.mockResolvedValue(null);
     render(<RecordPage />);
 
@@ -128,13 +159,9 @@ describe("Record page accessibility", () => {
 
     expect(startRecordingButton.closest("footer")).toBeTruthy();
     expect(transcriptPanel?.getAttribute("tabindex")).toBe("-1");
-    expect(
-      transcriptTab.getAttribute("tabindex") ??
-        transcriptTab.tabIndex.toString()
-    ).toBe("-1");
-    expect(
-      notesTab.getAttribute("tabindex") ?? notesTab.tabIndex.toString()
-    ).toBe("-1");
+    // Notes can come first, before anything is dictated.
+    expect(transcriptTab.tabIndex).toBe(0);
+    expect(notesTab.tabIndex).toBe(0);
   });
 });
 
@@ -776,7 +803,7 @@ describe("Autosave failure states", () => {
     expect(mockPutLiveDraft.mock.calls[1][0]).toEqual(later);
   });
 
-  it("stops the switch for notes typed while its save was in flight", async () => {
+  it("saves again notes typed while its save was in flight", async () => {
     await startDictating();
     let finishFirst: () => void = () => undefined;
     mockPutLiveDraft.mockImplementationOnce(
@@ -795,7 +822,13 @@ describe("Autosave failure states", () => {
     });
     finishFirst();
 
-    await expect(switching).rejects.toMatchObject({ step: "unsaved" });
+    await act(async () => {
+      await expect(switching).resolves.toBeUndefined();
+    });
+    expect(mockPutLiveDraft).toHaveBeenLastCalledWith(
+      TEST_TRANSCRIPT,
+      expect.objectContaining({ notes: "<p>Typed meanwhile</p>" })
+    );
   });
 
   it("leaves without asking once the draft is saved for a switch (DIAAT-332)", async () => {
@@ -817,41 +850,41 @@ describe("Autosave failure states", () => {
     }
   });
 
-  it("stops the switch rather than lose notes, which are never saved", async () => {
+  it("saves the notes with the dictation before the switch", async () => {
     await startDictating();
     await act(async () => {
       lastEditorProps.current.onContentChange("<p>Credibility in doubt</p>");
     });
     mockPutLiveDraft.mockClear();
 
-    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved" });
-    expect(mockPutLiveDraft).not.toHaveBeenCalled();
-  });
-
-  it("stops the switch rather than lose a hearing form filled in before any dictation", async () => {
-    render(<RecordPage />);
     await act(async () => {
-      lastFormProps.current.onFormStateChange({
-        ...lastFormProps.current.initialValues,
-        appellantName: "A Person",
-      });
+      await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
     });
-
-    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "unsaved" });
+    expect(mockPutLiveDraft).toHaveBeenCalledWith(
+      TEST_TRANSCRIPT,
+      expect.objectContaining({ notes: "<p>Credibility in doubt</p>" })
+    );
   });
 
-  it("switches when the form holds only the judge's name it filled in itself", async () => {
+  it("saves the hearing details answered before any dictation before the switch", async () => {
     render(<RecordPage />);
     await act(async () => {
-      lastFormProps.current.onFormStateChange({
-        ...lastFormProps.current.initialValues,
-        judgeName: "Judge Smith",
-      });
+      await Promise.resolve(); // the templates load
+    });
+    await act(async () => {
+      lastFormProps.current.onValuesChange({ Appellant: "A Person" });
     });
 
     await act(async () => {
       await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
     });
+    expect(mockPutLiveDraft).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        template_id: DECISION.id,
+        values: { Appellant: "A Person" },
+      })
+    );
   });
 
   it("switches with nothing to lose on an untouched page", async () => {
@@ -1206,17 +1239,15 @@ describe("Dictating in a jurisdiction without a template (DIAAT-333)", () => {
     expect(screen.queryByRole("button", { name: /submit hearing/i })).toBeNull();
     expect(screen.getByRole("button", { name: /copy text/i })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: "Form" })).toBeNull(); // the mobile layout
-    expect(lastSpeechDemoProps.current.activeSection).toBe("background");
+    expect(lastSpeechDemoProps.current.activeSection).toBe("general");
     expect(lastSpeechDemoProps.current.showSectionNames).toBe(false);
-    const { fetchUserDocumentContent } = await import("@/lib/document-content-api");
-    expect(fetchUserDocumentContent).not.toHaveBeenCalled();
   });
 
-  it("the IAC keeps its hearing form, sections and submission (DIAAT-331)", () => {
+  it("a jurisdiction with a template has its form, sections and submission", async () => {
     mockJurisdiction = "IAC";
     render(<RecordPage />);
 
-    expect(screen.getAllByText("Dictation form").length).toBeGreaterThan(0);
+    expect((await screen.findAllByText("Dictation form")).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: /submit hearing/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /copy text/i })).toBeNull();
   });
@@ -1297,11 +1328,7 @@ describe("Dictating in a jurisdiction without a template (DIAAT-333)", () => {
       });
 
       await waitFor(() => expect(mockDeleteLiveDraft).toHaveBeenCalledTimes(1));
-      expect(lastSpeechDemoProps.current.initialSectionedTranscript).toEqual({
-        background: [],
-        evidence: [],
-        facts: [],
-      });
+      expect(lastSpeechDemoProps.current.initialSectionedTranscript).toEqual({});
     } finally {
       restore();
     }

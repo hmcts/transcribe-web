@@ -93,7 +93,7 @@ const names = () => relayed.events.map((event) => event.name);
 
 /** Render the Dictation recording, with its Speech SDK session up. */
 async function recording() {
-  const view = render(<LiveDictation recordingActive hideForm />);
+  const view = render(<LiveDictation recordingActive activeSection="general" />);
   await waitFor(() => expect(transcribers.current).toHaveLength(1));
   await act(async () => {
     transcribers.current[0].sessionStarted?.(null, { sessionId: SDK_SESSION });
@@ -124,7 +124,7 @@ describe("Dictation teardown telemetry", () => {
   it("records an explicit pause", async () => {
     const view = await recording();
 
-    view.rerender(<LiveDictation recordingActive={false} hideForm />);
+    view.rerender(<LiveDictation recordingActive={false} activeSection="general" />);
 
     await waitFor(() => expect(names()).toContain("dictation.paused"));
     const stopped = relayed.events.filter(
@@ -228,7 +228,7 @@ describe("the running Speech session is counted when the dictation ends", () => 
 
   it("paused, then submitted: no second stop", async () => {
     const view = await recordingForAWhile();
-    view.rerender(<LiveDictation recordingActive={false} hideForm />);
+    view.rerender(<LiveDictation recordingActive={false} activeSection="general" />);
     await waitFor(() => expect(names()).toContain("dictation.paused"));
 
     dictationSessionTelemetry.sessionEnded("submitted");

@@ -81,7 +81,7 @@ const SSCS = { code: "SSCS", name: "Social Security and Child Support" };
 /** Jurisdiction records. `version` changes on every save (a stale save is a 409). */
 const jurisdictions = [
   { ...ET, enabled: true, template: null, hearing_recordings: true, wording: {}, version: "v1" },
-  { ...IAC, enabled: true, template: "iac_decision", hearing_recordings: true, wording: {}, version: "v1" },
+  { ...IAC, enabled: true, template: null, hearing_recordings: true, wording: {}, version: "v1" },
   { ...SSCS, enabled: true, template: null, hearing_recordings: false, wording: {}, version: "v1" },
 ];
 const refOf = (code) => {
@@ -804,7 +804,7 @@ const server = createServer(async (req, res) => {
     if (!existing) {
       if (!need("jurisdiction.create")) return;
       if (body.version) return refuse(res, 409, "edit_conflict", "That jurisdiction changed meanwhile");
-      const created = { code, name: String(body.name ?? code), enabled: body.enabled ?? true, template: body.settings?.template ?? null, hearing_recordings: !!body.settings?.features?.hearing_recordings, wording: body.settings?.wording ?? {}, version: "v1" };
+      const created = { code, name: String(body.name ?? code), enabled: body.enabled ?? true, template: null, hearing_recordings: !!body.settings?.features?.hearing_recordings, wording: body.settings?.wording ?? {}, version: "v1" };
       jurisdictions.push(created);
       return send(res, 200, adminShape(created));
     }

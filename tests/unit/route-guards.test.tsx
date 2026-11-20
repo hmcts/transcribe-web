@@ -6,7 +6,6 @@ import RecordLayout from "@/app/record/layout";
 import RecordingLayout from "@/app/recording/layout";
 import UploadLayout from "@/app/upload/layout";
 import RequestAccessLayout from "@/app/request-access/layout";
-import SpeechDemoLayout from "@/app/speech-demo/layout";
 import { isPathAllowed, landingAfterSwitch } from "@/lib/access/routes";
 import type { MeResponse } from "@/lib/access/types";
 import { accessValueFor } from "@/lib/access/permissions";
@@ -38,7 +37,6 @@ const AREAS: [string, Layout, string][] = [
   ["/decisions", DecisionsLayout as Layout, "dictation"],
   ["/record", RecordLayout as Layout, "dictation"],
   ["/upload", UploadLayout as Layout, "dictation"],
-  ["/speech-demo", SpeechDemoLayout as Layout, "dictation"],
   ["/recording", RecordingLayout as Layout, "recordings"],
   ["/admin", AdminLayout as Layout, "admin"],
   ["/request-access", RequestAccessLayout as Layout, "request access"],
@@ -46,7 +44,7 @@ const AREAS: [string, Layout, string][] = [
 
 // Which areas each persona may open, as the permissions the API gave them say.
 const OPENS: [string, MeResponse, string[]][] = [
-  ["a judge", ME.judge, ["/decisions", "/record", "/upload", "/speech-demo", "/recording", "/request-access"]],
+  ["a judge", ME.judge, ["/decisions", "/record", "/upload", "/recording", "/request-access"]],
   ["a legal text manager", ME.legalTextManager, ["/admin", "/request-access"]],
   ["a jurisdiction administrator", ME.jurisdictionAdministrator, ["/admin", "/request-access"]],
   [

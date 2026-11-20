@@ -15,6 +15,7 @@
 
 import { apiClient } from "@/lib/api-client";
 import type { SignOff } from "@/lib/sign-off";
+import { getJudgeNameFromEmail, getJudgeTitleFromEmail } from "@/lib/utils";
 
 export type TemplateFieldType =
   | "text"
@@ -24,10 +25,19 @@ export type TemplateFieldType =
   | "yes_no"
   | "number"
   | "legal_issues"
+  | "hearing_type"
+  | "anonymity"
   | "benchnotes"
   | "dictated";
 
-export type BenchNotesSource = "jurisdiction" | "year";
+export type BenchNotesSource =
+  | "jurisdiction"
+  | "year"
+  | "legal_framework"
+  | "hearing_description"
+  | "anonymity_reasons"
+  | "anonymity_order_heading"
+  | "anonymity_order";
 
 /** The admin's field types, in the order the field list offers them. */
 export const FIELD_TYPES: { value: TemplateFieldType; label: string }[] = [
@@ -37,18 +47,61 @@ export const FIELD_TYPES: { value: TemplateFieldType; label: string }[] = [
   { value: "multi_select", label: "Select / list (several)" },
   { value: "yes_no", label: "Yes / No" },
   { value: "number", label: "Number" },
-  { value: "legal_issues", label: "Existing capability" },
+  { value: "legal_issues", label: "Legal issues (Document Content)" },
+  { value: "hearing_type", label: "Hearing type (Document Content)" },
+  { value: "anonymity", label: "Anonymity (Document Content)" },
   { value: "benchnotes", label: "Filled by BenchNotes" },
-  { value: "dictated", label: "Dictated text (the judgment)" },
+  { value: "dictated", label: "Dictated section" },
 ];
 
 export const BENCHNOTES_SOURCES: { value: BenchNotesSource; label: string }[] =
   [
     { value: "jurisdiction", label: "The jurisdiction's name" },
     { value: "year", label: "The year" },
+    {
+      value: "legal_framework",
+      label: "Legal framework text of the legal issues chosen",
+    },
+    {
+      value: "hearing_description",
+      label: "Description of the hearing type chosen",
+    },
+    { value: "anonymity_reasons", label: "Anonymity reasons" },
+    { value: "anonymity_order_heading", label: "Anonymity order heading" },
+    { value: "anonymity_order", label: "Anonymity order text" },
   ];
 
 export const LIST_TYPES: TemplateFieldType[] = ["dropdown", "multi_select"];
+
+/** Answered from the jurisdiction's Document Content, not options the admin lists. */
+export const CONTENT_TYPES: TemplateFieldType[] = [
+  "legal_issues",
+  "hearing_type",
+  "anonymity",
+];
+
+/** Questions with set answers, which another question can be asked after. */
+export const CHOICE_TYPES: TemplateFieldType[] = [
+  "dropdown",
+  "multi_select",
+  "yes_no",
+  ...CONTENT_TYPES,
+];
+
+/** Ask a question only when the question ``tag`` was answered with one of
+ * ``answers``: options, Document Content ids, or "yes"/"no". */
+export interface ShowWhen {
+  tag: string;
+  answers: string[];
+}
+
+/** What a text question can start with, for the judge to change. */
+export type Prefill = "judge_name" | "judge_title";
+
+export const PREFILLS: { value: Prefill; label: string }[] = [
+  { value: "judge_name", label: "The judge's name" },
+  { value: "judge_title", label: "The judge's title" },
+];
 
 /** A box in the uploaded file: every content control with this key. */
 export interface TemplateBox {
@@ -67,6 +120,11 @@ export interface TemplateField {
   required: boolean;
   options: string[];
   source: BenchNotesSource | null;
+  /** Absent from a template saved before these settings. */
+  show_when?: ShowWhen | null;
+  /** Printed in the box when it is left empty (or not asked). */
+  empty_text?: string | null;
+  prefill?: Prefill | null;
 }
 
 export interface AdminTemplate {
@@ -190,6 +248,15 @@ export interface TemplateFormField {
   type: Exclude<TemplateFieldType, "benchnotes" | "dictated">;
   required: boolean;
   options: TemplateOption[];
+  /** Asked only after this answer; an API from before sends none. */
+  show_when?: ShowWhen | null;
+  prefill?: Prefill | null;
+}
+
+/** A dictated box: a section the judge dictates into, by its name. */
+export interface TemplateSection {
+  tag: string;
+  label: string;
 }
 
 export interface AvailableTemplate {
@@ -197,6 +264,9 @@ export interface AvailableTemplate {
   name: string;
   service: string | null;
   fields: TemplateFormField[];
+  /** In the template's order: the first is where dictation goes until the judge picks.
+   * An API from before sections sends none. */
+  sections?: TemplateSection[];
 }
 
 export type TemplateValue = string | boolean | string[];
@@ -228,32 +298,96 @@ function isEmpty(value: TemplateValue | undefined): boolean {
   );
 }
 
-/** Whether the judge has answered anything: answers are not kept in the draft. */
+/** Whether the judge has answered anything. */
 export function hasAnswers(values: TemplateValues): boolean {
   return Object.values(values).some((value) => !isEmpty(value));
 }
 
-/** Each required field left empty, by tag: the message to show beside it. */
+/** An answer as a show_when names it. */
+function answerNames(value: TemplateValue | undefined): string[] {
+  if (typeof value === "boolean") return [value ? "yes" : "no"];
+  if (Array.isArray(value)) return value;
+  return typeof value === "string" ? [value.trim()] : [];
+}
+
+/**
+ * The questions not asked for these answers: one whose show_when answer was not
+ * given, or that is asked after a question not asked itself. As the API decides it,
+ * which drops their values.
+ */
+export function hiddenFields(
+  template: AvailableTemplate,
+  values: TemplateValues
+): Set<string> {
+  const byTag = new Map(template.fields.map((field) => [field.tag, field]));
+  const asked = (field: TemplateFormField, seen: Set<string>): boolean => {
+    const rule = field.show_when;
+    if (!rule) return true;
+    const after = byTag.get(rule.tag);
+    if (!after || seen.has(field.tag)) return false;
+    if (!asked(after, new Set([...seen, field.tag]))) return false;
+    return answerNames(ownValue(values, rule.tag)).some((name) =>
+      rule.answers.includes(name)
+    );
+  };
+  return new Set(
+    template.fields
+      .filter((field) => !asked(field, new Set()))
+      .map((field) => field.tag)
+  );
+}
+
+/** What text questions start with, from who is signed in (``prefill``), by tag. The
+ * judge's own answer, even an emptied one, replaces it. */
+export function startingValues(
+  template: AvailableTemplate,
+  email: string | undefined
+): TemplateValues {
+  if (!email) return {};
+  return Object.fromEntries(
+    template.fields.flatMap((field) => {
+      const text =
+        field.prefill === "judge_name"
+          ? getJudgeNameFromEmail(email)
+          : field.prefill === "judge_title"
+            ? getJudgeTitleFromEmail(email)
+            : "";
+      return text ? [[field.tag, text]] : [];
+    })
+  );
+}
+
+/** Each required field left empty, by tag: the message to show beside it. A question
+ * not asked is not required. */
 export function missingValues(
   template: AvailableTemplate,
   values: TemplateValues
 ): Record<string, string> {
+  const hidden = hiddenFields(template, values);
   return Object.fromEntries(
     template.fields
-      .filter((field) => field.required && isEmpty(ownValue(values, field.tag)))
+      .filter(
+        (field) =>
+          field.required &&
+          !hidden.has(field.tag) &&
+          isEmpty(ownValue(values, field.tag))
+      )
       .map((field) => [field.tag, `${field.label} is required`])
   );
 }
 
-/** The values to send: the template's fields only, empty ones left out. */
+/** The values to send: the template's fields asked only, empty ones left out. */
 export function valuesToSend(
   template: AvailableTemplate,
   values: TemplateValues
 ): Record<string, TemplateValue> {
+  const hidden = hiddenFields(template, values);
   return Object.fromEntries(
     template.fields.flatMap((field) => {
       const value = ownValue(values, field.tag);
-      return isEmpty(value) ? [] : [[field.tag, value as TemplateValue]];
+      return isEmpty(value) || hidden.has(field.tag)
+        ? []
+        : [[field.tag, value as TemplateValue]];
     })
   );
 }
@@ -285,6 +419,8 @@ export function sampleValues(
         case "yes_no":
           return [field.tag, true];
         case "dropdown":
+        case "hearing_type":
+        case "anonymity":
           return [field.tag, first];
         case "multi_select":
         case "legal_issues":
@@ -333,6 +469,8 @@ export function fittingValue(
       return kept.length === 0 && value.length > 0 ? null : kept;
     }
     case "dropdown":
+    case "hearing_type":
+    case "anonymity":
       return typeof value === "string" && (!value || offered.has(value))
         ? value
         : null;

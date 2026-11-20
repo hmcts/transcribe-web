@@ -19,10 +19,8 @@ import type { LiveDraftFailureKind } from "@/lib/live-draft-errors";
 
 /** Which autosave call site produced the write. */
 export type AutosaveTrigger =
-  | "interval"
-  | "pause"
-  | "late-finalisation"
-  | "retry";
+  // The hearing details or the notes changed (answers are kept with the dictation).
+  "edit" | "interval" | "pause" | "late-finalisation" | "retry";
 
 function toSeconds(ms: number | null): number | null {
   return ms === null ? null : Math.round(ms / 1000);

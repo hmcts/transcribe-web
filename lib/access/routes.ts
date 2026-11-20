@@ -19,7 +19,6 @@ export const ROUTE_PERMISSIONS: RoutePermission[] = [
   { prefix: "/decisions", anyOf: ["dictation.use"], staysAfterSwitch: true },
   { prefix: "/record", anyOf: ["dictation.use"], staysAfterSwitch: true },
   { prefix: "/upload", anyOf: ["dictation.use"], staysAfterSwitch: true },
-  { prefix: "/speech-demo", anyOf: ["dictation.use"] },
   { prefix: "/recording", anyOf: ["recording.own"], staysAfterSwitch: true },
   { prefix: "/admin", anyOf: ["admin.access"], staysAfterSwitch: true },
   {

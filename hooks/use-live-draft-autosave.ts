@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DictationFormValues } from "@/components/audio/dictation/formData";
 import type { SectionedTranscript } from "@/components/audio/dictation/types";
 import {
   type AutosaveState,
@@ -11,7 +10,7 @@ import {
   recordAutosaveFailure,
   recordAutosaveSuccess,
 } from "@/lib/autosave-state";
-import { putLiveDraft } from "@/lib/live-draft-api";
+import { type DraftFormData, putLiveDraft } from "@/lib/live-draft-api";
 import { LiveDraftError, liveDraftFailureKind } from "@/lib/live-draft-errors";
 import {
   type AutosaveTrigger,
@@ -20,17 +19,16 @@ import {
 
 export interface LiveDraftPayload {
   transcript: SectionedTranscript;
-  formData: Partial<DictationFormValues>;
+  formData: DraftFormData;
 }
 
 export interface UseLiveDraftAutosaveOptions {
   /**
    * The current draft, or null when there is nothing worth saving.
    *
-   * Returning null is how the caller keeps the existing content gating: the
-   * page only writes when a transcript section is non-empty. That gating is
-   * correct and deliberate, so it stays with the caller rather than being
-   * re-decided here.
+   * Returning null is how the caller keeps its content gating: the page only
+   * writes once there is something of the judge's (dictation, answers or notes).
+   * That gating stays with the caller rather than being re-decided here.
    */
   getPayload: () => LiveDraftPayload | null;
 }

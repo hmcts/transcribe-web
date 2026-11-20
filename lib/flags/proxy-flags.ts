@@ -3,7 +3,7 @@ import { parseRuntimeFlags } from "@/lib/flags/runtime-flags";
 
 /**
  * The runtime dictation flag for `proxy.ts` (DIAAT-392), which turns away
- * `/record` and `/speech-demo` when dictation is off.
+ * `/record` and `/upload` when dictation is off.
  *
  * The proxy cannot call the API itself: it has no BenchNotes token, which lives in
  * the server-side session. So it asks this app's own `/auth/runtime-flags` route

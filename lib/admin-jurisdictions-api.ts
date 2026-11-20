@@ -12,7 +12,6 @@ import type { SignOff } from "@/lib/sign-off";
 
 export interface JurisdictionSettingsData {
   wording?: Record<string, string>;
-  template?: "iac_decision" | null;
   features?: { hearing_recordings?: boolean };
 }
 

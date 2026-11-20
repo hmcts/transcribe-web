@@ -1,8 +1,6 @@
 /**
  * PR review (Copilot) on the browser telemetry: one regression test per finding.
  */
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -84,16 +82,6 @@ afterEach(() => {
   setVisibility("visible");
   vi.useRealTimers();
   vi.unstubAllGlobals();
-});
-
-describe("the speech demo owns its dictation journey", () => {
-  it("tracks its page, so its session ends when the page is left", () => {
-    const page = readFileSync(
-      join(__dirname, "..", "..", "app/speech-demo/page.tsx"),
-      "utf8"
-    );
-    expect(page).toContain("<DictationPageTracker />");
-  });
 });
 
 describe("recovery of ends left by killed pages", () => {

@@ -34,7 +34,7 @@ const IAC: api.AdminJurisdiction = {
   code: "IAC",
   name: "Immigration and Asylum Chamber",
   enabled: true,
-  settings: { template: "iac_decision", features: { hearing_recordings: true } },
+  settings: { features: { hearing_recordings: true } },
   member_count: 12,
   version: "2026-10-01T09:00:00",
 };
@@ -42,7 +42,7 @@ const ET: api.AdminJurisdiction = {
   code: "ET",
   name: "Employment Tribunal",
   enabled: true,
-  settings: { wording: { "help.subtitle": "Employment Tribunal" }, template: null },
+  settings: { wording: { "help.subtitle": "Employment Tribunal" } },
   member_count: 0,
   version: "2026-10-31T09:00:00",
 };
@@ -223,7 +223,7 @@ describe("JurisdictionsPanel", () => {
     expect(request.mock.calls.some(([endpoint]) => String(endpoint).includes("/templates"))).toBe(false);
   });
 
-  it("adds the ET with its wording, no template and no hearing recordings", async () => {
+  it("adds the ET with its wording and no hearing recordings", async () => {
     serve();
     const user = userEvent.setup();
     render(<JurisdictionsPanel />);
@@ -244,7 +244,6 @@ describe("JurisdictionsPanel", () => {
       enabled: true,
       settings: {
         wording: { "help.subtitle": "Employment Tribunal" },
-        template: null,
         features: { hearing_recordings: false },
       },
       version: "",
@@ -267,7 +266,6 @@ describe("JurisdictionsPanel", () => {
     const put = request.mock.calls.find(([, o]) => o?.method === "PUT");
     expect(JSON.parse(String(put?.[1]?.body)).settings).toEqual({
       wording: {},
-      template: "iac_decision",
       features: { hearing_recordings: true },
     });
   });
