@@ -177,7 +177,7 @@
     }
   },
   "resolutions": {
-    "postcss-selector-parser@npm:6.0.10": "npm:6.1.5",
+    "postcss-selector-parser@npm:6.0.10": "npm:postcss-selector-parser@6.1.6",
     "@opentelemetry/instrumentation-http@npm:^0.221.0": "npm:0.222.0"
   }
 }
