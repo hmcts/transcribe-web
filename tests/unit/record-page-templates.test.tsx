@@ -207,6 +207,10 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(fetchMock.mock.calls[0][0]).toBe(
       "/api/live-transcription/submission"
     );
+    // Past Front Door's WAF, as the decision's submission (DIAAT-322).
+    expect(fetchMock.mock.calls[0][1].headers["Content-Type"]).toBe(
+      "application/octet-stream"
+    );
     const body = submitted();
     expect(body.template_id).toBe(JUDGMENT.id);
     // The optional field left empty is not sent.
