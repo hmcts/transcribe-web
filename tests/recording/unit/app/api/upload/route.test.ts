@@ -11,7 +11,7 @@ import { bytesOf, consumeBody, sentMultipart } from "../../../multipart";
 // fetch mock reads a streamed body as a real fetch would.
 
 const BACKEND = "http://localhost:8001";
-// The API's _MAX_UPLOAD_BYTES (DIAAT-408): 1 GiB.
+// The API's MAX_UPLOAD_BYTES setting (DIAAT-408): 1 GiB unless MAX_UPLOAD_BYTES says otherwise.
 const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
 const BACKEND_JOB = {
@@ -461,6 +461,58 @@ describe("POST /api/upload", () => {
       );
 
       expect(uploadsCall()).toBeDefined();
+    });
+
+    // DIAAT-408: the limit is the MAX_UPLOAD_BYTES environment variable, read when the upload is handled.
+    it("the limit follows MAX_UPLOAD_BYTES, and the message names it", async () => {
+      vi.stubEnv("MAX_UPLOAD_BYTES", String(4 * 1024 * 1024 * 1024));
+      const { POST } = await import("@/app/api/upload/route");
+
+      // Over 1 GiB but under the configured 4 GiB: the API is reached.
+      await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(MAX_UPLOAD_BYTES + 1) })
+      );
+      expect(uploadsCall()).toBeDefined();
+
+      fetchMock.mockClear();
+      const over = await POST(
+        uploadRequest(AUDIO, {
+          "x-upload-size": String(4 * 1024 * 1024 * 1024 + 1),
+        })
+      );
+      expect(over.status).toBe(413);
+      expect((await over.json()).error).toContain("the limit is 4 GB");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("a lower MAX_UPLOAD_BYTES refuses what 1 GiB would allow", async () => {
+      vi.stubEnv("MAX_UPLOAD_BYTES", String(512 * 1024 * 1024));
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(600 * 1024 * 1024) })
+      );
+
+      expect(response.status).toBe(413);
+      expect((await response.json()).error).toContain("the limit is 512 MB");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("a MAX_UPLOAD_BYTES that is not a positive whole number means 1 GiB", async () => {
+      for (const bad of ["", "abc", "0", "-5", "1.5", "10GB"]) {
+        vi.stubEnv("MAX_UPLOAD_BYTES", bad);
+        fetchMock.mockClear();
+        const { POST } = await import("@/app/api/upload/route");
+
+        const response = await POST(
+          uploadRequest(AUDIO, {
+            "x-upload-size": String(MAX_UPLOAD_BYTES + 1),
+          })
+        );
+
+        expect(response.status, bad).toBe(413);
+        expect((await response.json()).error).toContain("the limit is 1 GB");
+      }
     });
 
     // The body is streamed to the API as it arrives, so a size mismatch is

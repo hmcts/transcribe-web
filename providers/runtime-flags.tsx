@@ -13,9 +13,11 @@ import {
 import { DICTATION_DISABLED, watchRefusals } from "@/lib/access/refusals";
 import { isDictationEnabled } from "@/lib/environment";
 import {
+  DEFAULT_MAX_RECORDING_SECONDS,
   fetchRuntimeFlags,
   type RuntimeFlags,
   resolveDictationEnabled,
+  resolveMaxRecordingSeconds,
 } from "@/lib/flags/runtime-flags";
 import { useAccess } from "@/providers/access";
 
@@ -29,6 +31,8 @@ import { useAccess } from "@/providers/access";
  */
 interface RuntimeFlagsValue {
   dictationEnabled: boolean;
+  /** DIAAT-408: the longest recording the API accepts now (4 hours until it says otherwise). */
+  maxRecordingSeconds: number;
   /** Read the flags again now (after an administrator changes one). */
   reload: () => Promise<void>;
 }
@@ -85,6 +89,7 @@ export function RuntimeFlagsProvider({
   const value = useMemo<RuntimeFlagsValue>(
     () => ({
       dictationEnabled: resolveDictationEnabled(flags, isDictationEnabled()),
+      maxRecordingSeconds: resolveMaxRecordingSeconds(flags),
       reload,
     }),
     [flags, reload]
@@ -103,6 +108,7 @@ export function useRuntimeFlags(): RuntimeFlagsValue {
   return (
     value ?? {
       dictationEnabled: isDictationEnabled(),
+      maxRecordingSeconds: DEFAULT_MAX_RECORDING_SECONDS,
       reload: async () => undefined,
     }
   );
@@ -111,4 +117,9 @@ export function useRuntimeFlags(): RuntimeFlagsValue {
 /** Whether dictation is switched on, by the runtime flag, else the deploy default. */
 export function useDictationEnabled(): boolean {
   return useRuntimeFlags().dictationEnabled;
+}
+
+/** The longest recording, in seconds, as the API says (4 hours until it has been read). */
+export function useMaxRecordingSeconds(): number {
+  return useRuntimeFlags().maxRecordingSeconds;
 }

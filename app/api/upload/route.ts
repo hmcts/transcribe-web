@@ -2,12 +2,15 @@ import { type NextRequest, NextResponse } from "next/server";
 import { uploadAndSubmit } from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
 import {
-  AUDIO_TOO_LARGE_ERROR,
   backendFailed,
   readRawUpload,
   tooLarge,
   unauthenticated,
 } from "@/lib/recording/raw-upload";
+import {
+  audioTooLargeError,
+  maxUploadBytes,
+} from "@/lib/recording/upload-limits";
 import {
   AUDIO_UPLOAD_TYPES,
   UPLOAD_HEADERS,
@@ -30,16 +33,16 @@ import {
 // then): one upload through the proxy (with that limit raised) peaked at
 // ~840 MB RSS; outside it, streamed, three concurrent uploads peaked at
 // ~160 MB, against ~65 MB idle. Streaming keeps memory off the size of the
-// body, so the 1 GiB limit below should not change that, but it has not been
+// body, so a limit of 1 GiB should not change that, but it has not been
 // measured at 1 GiB. So this route gates itself the way the proxy gates /api/*
 // (401 without a session).
 
 // A backstop on the size of the file, not the limit on how long a recording
-// may be: that is the API's (MAX_AUDIO_DURATION_SECONDS, 4 hours, DIAAT-408),
-// checked once it has decoded the upload, and its 422 reaches the browser
-// below. 1 GiB takes 4 hours of any usual MP3/M4A, but not of CD-quality WAV.
-// Keep in step with the API's POST /api/v1/uploads (_MAX_UPLOAD_BYTES).
-const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
+// may be: that is the API's (its effective recording limit, DIAAT-408), checked
+// once it has probed or decoded the upload, and its 422 reaches the browser
+// below. The size comes from the MAX_UPLOAD_BYTES environment variable
+// (1 GiB unless set; lib/recording/upload-limits.ts), read per request, and
+// must equal the API's MAX_UPLOAD_BYTES setting.
 
 // Number() (unlike parseFloat) rejects partially-numeric strings like
 // "123abc" as NaN, so only a fully-numeric, positive value is accepted;
@@ -54,10 +57,11 @@ export async function POST(request: NextRequest) {
   const denied = unauthenticated(auth);
   if (denied) return denied;
 
+  const maxBytes = maxUploadBytes();
   const upload = readRawUpload(request, {
-    maxBytes: MAX_UPLOAD_BYTES,
+    maxBytes,
     types: AUDIO_UPLOAD_TYPES,
-    tooLargeError: AUDIO_TOO_LARGE_ERROR,
+    tooLargeError: audioTooLargeError(maxBytes),
   });
   if (!upload.ok) return upload.response;
 

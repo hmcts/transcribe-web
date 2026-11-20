@@ -102,6 +102,15 @@ token. Both are refused when `AUTH_ENABLED=true` or in a production build
 the API when the real one is not running. Details in
 [docs/authz-web.md](docs/authz-web.md).
 
+## Recording upload limits (DIAAT-408)
+
+Two values decide what the upload page accepts. Both live in transcribe-api; this app reads them as follows.
+
+| What | Where it comes from | Must match |
+|---|---|---|
+| Longest recording (the "Recordings up to N hours" hint on the upload page) | `GET /api/flags` `max_recording_seconds`, read at runtime by `providers/runtime-flags.tsx` (4 hours until it has loaded, and for an API that does not send it) | Nothing to set: it is the API's effective limit, which follows the system feature flags `async_upload_preparation` and `long_recordings_enabled` and the API's `MAX_AUDIO_DURATION_SECONDS`. |
+| Largest file (413 above it, before any of the body is read) | The `MAX_UPLOAD_BYTES` environment variable of the web pod, read per upload in `app/api/upload/route.ts` (default 1073741824, 1 GiB; not a `NEXT_PUBLIC_` value) | **The API's `MAX_UPLOAD_BYTES` setting: set both to the same number.** A move to 4 GB needs this, the API's setting and the resumable block upload, which is not built. |
+
 ## Tests
 
 ```bash

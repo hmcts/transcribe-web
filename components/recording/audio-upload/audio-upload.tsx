@@ -5,7 +5,9 @@ import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import { Button } from "@/components/recording/ui/button";
+import { describeRecordingLimit } from "@/lib/flags/runtime-flags";
 import { cn } from "@/lib/recording/utils";
+import { useMaxRecordingSeconds } from "@/providers/runtime-flags";
 
 interface AudioUploadProps {
   onUpload: (file: File) => void;
@@ -22,6 +24,7 @@ const ACCEPTED_TYPES = {
 
 export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const maxRecording = describeRecordingLimit(useMaxRecordingSeconds());
 
   const onDrop = useCallback((accepted: File[]) => {
     if (accepted[0]) setSelectedFile(accepted[0]);
@@ -66,10 +69,10 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
         <p className="text-xs text-muted-foreground mt-1">
           MP3, WAV, MP4, M4A, OGG, FLAC supported
         </p>
-        {/* DIAAT-408: the API refuses recordings over 4 hours (MAX_AUDIO_DURATION_SECONDS). */}
+        {/* DIAAT-408: the longest recording is the API's, read from GET /api/flags (4 hours until it says otherwise). */}
         <p className="text-xs text-muted-foreground mt-1">
-          Recordings up to 4 hours. For long recordings, MP3 or M4A files are
-          much smaller than WAV.
+          Recordings up to {maxRecording}. For long recordings, MP3 or M4A files
+          are much smaller than WAV.
         </p>
         {selectedFile && (
           <p className="text-sm text-primary mt-3 font-medium">
