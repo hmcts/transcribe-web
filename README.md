@@ -109,7 +109,28 @@ Two values decide what the upload page accepts. Both live in transcribe-api; thi
 | What | Where it comes from | Must match |
 |---|---|---|
 | Longest recording (the "Recordings up to N hours" hint on the upload page) | `GET /api/flags` `max_recording_seconds`, read at runtime by `providers/runtime-flags.tsx` (4 hours until it has loaded, and for an API that does not send it) | Nothing to set: it is the API's effective limit, which follows the system feature flags `async_upload_preparation` and `long_recordings_enabled` and the API's `MAX_AUDIO_DURATION_SECONDS`. |
-| Largest file (413 above it, before any of the body is read) | The `MAX_UPLOAD_BYTES` environment variable of the web pod, read per upload in `app/api/upload/route.ts` (default 1073741824, 1 GiB; not a `NEXT_PUBLIC_` value) | **The API's `MAX_UPLOAD_BYTES` setting: set both to the same number.** A move to 4 GB needs this, the API's setting and the resumable block upload, which is not built. |
+| Largest file (413 above it, before any of the body is read) | The `MAX_UPLOAD_BYTES` environment variable of the web pod, read per upload in `app/api/upload/route.ts` (default 1073741824, 1 GiB; not a `NEXT_PUBLIC_` value) | **The API's `MAX_UPLOAD_BYTES` setting: set both to the same number.** 1 GiB is the agreed limit for now; a larger one would also need the API's setting and an upload in blocks that can resume (not built, no follow-up planned). |
+
+### Long recordings and the web app (DIAAT-408)
+
+Two system feature flags in transcribe-api (admin > Feature flags; no web deploy) decide how long a recording may be and how an
+upload is handled: `async_upload_preparation` (the API stores the original and answers at once; its worker converts it) and
+`long_recordings_enabled` (recordings over 4 hours, up to 8 hours, which the worker cuts into parts; it takes effect only with the
+first). Both are off by default and the web behaves as before. What the web does with them:
+
+- The upload page's length hint is `max_recording_seconds` from `GET /api/flags` (4 hours until it has loaded, or for an API that
+  does not send it; 8 hours with both flags on). Nothing to configure.
+- `MAX_UPLOAD_BYTES` (web pod environment variable, default 1 GiB) **must equal the API's `MAX_UPLOAD_BYTES` setting**: a longer
+  recording is bigger, and the web refuses a declared size over its own before reading any of it. See above.
+- While the worker prepares a recording its job is `PENDING`: the job page says "Your recording is being prepared for
+  transcription", shows no audio player and asks for no audio (there is none yet); the jobs table shows "Pending". No new status
+  exists. A recording that cannot be prepared becomes a `FAILED` job whose message (`errorMessage`) is the sentence the upload would
+  have given.
+- A recording in parts has speakers labelled by part (`Part 1 · Speaker 0`, `Part 2 · Speaker 0`). The existing speaker editor
+  ("Replace one" / "Replace all") renames them; giving the labels of several parts the same name makes them one speaker.
+  The same person is a separate speaker in each part until then.
+- Rollout order, rollback, settings and the AAT checklist are in transcribe-api's README ("Long recordings: rollout, rollback and
+  operation").
 
 ## Tests
 

@@ -157,3 +157,45 @@ describe("a transcript in parts in the speaker editor", () => {
     ).toHaveLength(2);
   });
 });
+
+describe("a recording that is still being prepared", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // DIAAT-408: with background preparation a job is PENDING until the worker
+  // has converted (and, over 240 minutes, split) the recording and sent it to
+  // be transcribed. The page says so, shows no player, and asks for no audio.
+  const pending = (): TranscriptionJob => ({
+    ...job([]),
+    id: "job-pending",
+    status: "PENDING",
+    segments: undefined,
+    audioDurationSeconds: 28_800,
+  });
+
+  it("says the recording is being prepared, with no audio player and no audio request", () => {
+    const fetchMock = vi.fn().mockReturnValue(new Promise(() => undefined));
+    vi.stubGlobal("fetch", fetchMock);
+    const { container } = render(
+      <JobDetailView jobId="job-pending" initialJob={pending()} />
+    );
+
+    expect(screen.getByText(/being prepared for transcription/i)).toBeDefined();
+    expect(screen.getByText("Pending")).toBeDefined();
+    expect(container.querySelector("audio")).toBeNull();
+    expect(
+      fetchMock.mock.calls.filter(([url]) => String(url).includes("/audio"))
+    ).toHaveLength(0);
+  });
+
+  it("keeps the in-progress wording for a job that has been sent to be transcribed", () => {
+    render(
+      <JobDetailView
+        jobId="job-pending"
+        initialJob={{ ...pending(), status: "PROCESSING" }}
+      />
+    );
+    expect(
+      screen.getByText(/transcription is still in progress/i)
+    ).toBeDefined();
+  });
+});
