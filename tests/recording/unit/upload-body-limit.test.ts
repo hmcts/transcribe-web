@@ -5,7 +5,7 @@ import { Readable } from "node:stream";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { config as proxyConfig } from "@/proxy";
 
-// Recording uploads go up to 200 MB (app/api/upload/route.ts, and the API's
+// Recording uploads go up to 1 GiB (app/api/upload/route.ts, and the API's
 // own cap). Next.js buffers the whole body of any request the proxy
 // (proxy.ts) runs on before the route handler sees it, and passes on only
 // the first experimental.proxyClientMaxBodySize bytes (10 MB by default),
@@ -100,8 +100,8 @@ describe("upload request bodies and the proxy", () => {
   it("leaves the proxy's body limit at Next's 10 MB default", () => {
     // Raising it would let any request the proxy runs on, signed in or not
     // (the proxy only checks that a session cookie is present), make the
-    // server buffer that much: ~840 MB RSS was measured for one 200 MB body,
-    // against the web pod's 512 MiB limit.
+    // server buffer that much: ~840 MB RSS was measured for one 200 MB body
+    // (the cap then; not measured at 1 GiB), against the web pod's 512 MiB limit.
     expect(nextConfig.experimental?.proxyClientMaxBodySize).toBeUndefined();
   });
 });

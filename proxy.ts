@@ -175,8 +175,9 @@ export const config = {
       // upload. Next.js buffers the whole request body of any
       // request the proxy runs on, and passes at most
       // experimental.proxyClientMaxBodySize (10 MB) of it on; /api/upload
-      // streams recordings of up to 200 MB to the API instead, and checks the
-      // session itself (app/api/upload/route.ts). /api/upload-audio is the
+      // streams recordings of up to 1 GiB to the API instead (in step with the
+      // API's _MAX_UPLOAD_BYTES), and checks the session itself
+      // (app/api/upload/route.ts). /api/upload-audio is the
       // dictation upload: deployed, Caddy sends it straight to the API; in local
       // development the dev proxy (app/api/[...path]/route.ts) streams it, and
       // must not be buffered first either.
