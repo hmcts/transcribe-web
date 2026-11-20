@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { BackendApiError } from "@/lib/recording/api-client";
+import {
+  BackendApiError,
+  UploadRefusedError,
+} from "@/lib/recording/api-client";
 import { backendFailed } from "@/lib/recording/raw-upload";
 
 // DIAAT-373: an upload the API refused because of who the user is (another tab switched context, the
@@ -27,10 +30,31 @@ describe("backendFailed", () => {
     expect(await response.json()).toEqual({ error: "x" });
   });
 
+  // DIAAT-408: the API's refusal of the audio file itself (over the size limit, or longer than 4
+  // hours) has a message written for the user, and it reaches them.
+  it("passes on the API's message when it refused the audio file itself", async () => {
+    const detail =
+      "The recording is 4 hours 12 minutes long. Recordings can be at most 4 hours.";
+    const response = backendFailed(
+      new UploadRefusedError(new BackendApiError("x", 422, "req-1"), detail),
+      "Failed to submit audio"
+    );
+    expect(response.status).toBe(422);
+    expect(await response.json()).toEqual({
+      error: detail,
+      request_id: "req-1",
+    });
+  });
+
   it("keeps the fixed message for every other failure", async () => {
-    const refused = backendFailed(new BackendApiError("bad file", 422), "Failed to submit audio");
+    const refused = backendFailed(
+      new BackendApiError("bad file", 422),
+      "Failed to submit audio"
+    );
     expect(refused.status).toBe(422);
     expect(await refused.json()).toEqual({ error: "Failed to submit audio" });
-    expect(backendFailed(new Error("down"), "Failed to submit audio").status).toBe(502);
+    expect(
+      backendFailed(new Error("down"), "Failed to submit audio").status
+    ).toBe(502);
   });
 });

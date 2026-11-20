@@ -66,6 +66,11 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
         <p className="text-xs text-muted-foreground mt-1">
           MP3, WAV, MP4, M4A, OGG, FLAC supported
         </p>
+        {/* DIAAT-408: the API refuses recordings over 4 hours (MAX_AUDIO_DURATION_SECONDS). */}
+        <p className="text-xs text-muted-foreground mt-1">
+          Recordings up to 4 hours. For long recordings, MP3 or M4A files are
+          much smaller than WAV.
+        </p>
         {selectedFile && (
           <p className="text-sm text-primary mt-3 font-medium">
             Selected: {selectedFile.name}

@@ -125,10 +125,30 @@ export class BackendApiError extends Error {
     public requestId?: string,
     // The refusal's machine-readable code (`context_changed`, `user_deactivated`, ...),
     // from `{detail: {code}}`, so a route can pass on the ones the browser must see.
-    public code?: string
+    public code?: string,
+    // The API's `detail` when it is a string (see detailOf). Not for the
+    // browser as it is: a route passes on only the ones it knows are written
+    // for the user (UploadRefusedError).
+    public detail?: string
   ) {
     super(message);
     this.name = "BackendApiError";
+  }
+}
+
+/**
+ * POST /api/v1/uploads refused the audio file because of the file itself
+ * (DIAAT-408): 413 for a file over the API's size limit, 422 for one that is
+ * not a supported or decodable audio file or is longer than the API allows
+ * ("The recording is 4 hours 12 minutes long. Recordings can be at most 4
+ * hours."). The API writes each `detail` for the user to read, so the upload
+ * route (backendFailed) passes it on. Only the upload step throws this: the
+ * same statuses from any other API call keep the route's fixed message.
+ */
+export class UploadRefusedError extends BackendApiError {
+  constructor(cause: BackendApiError, detail: string) {
+    super(cause.message, cause.status, cause.requestId, cause.code, detail);
+    this.name = "UploadRefusedError";
   }
 }
 
@@ -141,6 +161,24 @@ function requestIdOf(body: string): string | undefined {
       const { request_id } = parsed;
       return typeof request_id === "string" && request_id !== ""
         ? request_id
+        : undefined;
+    }
+  } catch {
+    // Not JSON: a proxy's error page, say.
+  }
+  return undefined;
+}
+
+// The API's own message for why it refused a request, when `detail` is a
+// string: the ones the upload route writes for the user to read. A
+// validation error's `detail` is a list of internal field errors, never one.
+function detailOf(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const { detail } = parsed;
+      return typeof detail === "string" && detail.trim() !== ""
+        ? detail
         : undefined;
     }
   } catch {
@@ -215,7 +253,8 @@ async function backendFetch(
       `Backend request to ${path} failed: ${response.status} ${body}`,
       response.status,
       requestIdOf(body),
-      refusalCodeOf(body)
+      refusalCodeOf(body),
+      detailOf(body)
     );
   }
 
@@ -557,8 +596,19 @@ export async function uploadAudio(
   file: UploadFile,
   auth: BackendAuthContext | null
 ): Promise<BackendUpload> {
-  const response = await postFile("/api/v1/uploads", file, auth);
-  return response.json();
+  try {
+    const response = await postFile("/api/v1/uploads", file, auth);
+    return await response.json();
+  } catch (err) {
+    if (
+      err instanceof BackendApiError &&
+      (err.status === 413 || err.status === 422) &&
+      err.detail !== undefined
+    ) {
+      throw new UploadRefusedError(err, err.detail);
+    }
+    throw err;
+  }
 }
 
 export interface SubmitJobMetadata {

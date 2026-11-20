@@ -4,8 +4,8 @@
 // multipart bodies from the browser) and forward them to the API as the
 // multipart `file` part it expects. The file's bytes are piped through as
 // they arrive, never gathered into a Blob and a FormData: that copies the
-// whole upload two more times (a 200 MB recording took a process from ~60 MB
-// to ~790 MB RSS), against the web pod's 512 MiB memory limit. See
+// whole upload two more times (a 200 MB recording, when that was the cap,
+// took a process from ~60 MB to ~790 MB RSS), against the web pod's 512 MiB memory limit. See
 // app/api/upload/route.ts for the rest of what keeps an upload out of memory.
 
 /** A file whose bytes are still arriving, e.g. a request body. */
