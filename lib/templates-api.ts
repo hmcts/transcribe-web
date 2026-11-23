@@ -27,7 +27,7 @@ export type TemplateFieldType =
   | "benchnotes"
   | "dictated";
 
-export type BenchNotesSource = "jurisdiction" | "year";
+export type BenchNotesSource = "jurisdiction" | "year" | "legal_framework";
 
 /** The admin's field types, in the order the field list offers them. */
 export const FIELD_TYPES: { value: TemplateFieldType; label: string }[] = [
@@ -46,6 +46,11 @@ export const BENCHNOTES_SOURCES: { value: BenchNotesSource; label: string }[] =
   [
     { value: "jurisdiction", label: "The jurisdiction's name" },
     { value: "year", label: "The year" },
+    // DIAAT-415: the Legal Text Manager's text of the frameworks the judge chooses.
+    {
+      value: "legal_framework",
+      label: "Legal framework text (of the legal issues chosen)",
+    },
   ];
 
 export const LIST_TYPES: TemplateFieldType[] = ["dropdown", "multi_select"];
@@ -67,6 +72,8 @@ export interface TemplateField {
   required: boolean;
   options: string[];
   source: BenchNotesSource | null;
+  /** A legal framework box's text when no framework is chosen (DIAAT-415). */
+  empty_text?: string | null;
 }
 
 export interface AdminTemplate {

@@ -675,6 +675,9 @@ function TemplateFieldsEditor({
                         setOptionText((all) => ({ ...all, [f.tag]: text }))
                       }
                       onSource={(source) => update(f.tag, { source })}
+                      onEmptyText={(text) =>
+                        update(f.tag, { empty_text: text || null })
+                      }
                     />
                   </TableCell>
                   <TableCell className="align-top">
@@ -801,11 +804,13 @@ function FieldConfiguration({
   options,
   onOptions,
   onSource,
+  onEmptyText,
 }: {
   field: TemplateField;
   options: string;
   onOptions: (text: string) => void;
   onSource: (source: BenchNotesSource) => void;
+  onEmptyText: (text: string) => void;
 }) {
   const name = field.label || field.tag;
   // Not from the tag, which can hold spaces (an ID reference list would split it).
@@ -836,21 +841,42 @@ function FieldConfiguration({
   }
   if (field.type === "benchnotes") {
     return (
-      <Select
-        value={field.source ?? undefined}
-        onValueChange={(v) => onSource(v as BenchNotesSource)}
-      >
-        <SelectTrigger aria-label={`What BenchNotes fills ${name} with`}>
-          <SelectValue placeholder="Choose" />
-        </SelectTrigger>
-        <SelectContent>
-          {BENCHNOTES_SOURCES.map((s) => (
-            <SelectItem key={s.value} value={s.value}>
-              {s.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
+      <div className="space-y-2">
+        <Select
+          value={field.source ?? undefined}
+          onValueChange={(v) => onSource(v as BenchNotesSource)}
+        >
+          <SelectTrigger aria-label={`What BenchNotes fills ${name} with`}>
+            <SelectValue placeholder="Choose" />
+          </SelectTrigger>
+          <SelectContent>
+            {BENCHNOTES_SOURCES.map((s) => (
+              <SelectItem key={s.value} value={s.value}>
+                {s.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {field.source === "legal_framework" && (
+          <div className="space-y-1">
+            <Label htmlFor={`${hintId}-empty`} className="text-xs">
+              When no legal framework is chosen, print
+            </Label>
+            <Input
+              id={`${hintId}-empty`}
+              aria-describedby={hintId}
+              maxLength={2000}
+              value={field.empty_text ?? ""}
+              onChange={(e) => onEmptyText(e.target.value)}
+            />
+            <span id={hintId} className="block text-xs text-muted-foreground">
+              Prints the Legal Text Manager's text of each legal framework the
+              judge chooses, in their order. Left blank, the line is removed
+              when none is chosen.
+            </span>
+          </div>
+        )}
+      </div>
     );
   }
   if (field.type === "dictated") {
