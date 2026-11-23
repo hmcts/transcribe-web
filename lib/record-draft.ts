@@ -4,7 +4,13 @@ import {
 } from "@/components/audio/dictation/formData";
 import type { SectionedTranscript } from "@/components/audio/dictation/types";
 import { normalizeOptionalEditorText } from "@/lib/editor-contracts";
-import { hasAnswers, type TemplateValues } from "@/lib/templates-api";
+import {
+  type AvailableTemplate,
+  fittingValue,
+  hasAnswers,
+  ownValue,
+  type TemplateValues,
+} from "@/lib/templates-api";
 
 /**
  * What the record page saves in its draft besides the transcript (DIAAT-414):
@@ -90,4 +96,21 @@ export function fromDraftFormData(saved: DraftFormData): {
         ? template
         : null,
   };
+}
+
+/** Restored answers as they fit their template now (its fields and options may
+ * have changed since the save): any its form could not show, or the API would
+ * refuse, are left out rather than submitted unseen. */
+export function fitToTemplate(
+  template: AvailableTemplate,
+  values: TemplateValues
+): TemplateValues {
+  return Object.fromEntries(
+    template.fields.flatMap((field) => {
+      const fitted = fittingValue(field, ownValue(values, field.tag));
+      return fitted === undefined || fitted === null
+        ? []
+        : [[field.tag, fitted]];
+    })
+  );
 }

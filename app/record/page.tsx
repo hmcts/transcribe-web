@@ -62,6 +62,7 @@ import {
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import {
   draftFormData,
+  fitToTemplate,
   fromDraftFormData,
   hasTranscript,
   hasWork,
@@ -100,6 +101,7 @@ import {
 } from "@/lib/templates-api";
 
 const TEMPLATES_FAILED_TOAST = "templates-failed";
+const RESTORED_TEMPLATE_GONE_TOAST = "restored-template-gone";
 /** How soon after the judge stops typing their hearing details or notes the
  * draft is saved (DIAAT-414); while recording, the 3-second interval saves. */
 const EDIT_SAVE_DELAY_MS = 1_000;
@@ -198,6 +200,14 @@ export default function RecordPage() {
   const [templates, setTemplates] = useState<AvailableTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [templateValues, setTemplateValues] = useState<TemplateValues>({});
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  // DIAAT-414: a restored template's answers, as saved, until the templates have
+  // loaded and they are fitted to it; or, if it is no longer offered, until the
+  // judge answers another. Meanwhile the draft keeps them as they were.
+  const [restoredTemplate, setRestoredTemplate] = useState<{
+    id: string;
+    values: TemplateValues;
+  } | null>(null);
   const [templateErrors, setTemplateErrors] = useState<Record<string, string>>(
     {}
   );
@@ -245,29 +255,34 @@ export default function RecordPage() {
   }, []);
   const draftSettled = draftLookup === "settled";
   const hadDraftContentRef = useRef(false);
-  // DIAAT-414: everything of the judge's the draft keeps. A restored template's
-  // answers are kept with its ID while the templates load (or cannot be).
-  const draftTemplateId = hasDecisionTemplate
-    ? null
-    : (chosenTemplate?.id ?? (templateId || null));
-  const work = useMemo<RecordDraftWork>(
-    () => ({
+  // DIAAT-414: everything of the judge's the draft keeps. The template answers
+  // are the restored ones while those are not yet fitted to their template.
+  const chosenTemplateId = chosenTemplate?.id ?? null;
+  const work = useMemo<RecordDraftWork>(() => {
+    const template = hasDecisionTemplate
+      ? null
+      : (restoredTemplate ??
+        (chosenTemplateId === null
+          ? null
+          : { id: chosenTemplateId, values: templateValues }));
+    return {
       transcript: sectionedTranscript,
       formData,
       notes: editorContent,
       defaultNotes,
-      templateId: draftTemplateId,
-      templateValues,
-    }),
-    [
-      sectionedTranscript,
-      formData,
-      editorContent,
-      defaultNotes,
-      draftTemplateId,
-      templateValues,
-    ]
-  );
+      templateId: template?.id ?? null,
+      templateValues: template?.values ?? {},
+    };
+  }, [
+    sectionedTranscript,
+    formData,
+    editorContent,
+    defaultNotes,
+    hasDecisionTemplate,
+    restoredTemplate,
+    chosenTemplateId,
+    templateValues,
+  ]);
   const pageHasWork = hasWork(work);
   const workRef = useRef(work);
   const prevIsRecordingRef = useRef(false);
@@ -397,11 +412,15 @@ export default function RecordPage() {
       setTemplateId((id) =>
         list.some((t) => t.id === id) ? id : (list[0]?.id ?? "")
       );
+      setTemplatesLoaded(true);
     } catch (error) {
       if (request !== templatesRequest.current) return;
       // An API from before DIAAT-344 has no templates: the page works as before,
       // dictate and copy the text out.
-      if (error instanceof TemplateRefusedError && error.status === 404) return;
+      if (error instanceof TemplateRefusedError && error.status === 404) {
+        setTemplatesLoaded(true);
+        return;
+      }
       // Anything else is not "no templates": say so, with a way to try again. The
       // page still lets the judge dictate and copy the text out meanwhile.
       console.error("Failed to load templates", error);
@@ -523,10 +542,8 @@ export default function RecordPage() {
                   setEditorContent(restored.notes);
                   setNotesEditorKey(k => k + 1);
                 }
-                if (restored.template) {
-                  setTemplateId(restored.template.id);
-                  setTemplateValues(restored.template.values);
-                }
+                // Fitted to its template once the templates have loaded (below).
+                if (restored.template) setRestoredTemplate(restored.template);
                 // Only now has a draft been restored (not when one was found).
                 liveDraftTelemetry.restoreSucceeded();
               },
@@ -574,6 +591,23 @@ export default function RecordPage() {
       }
     };
   }, [deleteDraft, setDraftLookup]);
+
+  // DIAAT-414: restored answers are fitted to their template as it is now, once
+  // the templates have loaded: only answers its form can show and the API takes.
+  useEffect(() => {
+    if (!restoredTemplate || !templatesLoaded) return;
+    const template = templates.find((t) => t.id === restoredTemplate.id);
+    if (!template) {
+      toast.info(
+        "The template your saved answers were for is no longer offered. They stay saved until you answer another template.",
+        { id: RESTORED_TEMPLATE_GONE_TOAST }
+      );
+      return;
+    }
+    setTemplateId(template.id);
+    setTemplateValues(fitToTemplate(template, restoredTemplate.values));
+    setRestoredTemplate(null);
+  }, [restoredTemplate, templatesLoaded, templates]);
 
   // Delete the server draft as soon as the page holds nothing of the judge's
   // (the transcript cleared, the hearing details reset), so stale drafts don't
@@ -1203,9 +1237,14 @@ export default function RecordPage() {
         setTemplateId(id);
         setTemplateValues({});
         setTemplateErrors({});
+        setRestoredTemplate(null);
       }}
       values={templateValues}
-      onValuesChange={setTemplateValues}
+      onValuesChange={(values) => {
+        // Answering this template: answers kept for one no longer offered go.
+        setRestoredTemplate(null);
+        setTemplateValues(values);
+      }}
       errors={templateErrors}
       onClear={() => {
         setTemplateValues({});

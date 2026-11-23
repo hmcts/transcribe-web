@@ -81,4 +81,17 @@ export function useLeaveGuard(
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
   }, [active, message, beforeUnload]);
+
+  // No longer guarding, but its guard entry is still there: the next Back passes
+  // over it, rather than staying on the page (DIAAT-414: a guard can be short-lived).
+  useEffect(() => {
+    if (active || !historyGuard.current) return;
+    const onPopState = () => {
+      historyGuard.current = false;
+      window.removeEventListener("popstate", onPopState);
+      window.history.back();
+    };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [active]);
 }

@@ -305,6 +305,58 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     );
   });
 
+  it("fits restored answers to the template as it is now (DIAAT-414)", async () => {
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: { background: [], evidence: [], facts: [] },
+      form_data: {
+        template: {
+          id: JUDGMENT.id,
+          values: { Reference: "1/2026", Issues: ["removed"] },
+        },
+      },
+      saved_at: new Date().toISOString(),
+    });
+    await renderPage([JUDGMENT]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText(/Case number/) as HTMLInputElement).value
+      ).toBe("1/2026")
+    );
+    await waitFor(() => expect(putLiveDraft).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(putLiveDraft).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({
+        template: { id: JUDGMENT.id, values: { Reference: "1/2026" } },
+      })
+    );
+  });
+
+  it("keeps answers for a template no longer offered, rather than deleting them (DIAAT-414)", async () => {
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: { background: [], evidence: [], facts: [] },
+      form_data: {
+        template: { id: "gone", values: { Reference: "1/2026" } },
+      },
+      saved_at: new Date().toISOString(),
+    });
+    await renderPage([]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText(/no longer offered\. They stay saved/)
+    ).toBeTruthy();
+    await waitFor(() => expect(putLiveDraft).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(putLiveDraft).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({
+        template: { id: "gone", values: { Reference: "1/2026" } },
+      })
+    );
+    expect(deleteLiveDraft).not.toHaveBeenCalled();
+  });
+
   it("clears the answers when the judge chooses another template", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true); // agrees
     const user = userEvent.setup();

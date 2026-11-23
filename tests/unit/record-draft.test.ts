@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { defaultFormValues } from "@/components/audio/dictation/formData";
 import {
   draftFormData,
+  fitToTemplate,
   fromDraftFormData,
   hasWork,
   type RecordDraftWork,
@@ -82,5 +83,45 @@ describe("the record page's draft (DIAAT-414)", () => {
       notes: null,
       template: null,
     });
+  });
+
+  it("fits restored answers to their template as it is now", () => {
+    const template = {
+      id: "t1",
+      name: "Judgment",
+      fields: [
+        {
+          tag: "Reference",
+          label: "Case number",
+          type: "text",
+          required: true,
+          options: [],
+        },
+        {
+          tag: "Issues",
+          label: "Legal issues",
+          type: "legal_issues",
+          required: true,
+          options: [{ value: "unfair", label: "Unfair dismissal" }],
+        },
+        {
+          tag: "Party",
+          label: "Party",
+          type: "dropdown",
+          required: false,
+          options: [{ value: "Claimant", label: "Claimant" }],
+        },
+      ],
+    } as unknown as Parameters<typeof fitToTemplate>[0];
+
+    expect(
+      fitToTemplate(template, {
+        Reference: "1/2026",
+        Issues: ["unfair", "removed"], // one option since removed
+        Party: "Witness", // no longer offered
+        Gone: "a field since removed",
+      })
+    ).toEqual({ Reference: "1/2026", Issues: ["unfair"] });
+    expect(fitToTemplate(template, { Issues: ["removed"] })).toEqual({});
   });
 });
