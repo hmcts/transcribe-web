@@ -1024,4 +1024,47 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(mockFetchRevision).toHaveBeenCalledTimes(2);
     expect(screen.queryByLabelText(/Costs order/)).toBeNull();
   });
+
+  it("shows the wait for a draft's template no longer offered, with none offered now (DIAAT-339)", async () => {
+    mockFetchRevision.mockReturnValue(new Promise(() => undefined)); // still loading
+    draftWith({
+      id: JUDGMENT.id,
+      values: { Reference: "1/2026" },
+      revision: "r1",
+    });
+    await renderPage([]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText(
+        "Loading the template this draft was started with"
+      )
+    ).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /copy text/i })).toBeNull();
+  });
+
+  it("keeps the draft's own sections while its template loads (DIAAT-339)", async () => {
+    mockFetchRevision.mockReturnValue(new Promise(() => undefined)); // still loading
+    const said = (text: string) => [
+      { speaker: "Judge", text, timestamp: "00:01" },
+    ];
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: {
+        "box:Facts": said("Facts."),
+        "box:Decision": said("Allowed."),
+      },
+      form_data: { template: { id: JUDGMENT.id, values: {}, revision: "r1" } },
+      saved_at: new Date().toISOString(),
+    });
+    await renderPage([CHANGED]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() =>
+      expect(
+        lastSpeechDemoProps.current.sections.map((s: { key: string }) => s.key)
+      ).toEqual(["box:Facts", "box:Decision"])
+    );
+  });
 });

@@ -77,14 +77,17 @@ export function hasWork(work: RecordDraftWork): boolean {
 }
 
 /** The draft's form data: the hearing details, and the notes and template
- * answers only when there are any. The template is kept with its answers, and
- * with dictation (DIAAT-416: which sections it was dictated in are its). */
+ * answers only when there are any. The template is kept with its answers, with
+ * dictation (DIAAT-416: which sections it was dictated in are its) and with notes
+ * (DIAAT-339: the draft keeps the version it was started with). */
 export function draftFormData(work: RecordDraftWork): DraftFormData {
   return {
     ...work.formData,
     ...(hasNotes(work.notes, work.defaultNotes) && { notes: work.notes }),
     ...(work.templateId !== null &&
-      (hasAnswers(work.templateValues) || hasTranscript(work.transcript)) && {
+      (hasAnswers(work.templateValues) ||
+        hasTranscript(work.transcript) ||
+        hasNotes(work.notes, work.defaultNotes)) && {
         template: {
           id: work.templateId,
           values: work.templateValues,

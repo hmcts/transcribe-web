@@ -336,7 +336,7 @@ export function TemplatesEditor({ code }: { code: string }) {
           key={`${current.id}:${current.version}`}
           code={code}
           template={current}
-          locked={uploading || restoring}
+          locked={uploading || restoring || starting}
           onStateChange={setEditor}
           onSaved={applySaved}
           onDeleted={(id) => {
@@ -393,8 +393,9 @@ function TemplateFieldsEditor({
 }: {
   code: string;
   template: AdminTemplate;
-  /** Another template is being uploaded (it opens when done), or this one is going
-   * back to an earlier version (it reopens): nothing here can be changed meanwhile. */
+  /** Another template is being uploaded or started from a shared one (it opens when
+   * done), or this one is going back to an earlier version (it reopens): nothing here
+   * can be changed meanwhile. */
   locked: boolean;
   /** Busy or unsaved: the list stops other changes while busy, and asks before
    * dropping unsaved edits. */

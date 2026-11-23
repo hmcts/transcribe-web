@@ -163,4 +163,15 @@ describe("the record page's draft (DIAAT-414)", () => {
       }).template
     ).toEqual({ id: "t1", values: {} });
   });
+
+  it("keeps the template's version with notes alone too (DIAAT-339)", () => {
+    expect(
+      draftFormData({
+        ...BLANK,
+        notes: "<p>Credibility</p>",
+        templateId: "t1",
+        templateRevision: "r1",
+      }).template
+    ).toEqual({ id: "t1", values: {}, revision: "r1" });
+  });
 });

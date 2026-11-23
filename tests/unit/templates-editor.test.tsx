@@ -1634,4 +1634,41 @@ describe("A template shared as a base (DIAAT-336)", () => {
       "That template is no longer shared as a base."
     );
   });
+
+  it("locks the open field list while a copy of a shared template is made", async () => {
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        const method = options?.method ?? "GET";
+        if (endpoint === "/admin/jurisdictions/ET/templates")
+          return { data: [UPLOADED] };
+        if (endpoint === "/admin/jurisdictions/ET/base-templates")
+          return { data: [SHARED] };
+        if (endpoint.endsWith("/history")) return { data: { versions: [] } };
+        if (method === "POST") return new Promise(() => undefined); // still copying
+        throw new Error(`Unexpected ${method} ${endpoint}`);
+      }
+    );
+    const user = userEvent.setup();
+    const fields = await open(user);
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    const picker = await screen.findByRole("region", {
+      name: "Start from a shared template",
+    });
+    await within(picker).findByText(
+      /Generic judgment \(Employment Tribunals\)/
+    );
+    await user.click(
+      within(picker).getByRole("button", { name: "Start from it" })
+    );
+
+    await waitFor(() =>
+      expect(
+        within(fields)
+          .getByLabelText("Label of box Reference")
+          .matches(":disabled")
+      ).toBe(true)
+    );
+  });
 });

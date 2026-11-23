@@ -231,14 +231,20 @@ export default function RecordPage() {
   const choosableTemplates = useMemo(() => {
     if (!startedTemplate) return templates;
     return templates.some((t) => t.id === startedTemplate.id)
-      ? templates.map((t) => (t.id === startedTemplate.id ? startedTemplate : t))
+      ? templates.map((t) =>
+          t.id === startedTemplate.id ? startedTemplate : t
+        )
       : [startedTemplate, ...templates];
   }, [templates, startedTemplate]);
   const chosenTemplate =
     choosableTemplates.find((t) => t.id === templateId) ??
     choosableTemplates[0] ??
     null;
-  const hasTemplateForm = !hasDecisionTemplate && chosenTemplate !== null;
+  // DIAAT-339: also while a restored draft's template loads, which may be one no
+  // longer offered: its status shows where Hearing details goes.
+  const hasTemplateForm =
+    !hasDecisionTemplate &&
+    (chosenTemplate !== null || startedPending !== null);
   // A form to fill and a hearing to submit, rather than text to copy out.
   const hasHearingForm = hasDecisionTemplate || hasTemplateForm;
   // DIAAT-416: the sections the judge dictates into: the IAC decision's, or an
@@ -248,15 +254,38 @@ export default function RecordPage() {
   const templateSections = hasTemplateForm
     ? chosenTemplate?.sections
     : undefined;
+  const [restoredTranscript, setRestoredTranscript] = useState<
+    SectionedTranscript | undefined
+  >();
   const dictationSections = useMemo<DictationSection[]>(() => {
     if (hasDecisionTemplate) return IAC_SECTIONS;
+    // DIAAT-339: while the draft's template version loads (or could not be
+    // loaded), the sections its dictation was kept in, so nothing is moved out of
+    // them meanwhile. Named by their boxes until the template has loaded.
+    const kept = startedPending
+      ? Object.keys(restoredTranscript ?? {}).filter((key) =>
+          key.startsWith("box:")
+        )
+      : [];
+    if (kept.length > 1) {
+      return kept.map((key, index) => ({
+        key,
+        label: key.slice("box:".length),
+        color: SECTION_COLORS[index % SECTION_COLORS.length],
+      }));
+    }
     if (!templateSections || templateSections.length < 2) return SINGLE_SECTION;
     return templateSections.map((section, index) => ({
       key: `box:${section.tag}`,
       label: section.label,
       color: SECTION_COLORS[index % SECTION_COLORS.length],
     }));
-  }, [hasDecisionTemplate, templateSections]);
+  }, [
+    hasDecisionTemplate,
+    templateSections,
+    startedPending,
+    restoredTranscript,
+  ]);
   const hasSectionChoice = dictationSections.length > 1;
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
@@ -285,7 +314,6 @@ export default function RecordPage() {
   const [sessionHadNoContent, setSessionHadNoContent] = useState(false);
   const [postSessionNoticeDismissed, setPostSessionNoticeDismissed] =
     useState(false);
-  const [restoredTranscript, setRestoredTranscript] = useState<SectionedTranscript | undefined>();
   // DIAAT-296: a restore lookup that failed is not the same fact as "you have
   // no draft", and the two must never look alike on screen again.
   const [restoreFailureAlert, setRestoreFailureAlert] =
@@ -967,13 +995,13 @@ export default function RecordPage() {
     if (!hasDecisionTemplate) {
       // DIAAT-344: the chosen template, filled with the judge's values. Not while
       // a restored draft's answers wait for their template (DIAAT-339).
-      if (!chosenTemplate) return;
       if (startedPending) {
         toast.error(
           "Hearing details are not ready yet: wait for the draft's template to load, then submit again."
         );
         return;
       }
+      if (!chosenTemplate) return;
       const missing = missingValues(chosenTemplate, templateValues);
       setTemplateErrors(missing);
       if (Object.keys(missing).length > 0) {
