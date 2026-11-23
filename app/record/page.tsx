@@ -60,6 +60,13 @@ import {
   trackDictationPage,
 } from "@/lib/dictation-session";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
+import {
+  draftFormData,
+  fromDraftFormData,
+  hasTranscript,
+  hasWork,
+  type RecordDraftWork,
+} from "@/lib/record-draft";
 import { fetchUserDocumentContent } from "@/lib/document-content-api";
 import { DECISIONS_HREF } from "@/lib/navigation";
 import {
@@ -80,7 +87,6 @@ import {
   SPEECH_NO_CONTENT_EARLIER_ALERT,
 } from "@/lib/speech-alerts";
 import cn from "@/lib/utils";
-import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import { TemplateForm } from "@/components/audio/dictation/template-form";
 import {
   type AvailableTemplate,
@@ -93,8 +99,9 @@ import {
 } from "@/lib/templates-api";
 
 const TEMPLATES_FAILED_TOAST = "templates-failed";
-const LEAVE_WITH_ANSWERS =
-  "Leave this page? Your hearing details answers will be lost: they are only kept when you submit the hearing.";
+/** How soon after the judge stops typing their hearing details or notes the
+ * draft is saved (DIAAT-414); while recording, the 3-second interval saves. */
+const EDIT_SAVE_DELAY_MS = 1_000;
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -221,9 +228,32 @@ export default function RecordPage() {
   const [editorContent, setEditorContent] = useState(defaultNotes);
   const formScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const restoreToastIdRef = useRef<string | number | undefined>(undefined);
+  // Whether an earlier draft is offered for restore (DIAAT-414: the page's own
+  // work is saved once it is not), as state so the save follows its answer.
+  const [restoreOffered, setRestoreOffered] = useState(false);
   const hadDraftContentRef = useRef(false);
-  const sectionedTranscriptRef = useRef(sectionedTranscript);
   const formDataRef = useRef(formData);
+  // DIAAT-414: everything of the judge's the draft keeps. The refs follow it for
+  // the save and switch handlers, kept in step by the effects further down.
+  const draftTemplateId =
+    !hasDecisionTemplate && chosenTemplate ? chosenTemplate.id : null;
+  const work: RecordDraftWork = {
+    transcript: sectionedTranscript,
+    formData,
+    notes: editorContent,
+    defaultNotes,
+    templateId: draftTemplateId,
+    templateValues,
+  };
+  const pageHasWork = hasWork(work);
+  const workRef = useRef(work);
+  // What the judge has typed into the page, rather than dictated.
+  const editSignature = JSON.stringify([
+    formData,
+    editorContent,
+    draftTemplateId,
+    templateValues,
+  ]);
   const prevIsRecordingRef = useRef(false);
   const isDirtyRef = useRef(false);
   // True for 2s after recording stops — lets us catch transcript content
@@ -234,19 +264,16 @@ export default function RecordPage() {
   /**
    * The current draft, or null when there is nothing worth saving.
    *
-   * Returning null preserves the existing content gating: the page only writes
-   * once a transcript section is non-empty. That behaviour is deliberate and
-   * was confirmed in scope for DIAAT-297, so it is kept exactly as it was —
-   * only the handling of the *result* of a write changes in DIAAT-296.
+   * DIAAT-414: the draft holds all of the judge's work: the transcript, the
+   * hearing details, the notes and a template's answers, so none is lost when
+   * they leave the page or switch jurisdiction. An earlier draft offered for
+   * restore is not written over until the judge restores or discards it (or
+   * starts recording, which leaves it behind, as before).
    */
   const getAutosavePayload = useCallback(() => {
-    const transcript = sectionedTranscriptRef.current;
-    const hasContent =
-      transcript.background.length > 0 ||
-      transcript.evidence.length > 0 ||
-      transcript.facts.length > 0;
-    if (!hasContent) return null;
-    return { transcript, formData: formDataRef.current };
+    const current = workRef.current;
+    if (restoreToastIdRef.current !== undefined || !hasWork(current)) return null;
+    return { transcript: current.transcript, formData: draftFormData(current) };
   }, []);
 
   const {
@@ -264,33 +291,17 @@ export default function RecordPage() {
   useEffect(() => {
     isSubmittingRef.current = isSubmitting;
   }, [isSubmitting]);
-  // The draft holds the dictation, and the hearing form with it. Notes, and a form
-  // filled in before anything is dictated, are not saved, so they stop the switch
-  // rather than being lost with the tab.
-  const hasNotesRef = useRef(false);
-  useEffect(() => {
-    hasNotesRef.current =
-      normalizeOptionalEditorText(editorContent) !==
-      normalizeOptionalEditorText(defaultNotes);
-  }, [editorContent, defaultNotes]);
-  // DIAAT-344: a template's answers are not in the draft either.
-  const hasTemplateAnswersRef = useRef(false);
-  useEffect(() => {
-    hasTemplateAnswersRef.current = hasAnswers(templateValues);
-  }, [templateValues]);
+  // DIAAT-414: the draft holds all of the judge's work, so the switch saves it
+  // and goes ahead. Only work typed while an earlier draft is still offered for
+  // restore is not saved (it would write over that draft): the judge restores
+  // or discards that draft first.
   useEffect(
     () =>
       onBeforeJurisdictionSwitch(async () => {
         const checkNothingIsLost = () => {
           if (isSubmittingRef.current) throw new JurisdictionSwitchError("busy");
-          // The judge's name is filled in from their sign-in, here and again after
-          // the reload: only the hearing details are the judge's own work.
-          const { judgeName: _filledIn, ...entered } = formDataRef.current;
-          const { judgeName: _blank, ...blank } = defaultFormValues;
-          const unsavedForm =
-            getAutosavePayload() === null && JSON.stringify(entered) !== JSON.stringify(blank);
-          if (hasNotesRef.current || unsavedForm || hasTemplateAnswersRef.current) {
-            throw new JurisdictionSwitchError("unsaved");
+          if (restoreToastIdRef.current !== undefined && hasWork(workRef.current)) {
+            throw new JurisdictionSwitchError("restore_pending");
           }
         };
         // The page stays editable while the draft is saved: anything typed during
@@ -438,6 +449,7 @@ export default function RecordPage() {
     if (isRecordingActive && restoreToastIdRef.current !== undefined) {
       toast.dismiss(restoreToastIdRef.current);
       restoreToastIdRef.current = undefined;
+      setRestoreOffered(false);
     }
   }, [isRecordingActive]);
 
@@ -460,28 +472,52 @@ export default function RecordPage() {
         setDraftExpiryAlert(
           describeDraftExpiryAlert({ savedAt: draft.saved_at, now: Date.now() })
         );
+        const found = hasTranscript(draft.transcript) ? "Unsaved transcript" : "Unsaved work";
+        /** The offer is answered: closed, and the page's own work saved from now. */
+        const closeOffer = () => {
+          if (restoreToastIdRef.current !== undefined) toast.dismiss(restoreToastIdRef.current);
+          restoreToastIdRef.current = undefined;
+          setRestoreOffered(false);
+        };
         restoreToastIdRef.current = toast(
-          `Unsaved transcript found from ${formatDraftDate(draft.saved_at)}`,
+          `${found} found from ${formatDraftDate(draft.saved_at)}`,
           {
             action: {
               label: "Restore",
               onClick: () => {
-                const restoredFormData = { ...defaultFormValues, ...draft.form_data };
+                closeOffer();
+                const restored = fromDraftFormData(draft.form_data);
                 setSectionedTranscript(draft.transcript);
-                setFormData(restoredFormData);
+                setFormData(restored.formData);
                 setRestoredTranscript(draft.transcript);
                 setSpeechDemoKey(k => k + 1);
+                if (restored.notes !== null) {
+                  setEditorContent(restored.notes);
+                  setNotesEditorKey(k => k + 1);
+                }
+                if (restored.template) {
+                  setTemplateId(restored.template.id);
+                  setTemplateValues(restored.template.values);
+                }
                 // Only now has a draft been restored (not when one was found).
                 liveDraftTelemetry.restoreSucceeded();
               },
             },
             cancel: {
               label: "Discard",
-              onClick: () => { void deleteDraft().catch(console.warn); },
+              onClick: () => {
+                // What was typed while the draft was offered is saved once it
+                // is deleted: saves wait for the delete.
+                closeOffer();
+                void deleteDraft().catch(console.warn);
+              },
             },
+            // Swiped away: no longer offered, so the page's own work is saved.
+            onDismiss: closeOffer,
             duration: Infinity,
           },
         );
+        setRestoreOffered(true);
       } catch (error) {
         // DIAAT-296: this used to be a bare `catch {}` commented "API
         // unavailable — skip restore silently", which made a failed lookup
@@ -506,38 +542,82 @@ export default function RecordPage() {
         toast.dismiss(restoreToastIdRef.current);
         restoreToastIdRef.current = undefined;
       }
+      setRestoreOffered(false);
     };
   }, [deleteDraft]);
 
-  // Delete the server draft immediately when all transcript sections are cleared,
-  // so stale drafts don't reappear on the next visit.
+  // Delete the server draft as soon as the page holds nothing of the judge's
+  // (the transcript cleared, the hearing details reset), so stale drafts don't
+  // reappear on the next visit.
   useEffect(() => {
-    const hasContent =
-      sectionedTranscript.background.length > 0 ||
-      sectionedTranscript.evidence.length > 0 ||
-      sectionedTranscript.facts.length > 0;
-
-    if (!hasContent) {
+    if (!pageHasWork) {
       if (hadDraftContentRef.current) {
         void deleteDraft().catch(err => console.warn("Failed to delete draft:", err));
       }
       hadDraftContentRef.current = false;
       return;
     }
-
-    hadDraftContentRef.current = true;
-  }, [sectionedTranscript, deleteDraft]);
+    // Not while an earlier draft is offered: this page's work is not saved over it.
+    if (restoreToastIdRef.current === undefined) hadDraftContentRef.current = true;
+  }, [pageHasWork, deleteDraft]);
 
   // Keep refs in sync so interval/pause handlers always read latest values
   // without restarting the interval on every transcript/formData change.
   useEffect(() => {
-    sectionedTranscriptRef.current = sectionedTranscript;
+    workRef.current = { ...workRef.current, transcript: sectionedTranscript };
     isDirtyRef.current = true;
   }, [sectionedTranscript]);
   useEffect(() => {
     formDataRef.current = formData;
+    workRef.current = { ...workRef.current, formData };
     isDirtyRef.current = true;
   }, [formData]);
+  useEffect(() => {
+    workRef.current = { ...workRef.current, notes: editorContent, defaultNotes };
+    isDirtyRef.current = true;
+  }, [editorContent, defaultNotes]);
+  useEffect(() => {
+    workRef.current = {
+      ...workRef.current,
+      templateId: draftTemplateId,
+      templateValues,
+    };
+    isDirtyRef.current = true;
+  }, [draftTemplateId, templateValues]);
+
+  // DIAAT-414: hearing details, notes and template answers are saved shortly
+  // after the judge stops typing, as the transcript is while recording.
+  const savedEditSignatureRef = useRef(editSignature);
+  const editSavePendingRef = useRef(false);
+  useEffect(() => {
+    editSavePendingRef.current = false;
+    // While recording the interval below saves; while an earlier draft is
+    // offered, nothing is saved over it.
+    if (isRecordingActive || restoreOffered) return;
+    if (editSignature === savedEditSignatureRef.current) return;
+    editSavePendingRef.current = true;
+    const timer = setTimeout(() => {
+      editSavePendingRef.current = false;
+      if (getAutosavePayload() === null) return;
+      savedEditSignatureRef.current = editSignature;
+      isDirtyRef.current = false;
+      saveDraftNow("interval");
+    }, EDIT_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [
+    editSignature,
+    isRecordingActive,
+    restoreOffered,
+    getAutosavePayload,
+    saveDraftNow,
+  ]);
+  // The page left (in the app) before that moment had passed: saved as it closes.
+  useEffect(
+    () => () => {
+      if (editSavePendingRef.current) saveDraftNow("interval");
+    },
+    [saveDraftNow]
+  );
 
   // Save immediately when recording transitions from active → paused/stopped.
   useEffect(() => {
@@ -548,11 +628,7 @@ export default function RecordPage() {
     if (!prevIsRecordingRef.current) return;
     prevIsRecordingRef.current = false;
 
-    const hasContent =
-      sectionedTranscriptRef.current.background.length > 0 ||
-      sectionedTranscriptRef.current.evidence.length > 0 ||
-      sectionedTranscriptRef.current.facts.length > 0;
-    if (hasContent) {
+    if (getAutosavePayload() !== null) {
       isDirtyRef.current = false;
       saveDraftNow("pause");
     } else {
@@ -565,7 +641,7 @@ export default function RecordPage() {
     lateFinalisationWindowRef.current = true;
     const t = setTimeout(() => { lateFinalisationWindowRef.current = false; }, 2000);
     return () => clearTimeout(t);
-  }, [isRecordingActive, saveDraftNow]);
+  }, [isRecordingActive, getAutosavePayload, saveDraftNow]);
 
   // Catch transcript content that arrives after recording stopped (Azure SDK
   // finalises the last utterance asynchronously after stopTranscribingAsync).
@@ -587,27 +663,18 @@ export default function RecordPage() {
     if (!isRecordingActive) return;
 
     const timer = setInterval(() => {
-      if (!isDirtyRef.current) return;
-      const hasContent =
-        sectionedTranscriptRef.current.background.length > 0 ||
-        sectionedTranscriptRef.current.evidence.length > 0 ||
-        sectionedTranscriptRef.current.facts.length > 0;
-      if (hasContent) {
-        isDirtyRef.current = false;
-        saveDraftNow("interval");
-      }
+      if (!isDirtyRef.current || getAutosavePayload() === null) return;
+      isDirtyRef.current = false;
+      saveDraftNow("interval");
     }, 3_000);
     return () => clearInterval(timer);
-  }, [isRecordingActive, saveDraftNow]);
+  }, [isRecordingActive, getAutosavePayload, saveDraftNow]);
 
+  // Closing the tab could cut off a save still to be made, so the browser asks.
+  // Leaving the page in the app needs no asking: the draft is saved as it goes,
+  // and once more as the page closes (DIAAT-414).
   useEffect(() => {
-    const hasContent =
-      sectionedTranscript.background.length > 0 ||
-      sectionedTranscript.evidence.length > 0 ||
-      sectionedTranscript.facts.length > 0 ||
-      // DIAAT-344: a template's answers are not in the draft, so nothing restores them.
-      hasAnswers(templateValues);
-    if (!hasContent) return;
+    if (!pageHasWork) return;
     const handler = (e: BeforeUnloadEvent) => {
       // Switching jurisdiction (DIAAT-332) saved the draft first: nothing is lost.
       if (isLeavingForJurisdictionSwitch()) return;
@@ -616,11 +683,7 @@ export default function RecordPage() {
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [sectionedTranscript, templateValues]);
-
-  // DIAAT-344: nothing restores a template's answers, so leaving the page in the
-  // app (a link, Back or Forward) asks first, as closing the tab does (above).
-  useLeaveGuard(hasAnswers(templateValues), LEAVE_WITH_ANSWERS);
+  }, [pageHasWork]);
 
   const handleCitationClick = useCallback((citationIndex: number) => {
     void citationIndex;
@@ -665,8 +728,8 @@ export default function RecordPage() {
       );
       return;
     }
-    // The draft of this page's dictation, if it had any. Notes alone are never
-    // saved, so an earlier draft offered for restore is left for the judge.
+    // The draft of this page's dictation, if it had any. An earlier draft still
+    // offered for restore is left for the judge.
     const hadDraft = hadDraftContentRef.current;
     // Deleted once, here, so a failure can be told: not by the emptied-transcript
     // effect as well.
@@ -1352,7 +1415,7 @@ export default function RecordPage() {
                       >
                         <div className="flex h-full min-h-0 flex-col overflow-hidden px-4 pb-6 sm:px-6">
                           <p className="mb-2 text-xs text-muted-foreground">
-                            Your transcript is automatically saved as you dictate and can be restored within 24 hours if you leave this page.
+                            Your transcript, hearing details and notes are saved automatically and can be restored within 24 hours if you leave this page.
                           </p>
                           <div className="flex h-full min-h-0 flex-col overflow-hidden">
                             <SpeechDemo
@@ -1420,7 +1483,7 @@ export default function RecordPage() {
                   >
                     <div className="flex h-full min-h-0 flex-col overflow-hidden px-4 py-6">
                       <p className="mb-2 text-xs text-muted-foreground">
-                        Your transcript is automatically saved as you dictate and can be restored within 24 hours if you leave this page.
+                        Your transcript, hearing details and notes are saved automatically and can be restored within 24 hours if you leave this page.
                       </p>
                       <SpeechDemo
                         key={speechDemoKey}

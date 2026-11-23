@@ -43,8 +43,8 @@ export function switchFailedMessage(error: unknown, where: string): string {
   if (step === "unsaved_changes") {
     return "Save or discard your changes, then switch.";
   }
-  if (step === "unsaved") {
-    return "Your notes, and hearing details entered before you dictate, are not kept when you switch. Copy them out or remove them, then switch.";
+  if (step === "restore_pending") {
+    return "Restore or discard the unsaved work found from earlier, then switch.";
   }
   if (step === "switch") {
     return `Your work is saved, but the change did not work, so you are still working in ${where}. Try again.`;

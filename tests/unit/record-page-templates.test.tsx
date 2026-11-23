@@ -4,6 +4,7 @@ import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
+import { deleteLiveDraft, putLiveDraft } from "@/lib/live-draft-api";
 import {
   type AvailableTemplate,
   TemplateRefusedError,
@@ -254,19 +255,22 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     });
   });
 
-  it("stops a jurisdiction switch while it has answers, which drafts do not keep", async () => {
+  it("saves the answers in the draft before a jurisdiction switch (DIAAT-414)", async () => {
     const user = userEvent.setup();
     await renderPage([JUDGMENT]);
     await screen.findByText("Hearing details");
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    expect(putLiveDraft).not.toHaveBeenCalled(); // nothing to save
 
     await user.type(screen.getByLabelText(/Case number/), "1234/2026");
-    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
-      step: "unsaved",
-    });
-
-    await user.clear(screen.getByLabelText(/Case number/));
+    vi.mocked(putLiveDraft).mockClear();
     await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    expect(putLiveDraft).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(putLiveDraft).mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        template: { id: JUDGMENT.id, values: { Reference: "1234/2026" } },
+      })
+    );
   });
 
   it("clears the answers when the judge chooses another template", async () => {
@@ -288,7 +292,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     confirm.mockRestore();
   });
 
-  it("lets the judge clear answers that cannot be unanswered, and then switch", async () => {
+  it("lets the judge clear answers that cannot be unanswered, and the draft with them", async () => {
     const user = userEvent.setup();
     await renderPage([JUDGMENT]); // one template: no picker to change
     await screen.findByText("Hearing details");
@@ -298,15 +302,15 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       screen.getByRole("combobox", { name: /First party is the/ })
     );
     await user.click(await screen.findByRole("option", { name: "Claimant" }));
-    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
-      step: "unsaved",
-    });
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    expect(putLiveDraft).toHaveBeenCalled();
 
     await user.click(screen.getByRole("button", { name: "Clear answers" }));
     expect(
       screen.getByRole("combobox", { name: /First party is the/ }).textContent
     ).toBe("Choose");
-    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    // Nothing left of the judge's: the saved draft goes too.
+    await waitFor(() => expect(deleteLiveDraft).toHaveBeenCalled());
   });
 
   it("handles boxes tagged like Object's own properties as ordinary fields", async () => {
@@ -353,7 +357,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     );
   });
 
-  it("warns before the tab is closed with answers, which drafts do not keep", async () => {
+  it("warns before the tab is closed with answers, as a last save could be cut off", async () => {
     const user = userEvent.setup();
     await renderPage([JUDGMENT]);
     await screen.findByText("Hearing details");
@@ -439,7 +443,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     );
   });
 
-  it("asks before an in-app link or Back leaves answers behind", async () => {
+  it("leaves by an in-app link without asking, the answers saved as typed (DIAAT-414)", async () => {
     const user = userEvent.setup();
     const confirm = vi.spyOn(window, "confirm");
     await renderPage([JUDGMENT]);
@@ -448,46 +452,21 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     help.href = "/help";
     help.textContent = "Help";
     document.body.appendChild(help);
-    // Whether the click got through to the link (the guard stops it before);
-    // jsdom cannot navigate, so the link itself goes nowhere.
     let reached = false;
     help.addEventListener("click", (event) => {
       reached = true;
-      event.preventDefault();
+      event.preventDefault(); // jsdom cannot navigate
     });
-    const blocked = () => {
-      reached = false;
+    try {
+      await user.type(screen.getByLabelText(/Case number/), "1");
+      await waitFor(() => expect(putLiveDraft).toHaveBeenCalled(), {
+        timeout: 3000,
+      });
       help.dispatchEvent(
         new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })
       );
-      return !reached;
-    };
-    try {
-      confirm.mockReturnValue(false);
-      expect(blocked()).toBe(false); // nothing to lose: the link is followed
+      expect(reached).toBe(true);
       expect(confirm).not.toHaveBeenCalled();
-
-      await user.type(screen.getByLabelText(/Case number/), "1");
-      expect(blocked()).toBe(true); // stayed
-      expect(confirm).toHaveBeenLastCalledWith(
-        expect.stringMatching(/answers will be lost/)
-      );
-      confirm.mockReturnValue(true);
-      expect(blocked()).toBe(false); // left
-
-      const push = vi.spyOn(window.history, "pushState");
-      const back = vi
-        .spyOn(window.history, "back")
-        .mockImplementation(() => undefined);
-      confirm.mockReturnValue(false);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-      expect(push).toHaveBeenCalled(); // stays on the page
-      expect(back).not.toHaveBeenCalled();
-      confirm.mockReturnValue(true);
-      window.dispatchEvent(new PopStateEvent("popstate"));
-      expect(back).toHaveBeenCalledTimes(1); // past the guard entry
-      push.mockRestore();
-      back.mockRestore();
     } finally {
       help.remove();
       confirm.mockRestore();

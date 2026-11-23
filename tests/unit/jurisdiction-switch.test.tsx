@@ -371,16 +371,16 @@ describe("a switch whose final save fails", () => {
     }
   });
 
-  it("says what to do with work that is never saved", async () => {
+  it("asks for an earlier draft to be restored or discarded first (DIAAT-414)", async () => {
     const unregister = onBeforeJurisdictionSwitch(async () => {
-      throw new JurisdictionSwitchError("unsaved");
+      throw new JurisdictionSwitchError("restore_pending");
     });
     try {
       await showSwitcher();
       await chooseJudge();
 
       await waitFor(() => expect(toastError).toHaveBeenCalled());
-      expect(String(toastError.mock.calls[0][0])).toContain("Copy them out or remove them");
+      expect(String(toastError.mock.calls[0][0])).toContain("Restore or discard");
       expect(assign).not.toHaveBeenCalled();
     } finally {
       unregister();
