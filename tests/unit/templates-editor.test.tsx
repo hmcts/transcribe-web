@@ -410,6 +410,44 @@ describe("TemplatesEditor", () => {
     });
   });
 
+  it("maps the legal framework text into a box, with what to print when none is chosen (DIAAT-415)", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", { name: "Type of Reference" })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Filled by BenchNotes" })
+    );
+    expect(
+      within(fields).queryByLabelText("When no legal framework is chosen, print")
+    ).toBeNull();
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "What BenchNotes fills Reference with",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Legal framework text (of the legal issues chosen)",
+      })
+    );
+    await user.type(
+      within(fields).getByLabelText("When no legal framework is chosen, print"),
+      "No legal framework applies."
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).toMatchObject({
+      type: "benchnotes",
+      source: "legal_framework",
+      empty_text: "No legal framework applies.",
+    });
+  });
+
   it("edits the options of a box tagged like one of Object's own properties", async () => {
     const odd: AdminTemplate = {
       ...UPLOADED,
