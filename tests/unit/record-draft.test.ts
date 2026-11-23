@@ -138,4 +138,29 @@ describe("the record page's draft (DIAAT-414)", () => {
       "template"
     );
   });
+
+  it("keeps the version of the template the draft started with, and reads it back (DIAAT-339)", () => {
+    const work = {
+      ...BLANK,
+      templateId: "t1",
+      templateValues: { Reference: "1/2026" },
+      templateRevision: "r1",
+    };
+    const saved = draftFormData(work);
+    expect(saved.template).toEqual({
+      id: "t1",
+      values: { Reference: "1/2026" },
+      revision: "r1",
+    });
+    expect(fromDraftFormData(saved).template).toEqual(saved.template);
+    // A draft from before then, or an API with no versions: none.
+    expect(
+      draftFormData({ ...work, templateRevision: undefined }).template
+    ).toEqual({ id: "t1", values: { Reference: "1/2026" } });
+    expect(
+      fromDraftFormData({
+        template: { id: "t1", values: {}, revision: 7 as unknown as string },
+      }).template
+    ).toEqual({ id: "t1", values: {} });
+  });
 });

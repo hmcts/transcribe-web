@@ -4,6 +4,7 @@ import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
+import type { DraftTemplate } from "@/lib/record-draft";
 import {
   deleteLiveDraft,
   getLiveDraft,
@@ -19,6 +20,7 @@ import {
 // submits the hearing. With none, the page works as before: copy the text out.
 
 const mockFetchTemplates = vi.hoisted(() => vi.fn());
+const mockFetchRevision = vi.hoisted(() => vi.fn());
 const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
 const mockRouterPush = vi.hoisted(() => vi.fn());
 
@@ -28,6 +30,7 @@ vi.mock("@/providers/jurisdiction", async () =>
 vi.mock("@/lib/templates-api", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/templates-api")>()),
   fetchAvailableTemplates: mockFetchTemplates,
+  fetchTemplateRevision: mockFetchRevision,
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: mockRouterPush }),
@@ -797,5 +800,228 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       await screen.findByText(/The hearing details do not fit the template/)
     ).toBeTruthy();
     expect(mockRouterPush).not.toHaveBeenCalled();
+  });
+
+  // DIAAT-339: a draft keeps the version of the template it was started with.
+
+  const STARTED: AvailableTemplate = { ...JUDGMENT, revision: "r1" };
+  const CHANGED: AvailableTemplate = {
+    ...JUDGMENT,
+    revision: "r2",
+    fields: [
+      { ...JUDGMENT.fields[0], label: "Claim number" },
+      ...JUDGMENT.fields.slice(1),
+      {
+        tag: "Costs",
+        label: "Costs order",
+        type: "text",
+        required: true,
+        options: [],
+      },
+    ],
+  };
+
+  function draftWith(template: DraftTemplate) {
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: { background: [], evidence: [], facts: [] },
+      form_data: { template },
+      saved_at: new Date().toISOString(),
+    });
+  }
+
+  it("names the version of the template a new document is made from (DIAAT-339)", async () => {
+    const user = userEvent.setup();
+    await renderPage([STARTED, REASONS]);
+    await user.type(await screen.findByLabelText(/Case number/), "1/2026");
+    await user.click(
+      screen.getByRole("combobox", { name: /First party is the/ })
+    );
+    await user.click(await screen.findByRole("option", { name: "Claimant" }));
+
+    await waitFor(() => expect(putLiveDraft).toHaveBeenCalled(), {
+      timeout: 3000,
+    });
+    expect(vi.mocked(putLiveDraft).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({
+        template: {
+          id: JUDGMENT.id,
+          values: { Reference: "1/2026", Party1Title: "Claimant" },
+          revision: "r1",
+        },
+      })
+    );
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted()).toMatchObject({
+      template_id: JUDGMENT.id,
+      template_revision: "r1",
+    });
+    expect(mockFetchRevision).not.toHaveBeenCalled();
+  });
+
+  it("finishes a restored draft with the template as it started, once it has changed (DIAAT-339)", async () => {
+    mockFetchRevision.mockResolvedValue(STARTED);
+    draftWith({
+      id: JUDGMENT.id,
+      values: { Reference: "1/2026", Party1Title: "Claimant" },
+      revision: "r1",
+    });
+    await renderPage([CHANGED]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText(/has changed since you started this draft/)
+    ).toBeTruthy();
+    expect(mockFetchRevision).toHaveBeenCalledWith(JUDGMENT.id, "r1");
+    expect(
+      (screen.getByLabelText(/Case number/) as HTMLInputElement).value
+    ).toBe("1/2026");
+    expect(screen.queryByLabelText(/Costs order/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted()).toMatchObject({
+      template_id: JUDGMENT.id,
+      template_revision: "r1",
+      values: { Reference: "1/2026", Party1Title: "Claimant" },
+    });
+  });
+
+  it("finishes a restored draft with a template no longer offered for new documents (DIAAT-339)", async () => {
+    mockFetchRevision.mockResolvedValue(STARTED);
+    draftWith({
+      id: JUDGMENT.id,
+      values: { Reference: "1/2026", Party1Title: "Claimant" },
+      revision: "r1",
+    });
+    await renderPage([REASONS]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText(/no longer offered for new documents/)
+    ).toBeTruthy();
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText(/Case number/) as HTMLInputElement).value
+      ).toBe("1/2026")
+    );
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted()).toMatchObject({
+      template_id: JUDGMENT.id,
+      template_revision: "r1",
+    });
+  });
+
+  it("offers the started version only until the judge chooses another template (DIAAT-339)", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockFetchRevision.mockResolvedValue(STARTED);
+    draftWith({
+      id: JUDGMENT.id,
+      values: { Reference: "1/2026" },
+      revision: "r1",
+    });
+    await renderPage([REASONS]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+    await screen.findByText(/no longer offered for new documents/);
+
+    await user.click(screen.getByRole("combobox", { name: "Template" }));
+    await user.click(await screen.findByRole("option", { name: "Reasons" }));
+    // Reasons is all there is to choose now: no list, and no Judgment.
+    await waitFor(() =>
+      expect(screen.queryByRole("combobox", { name: "Template" })).toBeNull()
+    );
+    expect(screen.queryByLabelText(/Case number/)).toBeNull();
+  });
+
+  it("falls back to the template as it is now when its started version is not given (DIAAT-339)", async () => {
+    mockFetchRevision.mockRejectedValue(
+      new TemplateRefusedError("Not available", [], 404)
+    );
+    draftWith({
+      id: JUDGMENT.id,
+      values: { Reference: "1/2026" },
+      revision: "r1",
+    });
+    await renderPage([CHANGED]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText(/Claim number/) as HTMLInputElement).value
+      ).toBe("1/2026")
+    );
+    expect(screen.getByLabelText(/Costs order/)).toBeTruthy();
+  });
+
+  it("waits for the started version before answers or a submission (DIAAT-339)", async () => {
+    mockFetchRevision.mockReturnValue(new Promise(() => undefined)); // still loading
+    draftWith({
+      id: JUDGMENT.id,
+      values: { Reference: "1/2026", Party1Title: "Claimant" },
+      revision: "r1",
+    });
+    await renderPage([CHANGED]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText(
+        "Loading the template this draft was started with"
+      )
+    ).toBeTruthy();
+    expect(screen.queryByLabelText(/Claim number/)).toBeNull();
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    expect(
+      await screen.findByText(/wait for the draft's template to load/)
+    ).toBeTruthy();
+    expect(fetchMock).not.toHaveBeenCalled();
+    // The draft keeps the version and answers it started with meanwhile.
+    await waitFor(() => expect(putLiveDraft).toHaveBeenCalled(), {
+      timeout: 3000,
+    });
+    expect(vi.mocked(putLiveDraft).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({
+        template: {
+          id: JUDGMENT.id,
+          values: { Reference: "1/2026", Party1Title: "Claimant" },
+          revision: "r1",
+        },
+      })
+    );
+  });
+
+  it("keeps the draft's version when it could not be loaded, and tries again (DIAAT-339)", async () => {
+    mockFetchRevision
+      .mockRejectedValueOnce(new Error("Network down"))
+      .mockResolvedValueOnce(STARTED);
+    draftWith({
+      id: JUDGMENT.id,
+      values: { Reference: "1/2026" },
+      revision: "r1",
+    });
+    await renderPage([CHANGED]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    expect(
+      await screen.findByText(
+        "The template this draft was started with could not be loaded, so Hearing details is not shown."
+      )
+    ).toBeTruthy();
+    expect(screen.queryByLabelText(/Costs order/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "Try again" }));
+    await waitFor(() =>
+      expect(
+        (screen.getByLabelText(/Case number/) as HTMLInputElement).value
+      ).toBe("1/2026")
+    );
+    expect(mockFetchRevision).toHaveBeenCalledTimes(2);
+    expect(screen.queryByLabelText(/Costs order/)).toBeNull();
   });
 });

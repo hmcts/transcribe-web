@@ -3,6 +3,7 @@
 import {
   ArrowDown,
   ArrowUp,
+  Copy,
   Loader2,
   Save,
   Trash2,
@@ -15,6 +16,7 @@ import { SignOffFields } from "@/components/admin/sign-off";
 import { TemplatePreview } from "@/components/admin/template-preview";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -49,10 +51,14 @@ import {
   type BenchNotesSource,
   deleteTemplate,
   FIELD_TYPES,
+  fetchSharedTemplates,
   fetchTemplates,
   LIST_TYPES,
   ownValue,
+  type SharedTemplate,
+  type StartedFrom,
   saveTemplate,
+  startFromSharedTemplate,
   TEMPLATE_STAGES,
   type TemplateField,
   type TemplateFieldType,
@@ -69,6 +75,10 @@ import {
  * box linked, and only then can it leave draft. Before that (DIAAT-346) the admin
  * previews it with sample details. DIAAT-347: it goes to the jurisdiction's test group
  * first, then to all its judges with the service lead's sign-off.
+ *
+ * DIAAT-336: a template can be shared as a base, and an admin of any jurisdiction can
+ * start one of their own from a copy of it, then change it as their jurisdiction needs.
+ * The copy is theirs: later changes to the shared one do not change it.
  */
 
 const DOCX_ACCEPT =
@@ -100,15 +110,24 @@ export function TemplatesEditor({ code }: { code: string }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  // DIAAT-336: choosing a shared template to start from, and starting from it.
+  const [picking, setPicking] = useState(false);
+  const [starting, setStarting] = useState(false);
+  // Loads the shared templates again: after a failed start, the list may be stale.
+  const [pickerKey, setPickerKey] = useState(0);
+  const pickerId = useId();
   // Going back to an earlier version (DIAAT-348): the field list then reopens from the
   // API's copy, so nothing in it can be edited meanwhile.
   const [restoring, setRestoring] = useState(false);
   // Each template's sample details for its preview, by id: kept while its field list
   // reopens after a save, so a fix can be previewed again with the same details.
   const [samples, setSamples] = useState<Record<string, TemplateValues>>({});
-  useJurisdictionSwitchGuard({ busy: uploading || restoring, unsaved: false });
+  useJurisdictionSwitchGuard({
+    busy: uploading || restoring || starting,
+    unsaved: false,
+  });
   const fileInput = useRef<HTMLInputElement>(null);
-  const busy = uploading || restoring || editor.busy;
+  const busy = uploading || restoring || starting || editor.busy;
 
   const load = useCallback(async () => {
     try {
@@ -169,6 +188,24 @@ export function TemplatesEditor({ code }: { code: string }) {
     }
   }
 
+  async function startFrom(shared: SharedTemplate) {
+    if (!mayLeaveEditor()) return;
+    setStarting(true);
+    try {
+      const added = await startFromSharedTemplate(code, shared.id);
+      toast.success(
+        `Started ${added.name} from a copy of ${shared.name} (${shared.jurisdiction_name}): change it as ${code} needs, then make it available to judges.`
+      );
+      setPicking(false);
+      applySaved(added);
+    } catch (err) {
+      toast.error(message(err));
+      setPickerKey((key) => key + 1);
+    } finally {
+      setStarting(false);
+    }
+  }
+
   const current = templates.find((t) => t.id === selected) ?? null;
 
   return (
@@ -180,7 +217,18 @@ export function TemplatesEditor({ code }: { code: string }) {
         <h3 id="jurisdiction-templates" className="text-lg font-semibold">
           Templates of {code}
         </h3>
-        <div>
+        <div className="flex flex-wrap justify-end gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={loading || busy}
+            aria-expanded={picking}
+            aria-controls={pickerId}
+            onClick={() => setPicking((open) => !open)}
+          >
+            <Copy className="mr-1 h-4 w-4" aria-hidden />
+            Start from a shared template
+          </Button>
           <input
             ref={fileInput}
             id="template-upload"
@@ -214,6 +262,17 @@ export function TemplatesEditor({ code }: { code: string }) {
         A Word document (.docx) whose fill-in boxes are content controls. Each
         box becomes a field judges fill on the Hearing Details form.
       </p>
+      {picking && (
+        <SharedTemplatePicker
+          key={pickerKey}
+          id={pickerId}
+          code={code}
+          starting={starting}
+          disabled={busy}
+          onStart={(shared) => void startFrom(shared)}
+          onClose={() => setPicking(false)}
+        />
+      )}
 
       {loading ? (
         <p role="status" className="text-sm text-muted-foreground">
@@ -350,6 +409,9 @@ function TemplateFieldsEditor({
   const [name, setName] = useState(template.name);
   const [service, setService] = useState(template.service ?? "");
   const [stage, setStage] = useState<TemplateStage>(template.stage);
+  // Absent from an API from before DIAAT-336: not offered then.
+  const canShare = template.shared_as_base !== undefined;
+  const [shared, setShared] = useState(template.shared_as_base ?? false);
   const [signOff, setSignOff] = useState<SignOffDraft>(NO_SIGN_OFF);
   const [signOffError, setSignOffError] = useState<string | null>(null);
   const ids = useId();
@@ -369,7 +431,14 @@ function TemplateFieldsEditor({
 
   const linked = new Set(fields.map((f) => f.tag));
   const unlinked = template.boxes.filter((b) => !linked.has(b.key));
-  const form = JSON.stringify({ name, service, stage, fields, optionText });
+  const form = JSON.stringify({
+    name,
+    service,
+    stage,
+    shared,
+    fields,
+    optionText,
+  });
   const [savedForm] = useState(form);
   const unsaved = form !== savedForm;
   useJurisdictionSwitchGuard({ busy, unsaved });
@@ -437,6 +506,7 @@ function TemplateFieldsEditor({
         service: service.trim() || null,
         stage,
         sign_off,
+        ...(canShare && { shared_as_base: shared }),
         version: template.version,
         fields: fields.map((f) => ({
           ...f,
@@ -508,6 +578,11 @@ function TemplateFieldsEditor({
       <h4 id="template-fields-heading" className="font-semibold">
         Fields of {template.name}
       </h4>
+      {template.started_from && (
+        <p className="text-sm text-muted-foreground">
+          {startedFromText(template.started_from)}
+        </p>
+      )}
       {/* Nothing can be edited while a save, a new file or a delete is under way
           (the editor then reopens from the server's copy, which would drop it), or
           while another template is uploaded (it opens instead). */}
@@ -565,6 +640,29 @@ function TemplateFieldsEditor({
               : "Its test group: the users marked as testers there, and its administrators."}
           </p>
         </div>
+        {canShare && (
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id={`${ids}-shared`}
+                checked={shared}
+                aria-describedby={`${ids}-shared-hint`}
+                onCheckedChange={(value) => setShared(value === true)}
+              />
+              <Label htmlFor={`${ids}-shared`}>
+                Share as a base template for other jurisdictions
+              </Label>
+            </div>
+            <p
+              id={`${ids}-shared-hint`}
+              className="text-xs text-muted-foreground"
+            >
+              Administrators of any jurisdiction can start a template of their
+              own from a copy of it. Changes saved here later do not change
+              their copies.
+            </p>
+          </div>
+        )}
         {needsSignOff && (
           <SignOffFields
             id={`${ids}-sign-off`}
@@ -796,6 +894,120 @@ function TemplateFieldsEditor({
         onValuesChange={onSamplesChange}
       />
     </section>
+  );
+}
+
+function startedFromText(from: StartedFrom): string {
+  const at = new Date(from.copied_at);
+  const on = Number.isNaN(at.getTime())
+    ? ""
+    : ` on ${at.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" })}`;
+  return `Started from a copy of ${from.name} (${from.jurisdiction_name})${on}. Changes to that template do not change this one.`;
+}
+
+/** The templates shared as a base, to start one from (DIAAT-336). */
+function SharedTemplatePicker({
+  id,
+  code,
+  starting,
+  disabled,
+  onStart,
+  onClose,
+}: {
+  id: string;
+  code: string;
+  starting: boolean;
+  disabled: boolean;
+  onStart: (shared: SharedTemplate) => void;
+  onClose: () => void;
+}) {
+  const [shared, setShared] = useState<SharedTemplate[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [chosen, setChosen] = useState("");
+  const ids = useId();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchSharedTemplates(code).then(
+      (list) => {
+        if (cancelled) return;
+        setShared(list);
+        setChosen(list[0]?.id ?? "");
+      },
+      (err) => {
+        if (!cancelled) setError(message(err));
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [code]);
+
+  const choice = shared?.find((t) => t.id === chosen) ?? null;
+
+  return (
+    <div
+      id={id}
+      role="region"
+      aria-labelledby={`${ids}-heading`}
+      className="space-y-3 rounded-md border bg-muted/30 p-3"
+    >
+      <p id={`${ids}-heading`} className="text-sm font-medium">
+        Start from a shared template
+      </p>
+      <p className="text-sm text-muted-foreground">
+        A copy of its file and fields becomes a draft template of {code}, for
+        you to change as {code} needs. Later changes to the shared template do
+        not change your copy.
+      </p>
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : shared === null ? (
+        <p role="status" className="text-sm text-muted-foreground">
+          Loading shared templates
+        </p>
+      ) : shared.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          No jurisdiction shares a template yet.
+        </p>
+      ) : (
+        <div className="space-y-1">
+          <Label htmlFor={`${ids}-choice`}>Shared template</Label>
+          <Select value={chosen} onValueChange={setChosen}>
+            <SelectTrigger id={`${ids}-choice`}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {shared.map((t) => (
+                <SelectItem key={t.id} value={t.id}>
+                  {t.name} ({t.jurisdiction_name}), {t.field_count}{" "}
+                  {t.field_count === 1 ? "field" : "fields"}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          size="sm"
+          disabled={disabled || choice === null}
+          onClick={() => {
+            if (choice) onStart(choice);
+          }}
+        >
+          {starting && (
+            <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />
+          )}
+          Start from it
+        </Button>
+        <Button size="sm" variant="ghost" disabled={starting} onClick={onClose}>
+          Cancel
+        </Button>
+      </div>
+    </div>
   );
 }
 

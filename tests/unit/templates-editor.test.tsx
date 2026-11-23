@@ -1452,3 +1452,186 @@ describe("A template's history, and going back (DIAAT-348)", () => {
     expect(screen.queryByDisplayValue("Broken")).toBeNull();
   });
 });
+
+describe("A template shared as a base (DIAAT-336)", () => {
+  beforeEach(() => {
+    request.mockReset();
+  });
+
+  const SHARED = {
+    id: "base1",
+    name: "Generic judgment",
+    service: null,
+    jurisdiction: "EMP",
+    jurisdiction_name: "Employment Tribunals",
+    field_count: 3,
+  };
+  const COPY: AdminTemplate = {
+    ...UPLOADED,
+    id: "copy1",
+    name: "Generic judgment",
+    shared_as_base: false,
+    started_from: {
+      template_id: "base1",
+      name: "Generic judgment",
+      jurisdiction: "EMP",
+      jurisdiction_name: "Employment Tribunals",
+      copied_at: "2026-11-23T10:00:00+00:00",
+    },
+  };
+
+  /** The list, the shared templates and starting from one. */
+  function serveShared(shared: (typeof SHARED)[]) {
+    let list: AdminTemplate[] = [];
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        const method = options?.method ?? "GET";
+        if (
+          endpoint === "/admin/jurisdictions/ET/templates" &&
+          method === "GET"
+        )
+          return { data: list };
+        if (endpoint === "/admin/jurisdictions/ET/base-templates")
+          return { data: shared };
+        if (
+          endpoint === "/admin/jurisdictions/ET/templates/from-base" &&
+          method === "POST"
+        ) {
+          list = [COPY];
+          return { data: COPY, status: 201 };
+        }
+        if (endpoint.endsWith("/history")) return { data: { versions: [] } };
+        throw new Error(`Unexpected ${method} ${endpoint}`);
+      }
+    );
+  }
+
+  it("shares a template as a base for other jurisdictions", async () => {
+    serve([{ ...UPLOADED, shared_as_base: false }]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("checkbox", {
+        name: "Share as a base template for other jurisdictions",
+      })
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].shared_as_base).toBe(true);
+  });
+
+  it("offers no sharing against an API from before it, and sends none", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    expect(within(fields).queryByRole("checkbox")).toBeNull();
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0]).not.toHaveProperty("shared_as_base");
+  });
+
+  it("starts a template from a copy of a shared one, and says where it came from", async () => {
+    serveShared([SHARED]);
+    const user = userEvent.setup();
+    render(<TemplatesEditor code="ET" />);
+    await screen.findByText("No templates yet.");
+
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    const picker = await screen.findByRole("region", {
+      name: "Start from a shared template",
+    });
+    expect(
+      await within(picker).findByText(
+        "Generic judgment (Employment Tribunals), 3 fields"
+      )
+    ).toBeTruthy();
+    await user.click(
+      within(picker).getByRole("button", { name: "Start from it" })
+    );
+
+    const fields = await screen.findByRole("region", {
+      name: "Fields of Generic judgment",
+    });
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(post?.[0]).toBe("/admin/jurisdictions/ET/templates/from-base");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+      template_id: "base1",
+    });
+    expect(
+      within(fields).getByText(
+        "Started from a copy of Generic judgment (Employment Tribunals) on 23 November 2026. Changes to that template do not change this one."
+      )
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("region", { name: "Start from a shared template" })
+    ).toBeNull();
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^Started Generic judgment from a copy of Generic judgment/
+      )
+    );
+  });
+
+  it("says when no jurisdiction shares a template yet", async () => {
+    serveShared([]);
+    const user = userEvent.setup();
+    render(<TemplatesEditor code="ET" />);
+    await screen.findByText("No templates yet.");
+
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    expect(
+      await screen.findByText("No jurisdiction shares a template yet.")
+    ).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Start from it",
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true);
+  });
+
+  it("loads the shared templates again when starting from one fails", async () => {
+    let lists = 0;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        const method = options?.method ?? "GET";
+        if (endpoint === "/admin/jurisdictions/ET/templates")
+          return { data: [] };
+        if (endpoint === "/admin/jurisdictions/ET/base-templates") {
+          lists += 1;
+          return { data: lists === 1 ? [SHARED] : [] };
+        }
+        if (method === "POST")
+          return {
+            error: "That template is no longer shared as a base.",
+            status: 404,
+          };
+        throw new Error(`Unexpected ${method} ${endpoint}`);
+      }
+    );
+    const user = userEvent.setup();
+    render(<TemplatesEditor code="ET" />);
+    await screen.findByText("No templates yet.");
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Start from it" })
+    );
+
+    expect(
+      await screen.findByText("No jurisdiction shares a template yet.")
+    ).toBeTruthy();
+    expect(toast.error).toHaveBeenCalledWith(
+      "That template is no longer shared as a base."
+    );
+  });
+});
