@@ -39,7 +39,7 @@ export const FIELD_TYPES: { value: TemplateFieldType; label: string }[] = [
   { value: "number", label: "Number" },
   { value: "legal_issues", label: "Existing capability" },
   { value: "benchnotes", label: "Filled by BenchNotes" },
-  { value: "dictated", label: "Dictated text (the judgment)" },
+  { value: "dictated", label: "Dictated text (a section the judge dictates)" },
 ];
 
 export const BENCHNOTES_SOURCES: { value: BenchNotesSource; label: string }[] =
@@ -199,11 +199,20 @@ export interface TemplateFormField {
   options: TemplateOption[];
 }
 
+/** A dictation section (DIAAT-416): a box the judge's dictation goes in. */
+export interface TemplateSection {
+  tag: string;
+  label: string;
+}
+
 export interface AvailableTemplate {
   id: string;
   name: string;
   service: string | null;
   fields: TemplateFormField[];
+  /** Its dictation sections, in order: with several, the judge chooses which they
+   * are dictating. Absent from an API from before DIAAT-416. */
+  sections?: TemplateSection[];
 }
 
 export type TemplateValue = string | boolean | string[];

@@ -2,7 +2,10 @@ import {
   type DictationFormValues,
   defaultFormValues,
 } from "@/components/audio/dictation/formData";
-import type { SectionedTranscript } from "@/components/audio/dictation/types";
+import {
+  type SectionedTranscript,
+  transcriptSize,
+} from "@/components/audio/dictation/types";
 import { normalizeOptionalEditorText } from "@/lib/editor-contracts";
 import {
   type AvailableTemplate,
@@ -35,11 +38,7 @@ export interface RecordDraftWork {
 }
 
 export function hasTranscript(transcript: SectionedTranscript): boolean {
-  return (
-    transcript.background.length > 0 ||
-    transcript.evidence.length > 0 ||
-    transcript.facts.length > 0
-  );
+  return transcriptSize(transcript) > 0;
 }
 
 /** Hearing details the judge entered: the judge's name is filled in from their
@@ -68,13 +67,14 @@ export function hasWork(work: RecordDraftWork): boolean {
 }
 
 /** The draft's form data: the hearing details, and the notes and template
- * answers only when there are any. */
+ * answers only when there are any. The template is kept with its answers, and
+ * with dictation (DIAAT-416: which sections it was dictated in are its). */
 export function draftFormData(work: RecordDraftWork): DraftFormData {
   return {
     ...work.formData,
     ...(hasNotes(work.notes, work.defaultNotes) && { notes: work.notes }),
     ...(work.templateId !== null &&
-      hasAnswers(work.templateValues) && {
+      (hasAnswers(work.templateValues) || hasTranscript(work.transcript)) && {
         template: { id: work.templateId, values: work.templateValues },
       }),
   };

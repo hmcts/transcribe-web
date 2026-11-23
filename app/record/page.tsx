@@ -23,10 +23,16 @@ import {
   getDictationFormSchema,
 } from "@/components/audio/dictation/formData";
 import {
-  SECTION_CONFIG,
+  type DictationSection,
+  fitTranscript,
+  IAC_SECTIONS,
+  SECTION_COLORS,
   type SectionedTranscript,
+  SINGLE_SECTION,
   type SpeechSessionReport,
+  sectionEntries,
   type TranscriptSection,
+  transcriptSize,
 } from "@/components/audio/dictation/types";
 import SimpleEditor from "@/components/editor/tiptap-editor";
 import submitHearingToast from "@/components/notifications/submitting-hearing";
@@ -216,8 +222,38 @@ export default function RecordPage() {
   const hasTemplateForm = !hasDecisionTemplate && chosenTemplate !== null;
   // A form to fill and a hearing to submit, rather than text to copy out.
   const hasHearingForm = hasDecisionTemplate || hasTemplateForm;
+  // DIAAT-416: the sections the judge dictates into: the IAC decision's, or an
+  // uploaded template's dictated boxes when it has several, each by its box (so it
+  // keeps its dictation if the admin reorders them); else one, as before. What is
+  // dictated before the templates load joins the first (fitTranscript).
+  const templateSections = hasTemplateForm
+    ? chosenTemplate?.sections
+    : undefined;
+  const dictationSections = useMemo<DictationSection[]>(() => {
+    if (hasDecisionTemplate) return IAC_SECTIONS;
+    if (!templateSections || templateSections.length < 2) return SINGLE_SECTION;
+    return templateSections.map((section, index) => ({
+      key: `box:${section.tag}`,
+      label: section.label,
+      color: SECTION_COLORS[index % SECTION_COLORS.length],
+    }));
+  }, [hasDecisionTemplate, templateSections]);
+  const hasSectionChoice = dictationSections.length > 1;
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
+  // What was dictated in the page's sections, for copying out and submitting:
+  // anything kept under another section (a draft from before the template
+  // changed, say) joins the first rather than being left out.
+  const fittedTranscript = useMemo(
+    () => fitTranscript(sectionedTranscript, dictationSections),
+    [sectionedTranscript, dictationSections]
+  );
+  // The section dictated into is one of the page's: its first when they change.
+  useEffect(() => {
+    if (!dictationSections.some((section) => section.key === activeSection)) {
+      setActiveSection(dictationSections[0].key);
+    }
+  }, [dictationSections, activeSection]);
   const [speechDemoKey, setSpeechDemoKey] = useState(0);
   const [notesEditorKey, setNotesEditorKey] = useState(0);
   // Reported up from the dictation component, which owns the Speech SDK
@@ -597,6 +633,11 @@ export default function RecordPage() {
   useEffect(() => {
     if (!restoredTemplate || !templatesLoaded) return;
     const template = templates.find((t) => t.id === restoredTemplate.id);
+    if (!template && !hasAnswers(restoredTemplate.values)) {
+      // Only its dictation was kept: that is in the first section now.
+      setRestoredTemplate(null);
+      return;
+    }
     if (!template) {
       toast.info(
         "The template your saved answers were for is no longer offered. They stay saved until you answer another template.",
@@ -686,11 +727,7 @@ export default function RecordPage() {
   // finalises the last utterance asynchronously after stopTranscribingAsync).
   useEffect(() => {
     if (!lateFinalisationWindowRef.current) return;
-    const hasContent =
-      sectionedTranscript.background.length > 0 ||
-      sectionedTranscript.evidence.length > 0 ||
-      sectionedTranscript.facts.length > 0;
-    if (!hasContent) return;
+    if (transcriptSize(sectionedTranscript) === 0) return;
     lateFinalisationWindowRef.current = false;
     isDirtyRef.current = false;
     saveDraftNow("late-finalisation");
@@ -768,7 +805,7 @@ export default function RecordPage() {
       toast.info("Pause recording before you clear the dictation.");
       return;
     }
-    if (dictationText(sectionedTranscript, editorContent) !== copiedTextRef.current) {
+    if (dictationText(fittedTranscript, editorContent) !== copiedTextRef.current) {
       toast.info(
         "You have added to the dictation since you copied it. Copy it again before you clear it."
       );
@@ -800,7 +837,7 @@ export default function RecordPage() {
     }
   }, [
     isRecordingActive,
-    sectionedTranscript,
+    fittedTranscript,
     editorContent,
     deleteDraft,
     defaultNotes,
@@ -815,7 +852,7 @@ export default function RecordPage() {
 
   /** DIAAT-333: the text, to paste into the judge's own document. */
   const handleCopyText = useCallback(async () => {
-    const text = dictationText(sectionedTranscript, editorContent);
+    const text = dictationText(fittedTranscript, editorContent);
     if (!text) {
       toast.info("There is nothing to copy yet.");
       return;
@@ -823,7 +860,7 @@ export default function RecordPage() {
     try {
       await copyToClipboard(
         text,
-        dictationHtml(sectionedTranscript, editorContent)
+        dictationHtml(fittedTranscript, editorContent)
       );
       copiedTextRef.current = text;
       toast.success("Copied. Paste it into your document.", {
@@ -836,7 +873,7 @@ export default function RecordPage() {
     } catch {
       toast.error("Could not copy. Select the text and copy it instead.");
     }
-  }, [sectionedTranscript, editorContent]);
+  }, [fittedTranscript, editorContent]);
 
   const handleSubmitHearing = useCallback(async () => {
     let buildBody: () => string;
@@ -851,11 +888,27 @@ export default function RecordPage() {
         );
         return;
       }
+      // DIAAT-416: with several sections, each one's dictation by its box, so it
+      // goes in that box alone; and all of it, in order, as before.
+      const sectionsByBox =
+        hasSectionChoice && templateSections
+          ? Object.fromEntries(
+              templateSections.map((section, index) => [
+                section.tag,
+                sectionEntries(fittedTranscript, dictationSections[index].key),
+              ])
+            )
+          : undefined;
       buildBody = () =>
         JSON.stringify({
           template_id: chosenTemplate.id,
           values: valuesToSend(chosenTemplate, templateValues),
-          messages: sectionedTranscript,
+          messages: {
+            background: dictationSections.flatMap((section) =>
+              sectionEntries(fittedTranscript, section.key)
+            ),
+          },
+          ...(sectionsByBox && { sections: sectionsByBox }),
           notes: normalizeOptionalEditorText(editorContent),
         });
     } else {
@@ -900,7 +953,7 @@ export default function RecordPage() {
             form_data: asksLegalIssues
               ? formValues
               : { ...formValues, legalIssues: [] },
-            messages: sectionedTranscript,
+            messages: fittedTranscript,
             notes: normalizeOptionalEditorText(editorContent),
           })
         );
@@ -1004,7 +1057,10 @@ export default function RecordPage() {
     submitHearingToast(submissionPromise);
   }, [
     formData,
-    sectionedTranscript,
+    fittedTranscript,
+    dictationSections,
+    hasSectionChoice,
+    templateSections,
     router,
     editorContent,
     mode,
@@ -1043,10 +1099,7 @@ export default function RecordPage() {
     setSessionHadNoContent(false);
     setPostSessionNoticeDismissed(false);
   }, [isRecordingActive]);
-  const transcriptIsEmpty =
-    sectionedTranscript.background.length === 0 &&
-    sectionedTranscript.evidence.length === 0 &&
-    sectionedTranscript.facts.length === 0;
+  const transcriptIsEmpty = transcriptSize(sectionedTranscript) === 0;
   const showPostSessionNotice = !isRecordingActive && !postSessionNoticeDismissed;
 
   // One banner for the whole page. DIAAT-296 adds its autosave alerts to this
@@ -1142,10 +1195,9 @@ export default function RecordPage() {
     <div
       role="group"
       aria-label="Transcript section"
-      className="inline-flex h-10 overflow-hidden rounded-md border border-border bg-muted p-1"
+      className="inline-flex h-10 max-w-full overflow-x-auto rounded-md border border-border bg-muted p-1"
     >
-      {(Object.keys(SECTION_CONFIG) as TranscriptSection[]).map((section) => {
-        const config = SECTION_CONFIG[section];
+      {dictationSections.map(({ key: section, ...config }) => {
         return (
           <button
             key={section}
@@ -1173,10 +1225,7 @@ export default function RecordPage() {
     </div>
   );
 
-  const hasTranscriptContent =
-    sectionedTranscript.background.length > 0 ||
-    sectionedTranscript.evidence.length > 0 ||
-    sectionedTranscript.facts.length > 0;
+  const hasTranscriptContent = transcriptSize(sectionedTranscript) > 0;
 
   const saveStatus = describeSaveStatus({
     state: autosaveState,
@@ -1336,8 +1385,8 @@ export default function RecordPage() {
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               {recordingControl}
 
-              {layoutMode !== "mobile" && hasDecisionTemplate && (
-                <div className="shrink-0">{sectionTabs}</div>
+              {layoutMode !== "mobile" && hasSectionChoice && (
+                <div className="max-w-full shrink-0">{sectionTabs}</div>
               )}
 
               {layoutMode === "mobile" && (
@@ -1373,8 +1422,8 @@ export default function RecordPage() {
 
               {layoutMode === "mobile" &&
                 activeView === "transcript" &&
-                hasDecisionTemplate && (
-                  <div className="shrink-0">{sectionTabs}</div>
+                hasSectionChoice && (
+                  <div className="max-w-full shrink-0">{sectionTabs}</div>
                 )}
             </div>
 
@@ -1487,7 +1536,8 @@ export default function RecordPage() {
                               onSpeechSessionChange={setSpeechReport}
                               showRecordingControls={false}
                               showSectionTabs={false}
-                              showSectionNames={hasDecisionTemplate}
+                              showSectionNames={hasSectionChoice}
+                              sections={dictationSections}
                               embedded
                               className="min-h-0 flex-1"
                             />
@@ -1554,7 +1604,8 @@ export default function RecordPage() {
                         onSpeechSessionChange={setSpeechReport}
                         showRecordingControls={false}
                         showSectionTabs={false}
-                        showSectionNames={hasDecisionTemplate}
+                        showSectionNames={hasSectionChoice}
+                        sections={dictationSections}
                         embedded
                         className="min-h-0 flex-1"
                       />

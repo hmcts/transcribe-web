@@ -44,13 +44,16 @@ import cn, { getJudgeNameFromEmail } from "@/lib/utils";
 import { useWording } from "@/providers/jurisdiction";
 import { useUserSettings } from "@/providers/user-settings";
 import TranscriptEditor from "./transcript-editor";
-import type {
-  SectionedTranscript,
-  SpeechDemoProps,
-  TranscriptEntry,
-  TranscriptSection,
+import {
+  fitTranscript,
+  IAC_SECTIONS,
+  type SectionedTranscript,
+  type SpeechDemoProps,
+  sectionEntries,
+  type TranscriptEntry,
+  type TranscriptSection,
+  transcriptSize,
 } from "./types";
-import { SECTION_CONFIG } from "./types";
 
 // Dummy conversation for local dev - organized by section with 2 messages each
 const DEV_SECTIONED_TRANSCRIPT: SectionedTranscript = {
@@ -127,6 +130,7 @@ export default function LiveDictation({
   onTranscriptChange,
   initialSectionedTranscript,
   onSpeechSessionChange,
+  sections = IAC_SECTIONS,
 }: SpeechDemoProps) {
   const wording = useWording();
   const router = useRouter();
@@ -251,10 +255,14 @@ export default function LiveDictation({
     console.error("[speech] session error:", error);
   }, [error]);
 
-  const totalTranscriptEntries =
-    sectionedTranscript.background.length +
-    sectionedTranscript.evidence.length +
-    sectionedTranscript.facts.length;
+  const totalTranscriptEntries = transcriptSize(sectionedTranscript);
+  // DIAAT-416: shown in the page's sections; anything kept under another joins the first.
+  const shownTranscript = useMemo(
+    () => fitTranscript(sectionedTranscript, sections),
+    [sectionedTranscript, sections]
+  );
+  const shownTranscriptRef = useRef(shownTranscript);
+  shownTranscriptRef.current = shownTranscript;
 
   // An embedder that takes the transcript (the record page) saves its work
   // before a switch itself. Standalone, nothing here is saved, so a switch
@@ -392,7 +400,7 @@ export default function LiveDictation({
 
       setSectionedTranscript((prev: SectionedTranscript) => ({
         ...prev,
-        [targetSection]: [...prev[targetSection], newEntry],
+        [targetSection]: [...sectionEntries(prev, targetSection), newEntry],
       }));
 
       delete segmentSectionMapRef.current[segment.id];
@@ -418,11 +426,31 @@ export default function LiveDictation({
     previousIsCapturingRef.current = isCapturing;
   }, [isCapturing]);
 
+  // The editor is shown the transcript in the page's sections (shownTranscript):
+  // only the sections it changed are written back. What is kept under a section
+  // not on the page stays there unless the first section, where it is shown, is
+  // edited, which then takes it in.
   const handleTranscriptUpdate = useCallback(
     (updatedTranscript: SectionedTranscript) => {
-      setSectionedTranscript(updatedTranscript);
+      const shown = shownTranscriptRef.current;
+      const first = sections[0].key;
+      setSectionedTranscript((previous) => {
+        const next: SectionedTranscript = { ...previous };
+        for (const { key } of sections) {
+          if (updatedTranscript[key] === shown[key]) continue;
+          next[key] = updatedTranscript[key] ?? [];
+          if (key === first) {
+            for (const other of Object.keys(next)) {
+              if (!sections.some((section) => section.key === other)) {
+                delete next[other];
+              }
+            }
+          }
+        }
+        return next;
+      });
     },
-    []
+    [sections]
   );
 
   // Handle section tab change
@@ -570,7 +598,8 @@ export default function LiveDictation({
           {speechAlertBanner}
           <div className={`min-h-0 flex-1 ${transcriptSectionPadding}`}>
             <TranscriptEditor
-              sectionedTranscript={sectionedTranscript}
+              sectionedTranscript={shownTranscript}
+              sections={sections}
               activeSection={activeSection}
               interimTargetSection={interimTargetSection}
               interimText={interimText}
@@ -605,11 +634,7 @@ export default function LiveDictation({
                 formScrollContainerRef={formScrollContainerRef}
                 formData={formData}
                 formErrors={formErrors}
-                transcriptLength={
-                  sectionedTranscript.background.length +
-                  sectionedTranscript.evidence.length +
-                  sectionedTranscript.facts.length
-                }
+                transcriptLength={totalTranscriptEntries}
                 isSubmitting={isSubmitting}
                 onFormStateChange={setFormData}
                 onSaveTranscript={handleSaveTranscript}
@@ -629,7 +654,8 @@ export default function LiveDictation({
             <div className="flex-1 overflow-y-auto mb-2">
               <div className={`h-full ${transcriptSectionPadding}`}>
                 <TranscriptEditor
-                  sectionedTranscript={sectionedTranscript}
+                  sectionedTranscript={shownTranscript}
+                  sections={sections}
                   activeSection={activeSection}
                   interimTargetSection={interimTargetSection}
                   interimText={interimText}
@@ -672,11 +698,7 @@ export default function LiveDictation({
                           formScrollContainerRef={formScrollContainerRef}
                           formData={formData}
                           formErrors={formErrors}
-                          transcriptLength={
-                            sectionedTranscript.background.length +
-                            sectionedTranscript.evidence.length +
-                            sectionedTranscript.facts.length
-                          }
+                          transcriptLength={totalTranscriptEntries}
                           isSubmitting={isSubmitting}
                           onFormStateChange={setFormData}
                           onSaveTranscript={handleSaveTranscript}
@@ -729,37 +751,37 @@ export default function LiveDictation({
                   className="order-3 w-full min-[960px]:order-none min-[960px]:ml-auto min-[960px]:w-auto"
                 >
                   <TabsList className="inline-flex h-11 w-full overflow-hidden rounded-md border-2 border-neutral-200 bg-neutral-100 px-0 dark:border-neutral-800 dark:bg-neutral-700 min-[960px]:w-auto">
-                    {(Object.keys(SECTION_CONFIG) as TranscriptSection[]).map(
-                      (section) => {
-                        const config = SECTION_CONFIG[section];
-                        const count = sectionedTranscript[section].length;
-                        return (
-                          <TabsTrigger
-                            key={section}
-                            value={section}
-                            className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-none px-3 py-2.5 text-xs hover:bg-neutral-200 dark:hover:bg-neutral-900 sm:px-4 sm:text-sm min-[960px]:w-40 min-[960px]:flex-none"
-                          >
-                            <span
-                              className={cn(
-                                "size-2 rounded-full",
-                                config.color,
-                                activeSection === section
-                                  ? "animate-pulse"
-                                  : "opacity-60"
-                              )}
-                            />
-                            <span className="truncate font-medium">
-                              {config.label}
-                            </span>
-                            {count > 0 && (
-                              <span className="ml-0.5 rounded-full bg-neutral-300 dark:bg-neutral-600 px-1.5 py-0.5 text-xs">
-                                {count}
-                              </span>
+                    {sections.map(({ key: section, ...config }) => {
+                      const count = sectionEntries(
+                        shownTranscript,
+                        section
+                      ).length;
+                      return (
+                        <TabsTrigger
+                          key={section}
+                          value={section}
+                          className="flex min-w-0 flex-1 items-center justify-center gap-1.5 rounded-none px-3 py-2.5 text-xs hover:bg-neutral-200 dark:hover:bg-neutral-900 sm:px-4 sm:text-sm min-[960px]:w-40 min-[960px]:flex-none"
+                        >
+                          <span
+                            className={cn(
+                              "size-2 rounded-full",
+                              config.color,
+                              activeSection === section
+                                ? "animate-pulse"
+                                : "opacity-60"
                             )}
-                          </TabsTrigger>
-                        );
-                      }
-                    )}
+                          />
+                          <span className="truncate font-medium">
+                            {config.label}
+                          </span>
+                          {count > 0 && (
+                            <span className="ml-0.5 rounded-full bg-neutral-300 dark:bg-neutral-600 px-1.5 py-0.5 text-xs">
+                              {count}
+                            </span>
+                          )}
+                        </TabsTrigger>
+                      );
+                    })}
                   </TabsList>
                 </Tabs>
               )}
