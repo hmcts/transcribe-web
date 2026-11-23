@@ -11,18 +11,24 @@ import { useEffect, useRef } from "react";
  *   live recording, so the first Back stays on the page and asks;
  * - with ``beforeUnload``, closing or reloading the tab (the browser's own prompt).
  *
+ * With ``history: false`` Back and Forward are not guarded, so no entry is added: for
+ * a guard that is only briefly needed, whose entry would outlive it (DIAAT-414).
+ *
  * Switching jurisdiction is guarded separately (useJurisdictionSwitchGuard).
  */
 export function useLeaveGuard(
   active: boolean,
   message: string,
-  { beforeUnload = false }: { beforeUnload?: boolean } = {}
+  {
+    beforeUnload = false,
+    history = true,
+  }: { beforeUnload?: boolean; history?: boolean } = {}
 ): void {
   const historyGuard = useRef(false);
 
   useEffect(() => {
     if (!active) return;
-    if (!historyGuard.current) {
+    if (history && !historyGuard.current) {
       window.history.pushState(null, "", window.location.href);
       historyGuard.current = true;
     }
@@ -73,25 +79,12 @@ export function useLeaveGuard(
       event.returnValue = "";
     };
     document.addEventListener("click", onLinkClick, true);
-    window.addEventListener("popstate", onPopState);
+    if (history) window.addEventListener("popstate", onPopState);
     if (beforeUnload) window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       document.removeEventListener("click", onLinkClick, true);
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [active, message, beforeUnload]);
-
-  // No longer guarding, but its guard entry is still there: the next Back passes
-  // over it, rather than staying on the page (DIAAT-414: a guard can be short-lived).
-  useEffect(() => {
-    if (active || !historyGuard.current) return;
-    const onPopState = () => {
-      historyGuard.current = false;
-      window.removeEventListener("popstate", onPopState);
-      window.history.back();
-    };
-    window.addEventListener("popstate", onPopState);
-    return () => window.removeEventListener("popstate", onPopState);
-  }, [active]);
+  }, [active, message, beforeUnload, history]);
 }

@@ -725,8 +725,11 @@ export default function RecordPage() {
   }, [pageHasWork]);
 
   // Until an earlier draft is restored or discarded, what is typed is not saved
-  // (it would be saved over that draft): leaving the page in the app asks first.
-  useLeaveGuard(!draftSettled && pageHasWork, LEAVE_BEFORE_RESTORE);
+  // (it would be saved over that draft): a link in the app asks first. Not Back:
+  // its guard entry would outlive this short wait, and the recording's own.
+  useLeaveGuard(!draftSettled && pageHasWork, LEAVE_BEFORE_RESTORE, {
+    history: false,
+  });
 
   const handleCitationClick = useCallback((citationIndex: number) => {
     void citationIndex;
@@ -1226,11 +1229,16 @@ export default function RecordPage() {
       templates={templates}
       templateId={chosenTemplate.id}
       onTemplateChange={(id) => {
-        // Another template's fields differ: its answers start empty.
+        // Another template's fields differ: its answers start empty. So do
+        // answers kept for a template no longer offered (DIAAT-414).
+        const keptAnswers =
+          restoredTemplate !== null && hasAnswers(restoredTemplate.values);
         if (
-          hasAnswers(templateValues) &&
+          (hasAnswers(templateValues) || keptAnswers) &&
           !window.confirm(
-            "Choose another template? Your answers to this one will be cleared."
+            keptAnswers
+              ? "Choose another template? Your saved answers for a template no longer offered will be cleared."
+              : "Choose another template? Your answers to this one will be cleared."
           )
         )
           return;

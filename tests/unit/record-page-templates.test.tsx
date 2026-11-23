@@ -357,6 +357,32 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(deleteLiveDraft).not.toHaveBeenCalled();
   });
 
+  it("asks before another template clears answers kept for one no longer offered (DIAAT-414)", async () => {
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: { background: [], evidence: [], facts: [] },
+      form_data: { template: { id: "gone", values: { Reference: "1/2026" } } },
+      saved_at: new Date().toISOString(),
+    });
+    await renderPage([JUDGMENT, REASONS]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+    await screen.findByText(/no longer offered\. They stay saved/);
+
+    await user.click(screen.getByRole("combobox", { name: "Template" }));
+    await user.click(await screen.findByRole("option", { name: "Reasons" }));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringMatching(/saved answers for a template no longer offered/)
+    );
+    await waitFor(() => expect(putLiveDraft).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(putLiveDraft).mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({
+        template: { id: "gone", values: { Reference: "1/2026" } },
+      })
+    );
+    confirm.mockRestore();
+  });
+
   it("clears the answers when the judge chooses another template", async () => {
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true); // agrees
     const user = userEvent.setup();
