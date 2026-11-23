@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,6 +19,7 @@ import {
 // submits the hearing. With none, the page works as before: copy the text out.
 
 const mockFetchTemplates = vi.hoisted(() => vi.fn());
+const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
 const mockRouterPush = vi.hoisted(() => vi.fn());
 
 vi.mock("@/providers/jurisdiction", async () =>
@@ -44,7 +45,10 @@ vi.mock("@/components/editor/tiptap-editor", () => ({
   default: () => <div>Notes editor</div>,
 }));
 vi.mock("@/components/audio/dictation", () => ({
-  SpeechDemo: () => <div>Transcript area</div>,
+  SpeechDemo: (props: any) => {
+    lastSpeechDemoProps.current = props;
+    return <div>Transcript area</div>;
+  },
 }));
 vi.mock("@/lib/document-content-api", () => ({
   fetchUserDocumentContent: vi.fn(),
@@ -237,6 +241,120 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       screen.getByLabelText(/Case number/).getAttribute("aria-invalid")
     ).toBe("true");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // DIAAT-416: a template's dictated boxes are the sections the judge dictates into.
+  const SECTIONED: AvailableTemplate = {
+    id: "33333333-3333-4333-8333-333333333333",
+    name: "Sectioned",
+    service: null,
+    fields: [
+      {
+        tag: "Reference",
+        label: "Case number",
+        type: "text",
+        required: false,
+        options: [],
+      },
+    ],
+    sections: [
+      { tag: "Background", label: "Background" },
+      { tag: "Findings", label: "Findings of fact" },
+      { tag: "Decision", label: "Decision" },
+    ],
+  };
+  const said = (text: string) => ({
+    speaker: "Judge",
+    text,
+    timestamp: "10:00",
+  });
+
+  it("offers the template's sections and submits each one's dictation by its box (DIAAT-416)", async () => {
+    const user = userEvent.setup();
+    await renderPage([SECTIONED]);
+    await screen.findByText("Hearing details");
+
+    const tabs = within(
+      screen.getByRole("group", { name: "Transcript section" })
+    );
+    expect(tabs.getAllByRole("button").map((b) => b.textContent)).toEqual([
+      "Background",
+      "Findings of fact",
+      "Decision",
+    ]);
+    expect(lastSpeechDemoProps.current.showSectionNames).toBe(true);
+    const keys = lastSpeechDemoProps.current.sections.map(
+      (section: { key: string }) => section.key
+    );
+    expect(keys).toEqual(["background", "box:Findings", "box:Decision"]);
+
+    // What is dictated goes to the section chosen.
+    await user.click(tabs.getByRole("button", { name: "Findings of fact" }));
+    expect(lastSpeechDemoProps.current.activeSection).toBe("box:Findings");
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange({
+        background: [said("Heard today.")],
+        "box:Decision": [said("The claim succeeds.")],
+      });
+    });
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = submitted();
+    // Each section's dictation by its box, so it goes there alone; nothing for the
+    // findings, whose box is then left out of the document.
+    expect(body.sections).toEqual({
+      Background: [said("Heard today.")],
+      Findings: [],
+      Decision: [said("The claim succeeds.")],
+    });
+    expect(body.messages).toEqual({
+      background: [said("Heard today."), said("The claim succeeds.")],
+    });
+  });
+
+  it("keeps dictation from a section the template no longer has, in its first (DIAAT-416)", async () => {
+    const user = userEvent.setup();
+    await renderPage([SECTIONED]);
+    await screen.findByText("Hearing details");
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange({
+        background: [said("Heard today.")],
+        "box:Evidence": [said("From an earlier version.")],
+      });
+    });
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted().sections.Background).toEqual([
+      said("Heard today."),
+      said("From an earlier version."),
+    ]);
+  });
+
+  it("shows no sections for a template with one dictated box, and submits as before (DIAAT-416)", async () => {
+    const user = userEvent.setup();
+    await renderPage([
+      { ...SECTIONED, sections: [{ tag: "Decision", label: "Decision" }] },
+    ]);
+    await screen.findByText("Hearing details");
+    expect(
+      screen.queryByRole("group", { name: "Transcript section" })
+    ).toBeNull();
+    expect(lastSpeechDemoProps.current.showSectionNames).toBe(false);
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange({
+        background: [said("The claim succeeds.")],
+      });
+    });
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const body = submitted();
+    expect(body).not.toHaveProperty("sections");
+    expect(body.messages).toEqual({
+      background: [said("The claim succeeds.")],
+    });
   });
 
   it("lets the judge choose between the jurisdiction's templates", async () => {

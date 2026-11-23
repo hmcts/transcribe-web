@@ -880,7 +880,12 @@ function FieldConfiguration({
     );
   }
   if (field.type === "dictated") {
-    return <span className="text-sm">The judge's dictated judgment</span>;
+    return (
+      <span className="text-sm">
+        A section the judge dictates, chosen by this field's label. Several
+        boxes can each be one.
+      </span>
+    );
   }
   return <span className="text-sm text-muted-foreground">No list needed</span>;
 }

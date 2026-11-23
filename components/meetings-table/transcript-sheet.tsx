@@ -3,9 +3,9 @@
 import * as React from "react";
 import {
   SECTION_CONFIG,
-  type SectionedTranscript,
+  type IacSectionedTranscript,
   type TranscriptEntry,
-  type TranscriptSection,
+  type IacSection,
 } from "@/components/audio/dictation/types";
 import { Label } from "@/components/ui/label";
 import {
@@ -24,16 +24,16 @@ import { useWording } from "@/providers/jurisdiction";
 
 interface TranscriptSheetProps {
   meeting: MeetingRow | null;
-  transcript: SectionedTranscript;
+  transcript: IacSectionedTranscript;
   appellantName?: string | null;
   isLoading: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
-const SECTION_ORDER: TranscriptSection[] = ["background", "evidence", "facts"];
+const SECTION_ORDER: IacSection[] = ["background", "evidence", "facts"];
 
-const hasTranscriptContent = (transcript: SectionedTranscript) =>
+const hasTranscriptContent = (transcript: IacSectionedTranscript) =>
   SECTION_ORDER.some((section) => transcript[section].length > 0);
 
 export function TranscriptSheet({
@@ -46,12 +46,10 @@ export function TranscriptSheet({
 }: TranscriptSheetProps) {
   const wording = useWording();
   const [activeSection, setActiveSection] =
-    React.useState<TranscriptSection>("background");
+    React.useState<IacSection>("background");
   const [redactPii, setRedactPii] = React.useState(false);
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null);
-  const sectionRefs = React.useRef<
-    Record<TranscriptSection, HTMLDivElement | null>
-  >({
+  const sectionRefs = React.useRef<Record<IacSection, HTMLDivElement | null>>({
     background: null,
     evidence: null,
     facts: null,
@@ -78,7 +76,7 @@ export function TranscriptSheet({
 
     const handleScroll = () => {
       const containerTop = container.getBoundingClientRect().top;
-      let closestSection: TranscriptSection = activeSection;
+      let closestSection: IacSection = activeSection;
       let closestOffset = Number.POSITIVE_INFINITY;
 
       for (const section of SECTION_ORDER) {
@@ -110,7 +108,7 @@ export function TranscriptSheet({
     };
   }, [activeSection, open, transcript]);
 
-  const scrollToSection = React.useCallback((section: TranscriptSection) => {
+  const scrollToSection = React.useCallback((section: IacSection) => {
     const container = scrollContainerRef.current;
     const sectionElement = sectionRefs.current[section];
 
@@ -181,9 +179,7 @@ export function TranscriptSheet({
             <>
               <Tabs
                 value={activeSection}
-                onValueChange={(value) =>
-                  scrollToSection(value as TranscriptSection)
-                }
+                onValueChange={(value) => scrollToSection(value as IacSection)}
                 className="w-full"
               >
                 <TabsList className="inline-flex h-11 w-full overflow-hidden rounded-md border-2 border-neutral-200 bg-neutral-100 px-0">
@@ -260,7 +256,7 @@ export function TranscriptSheet({
   );
 }
 
-function SectionDivider({ section }: { section: TranscriptSection }) {
+function SectionDivider({ section }: { section: IacSection }) {
   const config = SECTION_CONFIG[section];
 
   return (

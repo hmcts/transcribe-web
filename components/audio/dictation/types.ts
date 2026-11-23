@@ -57,6 +57,9 @@ export interface SpeechDemoProps {
    * warning banner; otherwise this component renders its own.
    */
   onSpeechSessionChange?: (report: SpeechSessionReport) => void;
+  /** The sections dictated into, in order (DIAAT-416): the IAC decision's unless the
+   * page gives a template's. */
+  sections?: DictationSection[];
 }
 
 export interface MessageGroup {
@@ -66,18 +69,30 @@ export interface MessageGroup {
   startTimeMs: number;
 }
 
-// Section types for categorizing transcript parts
-export type TranscriptSection = "background" | "evidence" | "facts";
+// The IAC decision's sections, which its hearings are stored and shown in.
+export type IacSection = "background" | "evidence" | "facts";
 
-export interface SectionedTranscript {
+export interface IacSectionedTranscript {
   background: TranscriptEntry[];
   evidence: TranscriptEntry[];
   facts: TranscriptEntry[];
 }
 
+/**
+ * A section dictated into (DIAAT-416): one of the IAC decision's, or a dictated box
+ * of an uploaded template. The first section is always "background", so what is
+ * dictated before a template's sections are known is already in its first one.
+ */
+export type TranscriptSection = string;
+
+/** What was dictated, by section; a section with nothing yet may be absent. */
+export type SectionedTranscript = Partial<
+  Record<TranscriptSection, TranscriptEntry[]>
+>;
+
 // Section metadata for UI
 export const SECTION_CONFIG: Record<
-  TranscriptSection,
+  IacSection,
   { label: string; description: string; color: string }
 > = {
   background: {
@@ -96,3 +111,69 @@ export const SECTION_CONFIG: Record<
     color: "bg-emerald-500",
   },
 };
+
+/** A section the judge can dictate into, as the page shows it (DIAAT-416). */
+export interface DictationSection {
+  key: TranscriptSection;
+  label: string;
+  color: string;
+}
+
+export const IAC_SECTIONS: DictationSection[] = (
+  Object.keys(SECTION_CONFIG) as IacSection[]
+).map((key) => ({
+  key,
+  label: SECTION_CONFIG[key].label,
+  color: SECTION_CONFIG[key].color,
+}));
+
+/** The one section where there are none to choose (DIAAT-333's general section, or
+ * a template with one dictated box). */
+export const SINGLE_SECTION: DictationSection[] = [IAC_SECTIONS[0]];
+
+/** Colours for a template's sections, in turn. */
+export const SECTION_COLORS = [
+  "bg-blue-500",
+  "bg-amber-500",
+  "bg-emerald-500",
+  "bg-violet-500",
+  "bg-rose-500",
+  "bg-cyan-500",
+];
+
+/** A section's entries; none when it has nothing yet. */
+export function sectionEntries(
+  transcript: SectionedTranscript,
+  section: TranscriptSection
+): TranscriptEntry[] {
+  return (Object.hasOwn(transcript, section) && transcript[section]) || [];
+}
+
+/** How many entries were dictated, in all sections. */
+export function transcriptSize(transcript: SectionedTranscript): number {
+  return Object.values(transcript).reduce(
+    (total, entries) => total + (entries?.length ?? 0),
+    0
+  );
+}
+
+/**
+ * The transcript in exactly ``sections``: what is kept under a section that is not
+ * one of them (a draft from before the template changed, or another template's)
+ * joins the first, so nothing dictated is ever out of sight or left out.
+ */
+export function fitTranscript(
+  transcript: SectionedTranscript,
+  sections: DictationSection[]
+): SectionedTranscript {
+  const keys = new Set(sections.map((s) => s.key));
+  const leftOver = Object.entries(transcript).flatMap(([key, entries]) =>
+    keys.has(key) ? [] : (entries ?? [])
+  );
+  const fitted: SectionedTranscript = {};
+  sections.forEach((section, index) => {
+    const own = sectionEntries(transcript, section.key);
+    fitted[section.key] = index === 0 ? [...own, ...leftOver] : own;
+  });
+  return fitted;
+}

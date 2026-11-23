@@ -12,13 +12,16 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import cn from "@/lib/utils";
-import type {
-  MessageGroup,
-  SectionedTranscript,
-  TranscriptEntry,
-  TranscriptSection,
+import {
+  type DictationSection,
+  IAC_SECTIONS,
+  type MessageGroup,
+  type SectionedTranscript,
+  sectionEntries,
+  type TranscriptEntry,
+  type TranscriptSection,
+  transcriptSize,
 } from "./types";
-import { SECTION_CONFIG } from "./types";
 
 const SPEAKER_NAME_EDITING_ENABLED = false;
 
@@ -32,17 +35,19 @@ interface TranscriptEditorProps {
   onTranscriptUpdate: (updatedTranscript: SectionedTranscript) => void;
   /** DIAAT-333: off for the general section (one section, no name to show). */
   showSectionNames?: boolean;
+  /** The sections dictated into, in order (DIAAT-416): the IAC decision's unless
+   * the page gives a template's. */
+  sections?: DictationSection[];
 }
 
 // Section divider component
 function SectionDivider({
-  section,
+  section: config,
   isActive,
 }: {
-  section: TranscriptSection;
+  section: DictationSection;
   isActive: boolean;
 }) {
-  const config = SECTION_CONFIG[section];
   return (
     <div className="flex items-center gap-3 py-4 my-2">
       <div className="flex-1 h-px bg-neutral-200 dark:bg-neutral-700" />
@@ -64,12 +69,6 @@ function SectionDivider({
 
 const TIME_GAP_THRESHOLD = 60000; // 1 minute in milliseconds
 
-// Helper to get total message count
-const getTotalCount = (sectioned: SectionedTranscript): number =>
-  sectioned.background.length +
-  sectioned.evidence.length +
-  sectioned.facts.length;
-
 // Type for tracking which section/index we're editing
 interface EditLocation {
   section: TranscriptSection;
@@ -87,7 +86,11 @@ export default function TranscriptEditor({
   isListening,
   onTranscriptUpdate,
   showSectionNames = true,
+  sections = IAC_SECTIONS,
 }: TranscriptEditorProps) {
+  /** A section as shown: one not in ``sections`` (none should be) as the first. */
+  const sectionOf = (key: TranscriptSection): DictationSection =>
+    sections.find((s) => s.key === key) ?? sections[0];
   // Determine which section the interim text will actually be saved to
   // Falls back to activeSection when no speech is in progress (interimTargetSection is null)
   const effectiveInterimSection = interimTargetSection ?? activeSection;
@@ -105,7 +108,7 @@ export default function TranscriptEditor({
   const editingTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const messageButtonRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
 
-  const totalCount = getTotalCount(sectionedTranscript);
+  const totalCount = transcriptSize(sectionedTranscript);
   const interimSnapshot = interimText;
 
   // Auto-scroll to bottom when new messages arrive
@@ -132,10 +135,8 @@ export default function TranscriptEditor({
       section: TranscriptSection;
       groups: SectionMessageGroup[];
     }[] = [];
-    const sections: TranscriptSection[] = ["background", "evidence", "facts"];
-
-    for (const section of sections) {
-      const entries = sectionedTranscript[section];
+    for (const section of sections.map((s) => s.key)) {
+      const entries = sectionEntries(sectionedTranscript, section);
       if (entries.length === 0) continue;
 
       const groups: SectionMessageGroup[] = [];
@@ -180,7 +181,7 @@ export default function TranscriptEditor({
     }
 
     return allGroups;
-  }, [sectionedTranscript]);
+  }, [sectionedTranscript, sections]);
 
   const handleStartEditSpeaker = (speaker: string) => {
     setEditingSpeaker(speaker);
@@ -229,8 +230,8 @@ export default function TranscriptEditor({
     }
 
     const { section, index } = editingMessage;
-    const updatedSection = sectionedTranscript[section].map((entry, idx) =>
-      idx === index ? { ...entry, text: newText } : entry
+    const updatedSection = sectionEntries(sectionedTranscript, section).map(
+      (entry, idx) => (idx === index ? { ...entry, text: newText } : entry)
     );
 
     onTranscriptUpdate({
@@ -249,9 +250,10 @@ export default function TranscriptEditor({
       confirmingDelete?.index === index
     ) {
       // Second click - actually delete
-      const updatedSection = sectionedTranscript[section].filter(
-        (_, idx) => idx !== index
-      );
+      const updatedSection = sectionEntries(
+        sectionedTranscript,
+        section
+      ).filter((_, idx) => idx !== index);
 
       onTranscriptUpdate({
         ...sectionedTranscript,
@@ -342,11 +344,14 @@ export default function TranscriptEditor({
       return entries;
     };
 
-    onTranscriptUpdate({
-      background: updateSection(sectionedTranscript.background, "background"),
-      evidence: updateSection(sectionedTranscript.evidence, "evidence"),
-      facts: updateSection(sectionedTranscript.facts, "facts"),
-    });
+    onTranscriptUpdate(
+      Object.fromEntries(
+        Object.entries(sectionedTranscript).map(([section, entries]) => [
+          section,
+          updateSection(entries ?? [], section),
+        ])
+      )
+    );
 
     handleCancelEdit();
   };
@@ -390,7 +395,10 @@ export default function TranscriptEditor({
           <div className="mx-auto max-w-4xl space-y-4">
             {/* Show active section divider first if no messages yet but listening */}
             {showSectionNames && sectionGroups.length === 0 && isListening && (
-              <SectionDivider section={activeSection} isActive={true} />
+              <SectionDivider
+                section={sectionOf(activeSection)}
+                isActive={true}
+              />
             )}
 
             {sectionGroups.map(({ section, groups }, _sectionIdx) => (
@@ -398,7 +406,7 @@ export default function TranscriptEditor({
                 {/* Section divider */}
                 {showSectionNames && (
                   <SectionDivider
-                    section={section}
+                    section={sectionOf(section)}
                     isActive={activeSection === section}
                   />
                 )}
@@ -641,7 +649,7 @@ export default function TranscriptEditor({
               ) &&
               interimText && (
                 <SectionDivider
-                  section={effectiveInterimSection}
+                  section={sectionOf(effectiveInterimSection)}
                   isActive={true}
                 />
               )}
@@ -653,12 +661,12 @@ export default function TranscriptEditor({
                   <span
                     className={cn(
                       "size-2 rounded-full",
-                      SECTION_CONFIG[effectiveInterimSection].color
+                      sectionOf(effectiveInterimSection).color
                     )}
                   />
                   <span className="text-xs text-neutral-400 dark:text-neutral-500">
                     {showSectionNames
-                      ? `Recording to ${SECTION_CONFIG[effectiveInterimSection].label}`
+                      ? `Recording to ${sectionOf(effectiveInterimSection).label}`
                       : "Recording"}
                   </span>
                 </div>

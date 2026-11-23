@@ -124,4 +124,18 @@ describe("the record page's draft (DIAAT-414)", () => {
     ).toEqual({ Reference: "1/2026", Issues: ["unfair"] });
     expect(fitToTemplate(template, { Issues: ["removed"] })).toEqual({});
   });
+
+  it("keeps the template with dictation, whose sections are its (DIAAT-416)", () => {
+    const dictated = {
+      ...BLANK,
+      transcript: {
+        background: [{ speaker: "Judge", text: "Heard.", timestamp: "10:00" }],
+      },
+      templateId: "t1",
+    };
+    expect(draftFormData(dictated).template).toEqual({ id: "t1", values: {} });
+    expect(draftFormData({ ...BLANK, templateId: "t1" })).not.toHaveProperty(
+      "template"
+    );
+  });
 });

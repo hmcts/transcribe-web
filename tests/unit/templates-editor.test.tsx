@@ -253,7 +253,7 @@ describe("TemplatesEditor", () => {
     ).toBe("Reference");
     expect(within(fields).getByText("Box Reference, 2 places")).toBeTruthy();
     expect(
-      within(fields).getByText("The judge's dictated judgment")
+      within(fields).getByText(/A section the judge dictates/)
     ).toBeTruthy();
     expect(
       (
