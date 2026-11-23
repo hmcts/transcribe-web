@@ -327,6 +327,26 @@ describe("Live draft restore", () => {
       step: "restore_pending",
     });
 
+    // Leaving the page in the app would lose it: it asks first.
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const help = document.createElement("a");
+    help.href = "/help";
+    document.body.appendChild(help);
+    let reached = false;
+    help.addEventListener("click", (event) => {
+      reached = true;
+      event.preventDefault();
+    });
+    help.dispatchEvent(
+      new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 })
+    );
+    expect(reached).toBe(false);
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringMatching(/restore or discard the unsaved work/)
+    );
+    help.remove();
+    confirm.mockRestore();
+
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: /discard/i }));
     });
@@ -340,6 +360,15 @@ describe("Live draft restore", () => {
     expect(mockDeleteLiveDraft.mock.invocationCallOrder[0]).toBeLessThan(
       mockPutLiveDraft.mock.invocationCallOrder[0]
     );
+
+    // That save is this page's draft now: reset to blank, it is deleted too.
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({
+        ...lastFormProps.current.initialValues,
+        appellantName: "",
+      });
+    });
+    expect(mockDeleteLiveDraft).toHaveBeenCalledTimes(2);
   });
 
   it("calls deleteLiveDraft when Discard is clicked", async () => {
@@ -974,6 +1003,61 @@ describe("Autosave failure states", () => {
       lastFormProps.current.onFormStateChange(blank);
     });
     expect(mockDeleteLiveDraft).toHaveBeenCalledTimes(1);
+
+    // The same details entered again are saved again: the draft was deleted.
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({ ...blank, appellantName: "A Person" });
+    });
+    await tickRetry(1_000);
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+  });
+
+  it("saves a transcript edited while paused, with the hearing details kept (DIAAT-414)", async () => {
+    render(<RecordPage />);
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({
+        ...lastFormProps.current.initialValues,
+        appellantName: "A Person",
+      });
+    });
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange(TEST_TRANSCRIPT);
+    });
+    await tickRetry(1_000);
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
+
+    const emptied = { background: [], evidence: [], facts: [] };
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange(emptied);
+    });
+    await tickRetry(1_000);
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(2);
+    expect(mockPutLiveDraft.mock.calls[1][0]).toEqual(emptied);
+  });
+
+  it("saves nothing until the lookup for an earlier draft has answered (DIAAT-414)", async () => {
+    let answer: (draft: null) => void = () => undefined;
+    mockGetLiveDraft.mockReturnValueOnce(
+      new Promise((resolve) => {
+        answer = resolve;
+      })
+    );
+    render(<RecordPage />);
+    await act(async () => {
+      lastFormProps.current.onFormStateChange({
+        ...lastFormProps.current.initialValues,
+        appellantName: "A Person",
+      });
+    });
+    await tickRetry(1_000);
+    expect(mockPutLiveDraft).not.toHaveBeenCalled();
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "busy" });
+
+    await act(async () => {
+      answer(null);
+    });
+    await tickRetry(1_000);
+    expect(mockPutLiveDraft).toHaveBeenCalledTimes(1);
   });
 
   it("switches when the form holds only the judge's name it filled in itself", async () => {

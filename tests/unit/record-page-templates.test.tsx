@@ -4,7 +4,11 @@ import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
-import { deleteLiveDraft, putLiveDraft } from "@/lib/live-draft-api";
+import {
+  deleteLiveDraft,
+  getLiveDraft,
+  putLiveDraft,
+} from "@/lib/live-draft-api";
 import {
   type AvailableTemplate,
   TemplateRefusedError,
@@ -269,6 +273,34 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(vi.mocked(putLiveDraft).mock.calls[0][1]).toEqual(
       expect.objectContaining({
         template: { id: JUDGMENT.id, values: { Reference: "1234/2026" } },
+      })
+    );
+  });
+
+  it("keeps a restored template's answers in the draft while the templates load (DIAAT-414)", async () => {
+    mockFetchTemplates.mockReturnValue(new Promise(() => undefined)); // still loading
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: {
+        background: [{ speaker: "Judge", text: "Heard today", timestamp: "00:01" }],
+        evidence: [],
+        facts: [],
+      },
+      form_data: { template: { id: JUDGMENT.id, values: { Reference: "1/2026" } } },
+      saved_at: new Date().toISOString(),
+    });
+    render(
+      <>
+        <Toaster />
+        <RecordPage />
+      </>
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() => expect(putLiveDraft).toHaveBeenCalled(), { timeout: 3000 });
+    expect(vi.mocked(putLiveDraft).mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        template: { id: JUDGMENT.id, values: { Reference: "1/2026" } },
       })
     );
   });
