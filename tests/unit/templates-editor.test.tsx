@@ -434,10 +434,10 @@ describe("TemplatesEditor", () => {
         name: "Legal framework text (of the legal issues chosen)",
       })
     );
-    await user.type(
-      within(fields).getByLabelText("When no legal framework is chosen, print"),
-      "No legal framework applies."
+    await user.click(
+      within(fields).getByLabelText("When no legal framework is chosen, print")
     );
+    await user.paste("No legal framework applies.");
     await user.click(within(fields).getByRole("button", { name: "Save" }));
 
     await waitFor(() => expect(puts()).toHaveLength(1));

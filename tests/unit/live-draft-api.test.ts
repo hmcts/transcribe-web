@@ -43,6 +43,28 @@ describe("getLiveDraft", () => {
     });
   });
 
+  it("ends a stalled lookup as a network failure after the deadline (DIAAT-414)", async () => {
+    vi.useFakeTimers();
+    try {
+      mockFetch.mockImplementation(
+        (_url: string, init: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            init.signal?.addEventListener("abort", () =>
+              reject(new DOMException("aborted", "AbortError"))
+            );
+          })
+      );
+      const result = getLiveDraft(1_000).catch((e) => e);
+      await vi.advanceTimersByTimeAsync(1_000);
+      const error = await result;
+      expect(error).toBeInstanceOf(LiveDraftError);
+      expect(error.kind).toBe("network");
+      expect(error.message).toMatch(/fetch live draft: no response in time/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("returns the draft body on success", async () => {
     const body = { transcript: TRANSCRIPT, form_data: {}, saved_at: "x" };
     mockFetch.mockResolvedValue({

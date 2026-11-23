@@ -12,11 +12,17 @@
  */
 
 /** Which step a switch stopped at: saving the tab's work, the switch itself, the
- * tab being busy (a submission, upload or save in progress), work on it that is
- * never saved (notes) and would be lost, or changes not yet saved (a form). */
+ * tab being busy (a submission, upload or save in progress), an earlier draft
+ * still offered for restore that the tab's work would be saved over, or changes
+ * not yet saved (a form). */
 export class JurisdictionSwitchError extends Error {
   constructor(
-    readonly step: "save" | "switch" | "busy" | "unsaved" | "unsaved_changes",
+    readonly step:
+      | "save"
+      | "switch"
+      | "busy"
+      | "restore_pending"
+      | "unsaved_changes",
     options?: { cause?: unknown }
   ) {
     super(`Jurisdiction switch stopped at: ${step}`, options);
