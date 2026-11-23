@@ -267,7 +267,7 @@ export default function RecordPage() {
           key.startsWith("box:")
         )
       : [];
-    if (kept.length > 1) {
+    if (kept.length > 0) {
       return kept.map((key, index) => ({
         key,
         label: key.slice("box:".length),

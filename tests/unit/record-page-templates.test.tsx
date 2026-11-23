@@ -1067,4 +1067,24 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
       ).toEqual(["box:Facts", "box:Decision"])
     );
   });
+
+  it("keeps a draft's one dictated section while its template loads (DIAAT-339)", async () => {
+    mockFetchRevision.mockReturnValue(new Promise(() => undefined)); // still loading
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: {
+        "box:Facts": [{ speaker: "Judge", text: "Facts.", timestamp: "00:01" }],
+      },
+      form_data: { template: { id: JUDGMENT.id, values: {}, revision: "r1" } },
+      saved_at: new Date().toISOString(),
+    });
+    await renderPage([CHANGED]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+
+    await waitFor(() =>
+      expect(
+        lastSpeechDemoProps.current.sections.map((s: { key: string }) => s.key)
+      ).toEqual(["box:Facts"])
+    );
+  });
 });
