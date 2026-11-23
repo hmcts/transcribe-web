@@ -80,8 +80,8 @@ export interface IacSectionedTranscript {
 
 /**
  * A section dictated into (DIAAT-416): one of the IAC decision's, or a dictated box
- * of an uploaded template. The first section is always "background", so what is
- * dictated before a template's sections are known is already in its first one.
+ * of an uploaded template (`box:<tag>`, so each box keeps its dictation however the
+ * template's sections are reordered). Where there is one section, "background".
  */
 export type TranscriptSection = string;
 
@@ -159,8 +159,10 @@ export function transcriptSize(transcript: SectionedTranscript): number {
 
 /**
  * The transcript in exactly ``sections``: what is kept under a section that is not
- * one of them (a draft from before the template changed, or another template's)
- * joins the first, so nothing dictated is ever out of sight or left out.
+ * one of them (dictated before the template's sections were known, a draft from
+ * before the template changed, another template's) joins the first, so nothing
+ * dictated is ever out of sight or left out. It comes before the first section's
+ * own, so what is dictated next is added at the end and nothing shown moves.
  */
 export function fitTranscript(
   transcript: SectionedTranscript,
@@ -173,7 +175,7 @@ export function fitTranscript(
   const fitted: SectionedTranscript = {};
   sections.forEach((section, index) => {
     const own = sectionEntries(transcript, section.key);
-    fitted[section.key] = index === 0 ? [...own, ...leftOver] : own;
+    fitted[section.key] = index === 0 ? [...leftOver, ...own] : own;
   });
   return fitted;
 }

@@ -73,7 +73,7 @@ describe("editing the dictation in a template's sections (DIAAT-416)", () => {
   it("shows what is kept under another section in the first", () => {
     renderDictation();
     expect(editor.props.sectionedTranscript).toEqual({
-      background: [said("Heard today."), said("From another template.")],
+      background: [said("From another template."), said("Heard today.")],
       "box:Decision": [said("The claim succeeds.")],
     });
   });
@@ -101,15 +101,15 @@ describe("editing the dictation in a template's sections (DIAAT-416)", () => {
       editor.props.onTranscriptUpdate({
         ...shown,
         background: [
-          said("Heard today, in person."),
           said("From another template."),
+          said("Heard today, in person."),
         ],
       });
     });
     expect(onTranscriptChange).toHaveBeenLastCalledWith({
       background: [
-        said("Heard today, in person."),
         said("From another template."),
+        said("Heard today, in person."),
       ],
       "box:Decision": [said("The claim succeeds.")],
     });

@@ -223,9 +223,9 @@ export default function RecordPage() {
   // A form to fill and a hearing to submit, rather than text to copy out.
   const hasHearingForm = hasDecisionTemplate || hasTemplateForm;
   // DIAAT-416: the sections the judge dictates into: the IAC decision's, or an
-  // uploaded template's dictated boxes when it has several; else one, as before.
-  // The first is always "background", so what is dictated before the templates
-  // load is already in the first section.
+  // uploaded template's dictated boxes when it has several, each by its box (so it
+  // keeps its dictation if the admin reorders them); else one, as before. What is
+  // dictated before the templates load joins the first (fitTranscript).
   const templateSections = hasTemplateForm
     ? chosenTemplate?.sections
     : undefined;
@@ -233,7 +233,7 @@ export default function RecordPage() {
     if (hasDecisionTemplate) return IAC_SECTIONS;
     if (!templateSections || templateSections.length < 2) return SINGLE_SECTION;
     return templateSections.map((section, index) => ({
-      key: index === 0 ? SINGLE_SECTION[0].key : `box:${section.tag}`,
+      key: `box:${section.tag}`,
       label: section.label,
       color: SECTION_COLORS[index % SECTION_COLORS.length],
     }));
@@ -1195,7 +1195,7 @@ export default function RecordPage() {
     <div
       role="group"
       aria-label="Transcript section"
-      className="inline-flex h-10 overflow-hidden rounded-md border border-border bg-muted p-1"
+      className="inline-flex h-10 max-w-full overflow-x-auto rounded-md border border-border bg-muted p-1"
     >
       {dictationSections.map(({ key: section, ...config }) => {
         return (
@@ -1386,7 +1386,7 @@ export default function RecordPage() {
               {recordingControl}
 
               {layoutMode !== "mobile" && hasSectionChoice && (
-                <div className="shrink-0">{sectionTabs}</div>
+                <div className="max-w-full shrink-0">{sectionTabs}</div>
               )}
 
               {layoutMode === "mobile" && (
@@ -1423,7 +1423,7 @@ export default function RecordPage() {
               {layoutMode === "mobile" &&
                 activeView === "transcript" &&
                 hasSectionChoice && (
-                  <div className="shrink-0">{sectionTabs}</div>
+                  <div className="max-w-full shrink-0">{sectionTabs}</div>
                 )}
             </div>
 

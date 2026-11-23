@@ -286,14 +286,15 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     const keys = lastSpeechDemoProps.current.sections.map(
       (section: { key: string }) => section.key
     );
-    expect(keys).toEqual(["background", "box:Findings", "box:Decision"]);
+    // Each by its box, so it keeps its dictation however they are reordered.
+    expect(keys).toEqual(["box:Background", "box:Findings", "box:Decision"]);
 
     // What is dictated goes to the section chosen.
     await user.click(tabs.getByRole("button", { name: "Findings of fact" }));
     expect(lastSpeechDemoProps.current.activeSection).toBe("box:Findings");
     await act(async () => {
       lastSpeechDemoProps.current.onTranscriptChange({
-        background: [said("Heard today.")],
+        "box:Background": [said("Heard today.")],
         "box:Decision": [said("The claim succeeds.")],
       });
     });
@@ -329,6 +330,51 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(submitted().sections.Background).toEqual([
       said("Heard today."),
       said("From an earlier version."),
+    ]);
+  });
+
+  it("keeps each box's dictation when the admin reorders the sections (DIAAT-416)", async () => {
+    const user = userEvent.setup();
+    const reordered = [
+      SECTIONED.sections?.[1],
+      SECTIONED.sections?.[0],
+      SECTIONED.sections?.[2],
+    ].filter((section) => section !== undefined);
+    await renderPage([{ ...SECTIONED, sections: reordered }]);
+    await screen.findByText("Hearing details");
+    // As a draft saved before the reorder would bring it back.
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange({
+        "box:Background": [said("Heard today.")],
+        "box:Findings": [said("I find it credible.")],
+      });
+    });
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted().sections).toEqual({
+      Findings: [said("I find it credible.")],
+      Background: [said("Heard today.")],
+      Decision: [],
+    });
+  });
+
+  it("puts what was dictated before the templates loaded in the first section (DIAAT-416)", async () => {
+    const user = userEvent.setup();
+    await renderPage([SECTIONED]);
+    await screen.findByText("Hearing details");
+    await act(async () => {
+      lastSpeechDemoProps.current.onTranscriptChange({
+        background: [said("Said while the templates loaded.")],
+        "box:Background": [said("Heard today.")],
+      });
+    });
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted().sections.Background).toEqual([
+      said("Said while the templates loaded."),
+      said("Heard today."),
     ]);
   });
 

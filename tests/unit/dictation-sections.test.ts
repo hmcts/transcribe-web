@@ -56,12 +56,26 @@ describe("dictation sections (DIAAT-416)", () => {
         SECTIONS
       )
     ).toEqual({
-      background: [entry("a"), entry("old")],
+      // Before the section's own, so what is dictated next goes at the end.
+      background: [entry("old"), entry("a")],
       "box:Decision": [entry("b")],
     });
     expect(fitTranscript({}, SECTIONS)).toEqual({
       background: [],
       "box:Decision": [],
     });
+  });
+
+  it("adds what is dictated next after everything shown, so no line shown moves", () => {
+    const kept = { "box:Gone": [entry("old")], background: [entry("a")] };
+    const before = fitTranscript(kept, SECTIONS).background ?? [];
+    const after =
+      fitTranscript(
+        { ...kept, background: [entry("a"), entry("new")] },
+        SECTIONS
+      ).background ?? [];
+    // An edit of the line at an index shown before still finds that line.
+    expect(after.slice(0, before.length)).toEqual(before);
+    expect(after.at(-1)).toEqual(entry("new"));
   });
 });
