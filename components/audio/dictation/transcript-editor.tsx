@@ -25,12 +25,20 @@ import {
 
 const SPEAKER_NAME_EDITING_ENABLED = false;
 
+/** DIAAT-417: part of what is being said, said before the judge switched section. */
+export interface InterimPart {
+  section: TranscriptSection;
+  text: string;
+}
+
 interface TranscriptEditorProps {
   sectionedTranscript: SectionedTranscript;
   activeSection: TranscriptSection;
-  /** The section where the current interim speech will actually be saved (may differ from activeSection if user switched tabs mid-speech) */
+  /** The section where the current interim speech will be saved */
   interimTargetSection: TranscriptSection | null;
   interimText: string;
+  /** DIAAT-417: what was being said before a switch, under the section it goes to. */
+  interimEarlier?: InterimPart[];
   isListening: boolean;
   onTranscriptUpdate: (updatedTranscript: SectionedTranscript) => void;
   /** DIAAT-333: off for the general section (one section, no name to show). */
@@ -83,6 +91,7 @@ export default function TranscriptEditor({
   activeSection,
   interimTargetSection,
   interimText,
+  interimEarlier = [],
   isListening,
   onTranscriptUpdate,
   showSectionNames = true,
@@ -653,6 +662,29 @@ export default function TranscriptEditor({
                   isActive={true}
                 />
               )}
+
+            {/* DIAAT-417: what was being said before a switch, under its own section */}
+            {interimText &&
+              interimEarlier.map((part, index) => (
+                <div key={index} className="not-prose animate-pulse">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span
+                      className={cn(
+                        "size-2 rounded-full",
+                        sectionOf(part.section).color
+                      )}
+                    />
+                    <span className="text-xs text-neutral-400 dark:text-neutral-500">
+                      {`Recording to ${sectionOf(part.section).label}`}
+                    </span>
+                  </div>
+                  <div className="pl-4">
+                    <p className="italic text-neutral-400 dark:text-neutral-500">
+                      {part.text}
+                    </p>
+                  </div>
+                </div>
+              ))}
 
             {/* Interim text (while speaking) - shows target section where message will be saved */}
             {interimText && (

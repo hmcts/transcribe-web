@@ -34,16 +34,20 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNoSpeechWatchdog } from "@/hooks/use-no-speech-watchdog";
-import { useRealtimeTranscription } from "@/hooks/use-realtime-transcription";
+import {
+  type TranscriptionSegment,
+  useRealtimeTranscription,
+} from "@/hooks/use-realtime-transcription";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
 import { submitDictation } from "@/lib/dictation-submission";
+import { type SectionSwitch, splitBySection } from "@/lib/section-switches";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
 import { DECISIONS_HREF } from "@/lib/navigation";
 import { isCapturingSpeech } from "@/lib/speech-session-health";
 import cn, { getJudgeNameFromEmail } from "@/lib/utils";
 import { useWording } from "@/providers/jurisdiction";
 import { useUserSettings } from "@/providers/user-settings";
-import TranscriptEditor from "./transcript-editor";
+import TranscriptEditor, { type InterimPart } from "./transcript-editor";
 import {
   fitTranscript,
   IAC_SECTIONS,
@@ -108,6 +112,66 @@ const EMPTY_SECTIONED_TRANSCRIPT: SectionedTranscript = {
 };
 
 const DEFAULT_SPEAKER_NAME = "Judge";
+// DIAAT-417: the utterance being said, and for each switch made while saying it, how
+// much of its text was said in the section before (``section``). Speech delivers text
+// after it is said, so a switch's ``upTo`` follows the text while the audio results
+// cover ends before the switch (``at``); the first result covering more settles it.
+interface LiveUtterance {
+  id: string;
+  speaker: string;
+  text: string;
+  splits: {
+    section: TranscriptSection;
+    at: number;
+    upTo: number;
+    settled: boolean;
+  }[];
+}
+
+/**
+ * DIAAT-417: an utterance first heard after switches made while it was being said:
+ * those switches, from the audio Speech says it covers. A switch after all it covers
+ * waits for more; one within it splits its text by time, as near as can be told.
+ */
+function splitsSince(
+  segment: TranscriptionSegment,
+  switches: readonly SectionSwitch[],
+  first: TranscriptSection
+): LiveUtterance["splits"] {
+  const { heardFromMs: from, heardUntilMs: until, text } = segment;
+  if (from === undefined || until === undefined) return [];
+  return switches.flatMap((change, i): LiveUtterance["splits"] => {
+    if (change.at <= from) return [];
+    const section = (
+      i > 0 ? switches[i - 1].section : first
+    ) as TranscriptSection;
+    if (until <= change.at) {
+      return [{ section, at: change.at, upTo: text.length, settled: false }];
+    }
+    const share = until > from ? (change.at - from) / (until - from) : 0;
+    return [
+      {
+        section,
+        at: change.at,
+        upTo: atWordStart(text, Math.round(share * text.length)),
+        settled: true,
+      },
+    ];
+  });
+}
+
+/** ``upTo`` moved back to the start of a word it would cut through. */
+function atWordStart(text: string, upTo: number): number {
+  let at = Math.min(upTo, text.length);
+  while (
+    at > 0 &&
+    at < text.length &&
+    /\S/.test(text[at - 1]) &&
+    /\S/.test(text[at])
+  )
+    at--;
+  return at;
+}
 
 const formatTimestamp = () => {
   return new Date().toLocaleTimeString();
@@ -166,6 +230,9 @@ export default function LiveDictation({
   // Track which section the current interim speech will be saved to (synced from messageStartSectionRef)
   const [interimTargetSection, setInterimTargetSection] =
     useState<TranscriptSection | null>(null);
+  // DIAAT-417: of what is being said, the parts said before the judge switched
+  // section, shown under the sections they were said in until Speech finishes it.
+  const [interimEarlier, setInterimEarlier] = useState<InterimPart[]>([]);
   const [formData, setFormData] =
     useState<DictationFormValues>(defaultFormValues);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -182,15 +249,60 @@ export default function LiveDictation({
   const messageStartSectionRef = useRef<TranscriptSection | null>(null);
   // Track already-finalized realtime segments to avoid duplicate appends.
   const processedFinalSegmentIdsRef = useRef<Set<string>>(new Set());
-  // Lock each segment to the section where its interim speech started.
+  // The section each segment's interim speech started in: where a final without
+  // Speech's timing goes, as before DIAAT-417.
   const segmentSectionMapRef = useRef<Record<string, TranscriptSection>>({});
+  // DIAAT-417: the sections the judge chose, and when, so speech is split where they
+  // switched; and the section chosen before any of them.
+  const sectionSwitchesRef = useRef<SectionSwitch[]>([]);
+  const firstSectionRef = useRef<TranscriptSection>(activeSection);
+  // The utterance being said, and how much of its text had been heard at each switch
+  // made while saying it.
+  const liveUtteranceRef = useRef<LiveUtterance | null>(null);
   const previousIsCapturingRef = useRef(false);
   const shouldRenderHeader = Boolean(onExit || headerSubtitle);
 
+  /** The in-progress line: what was said before each switch under the section it was
+   * said in, and the rest under the section now chosen. */
+  const showLiveUtterance = useCallback((live: LiveUtterance) => {
+    let from = 0;
+    const earlier: InterimPart[] = [];
+    for (const split of live.splits) {
+      const text = live.text.slice(from, split.upTo).trim();
+      if (text) earlier.push({ section: split.section, text });
+      from = Math.max(from, split.upTo);
+    }
+    setInterimEarlier(earlier);
+    setInterimTargetSection(activeSectionRef.current);
+    setInterimText(`${live.speaker}: ${live.text.slice(from).trim()}`);
+  }, []);
+
+  const clearLiveUtterance = useCallback(() => {
+    liveUtteranceRef.current = null;
+    setInterimEarlier([]);
+    setInterimTargetSection(null);
+    setInterimText("");
+  }, []);
+
   // Keep the ref in sync with state
   useEffect(() => {
+    const previous = activeSectionRef.current;
     activeSectionRef.current = activeSection;
-  }, [activeSection]);
+    if (previous === activeSection) return;
+    sectionSwitchesRef.current.push({ at: Date.now(), section: activeSection });
+    const live = liveUtteranceRef.current;
+    if (live) {
+      // What was heard so far was said in the previous section; what follows goes
+      // to this one, and shows there as Speech delivers it.
+      live.splits.push({
+        section: previous,
+        at: Date.now(),
+        upTo: live.text.length,
+        settled: false,
+      });
+      showLiveUtterance(live);
+    }
+  }, [activeSection, showLiveUtterance]);
 
   // Notify parent whenever transcript changes
   useEffect(() => {
@@ -220,8 +332,7 @@ export default function LiveDictation({
     messageStartSectionRef.current = null;
     processedFinalSegmentIdsRef.current.clear();
     segmentSectionMapRef.current = {};
-    setInterimTargetSection(null);
-    setInterimText("");
+    clearLiveUtterance();
     connect().catch((connectError) => {
       console.error("Exception in startContinuousRecognition:", connectError);
       toast.error(
@@ -230,14 +341,13 @@ export default function LiveDictation({
           : "Failed to start transcription."
       );
     });
-  }, [connect, defaultSpeakerName, isSessionRequested]);
+  }, [connect, defaultSpeakerName, isSessionRequested, clearLiveUtterance]);
 
   const stopContinuousRecognition = useCallback(() => {
     messageStartSectionRef.current = null;
-    setInterimTargetSection(null);
-    setInterimText("");
+    clearLiveUtterance();
     disconnect();
-  }, [disconnect]);
+  }, [disconnect, clearLiveUtterance]);
 
   useEffect(() => {
     return () => {
@@ -370,9 +480,34 @@ export default function LiveDictation({
       if (!segment.isFinal) {
         if (segment.id === latestSegment.id) {
           messageStartSectionRef.current = targetSection;
-          setInterimTargetSection(targetSection);
-          const speakerLabel = mapSpeakerLabel(incomingId);
-          setInterimText(`${speakerLabel}: ${segment.text}`);
+          const live: LiveUtterance =
+            liveUtteranceRef.current?.id === segment.id
+              ? liveUtteranceRef.current
+              : {
+                  id: segment.id,
+                  speaker: "",
+                  text: "",
+                  splits: splitsSince(
+                    segment,
+                    sectionSwitchesRef.current,
+                    firstSectionRef.current
+                  ),
+                };
+          live.speaker = mapSpeakerLabel(incomingId);
+          live.text = segment.text;
+          for (const split of live.splits) {
+            if (split.settled) continue;
+            const heardUntil = segment.heardUntilMs;
+            if (heardUntil !== undefined && heardUntil <= split.at) {
+              // All of it was said before the switch.
+              split.upTo = segment.text.length;
+            } else {
+              split.settled = true;
+              split.upTo = atWordStart(segment.text, split.upTo);
+            }
+          }
+          liveUtteranceRef.current = live;
+          showLiveUtterance(live);
         }
         continue;
       }
@@ -391,40 +526,56 @@ export default function LiveDictation({
       const speakerLabel = mapSpeakerLabel(incomingId);
 
       const now = Date.now();
-      const newEntry: TranscriptEntry = {
-        speaker: speakerLabel,
-        text,
-        timestamp: formatTimestamp(),
-        timestampMs: now,
-      };
+      const timestamp = formatTimestamp();
+      // DIAAT-417: split where the judge switched section while saying it; without
+      // Speech's timing, all of it where it started, as before.
+      const parts = segment.timing
+        ? splitBySection(
+            text,
+            segment.timing,
+            firstSectionRef.current,
+            sectionSwitchesRef.current
+          )
+        : [{ section: targetSection, text }];
 
-      setSectionedTranscript((prev: SectionedTranscript) => ({
-        ...prev,
-        [targetSection]: [...sectionEntries(prev, targetSection), newEntry],
-      }));
+      setSectionedTranscript((prev: SectionedTranscript) => {
+        let next = prev;
+        for (const part of parts) {
+          const section = part.section as TranscriptSection;
+          const entry: TranscriptEntry = {
+            speaker: speakerLabel,
+            text: part.text,
+            timestamp,
+            timestampMs: now,
+          };
+          next = {
+            ...next,
+            [section]: [...sectionEntries(next, section), entry],
+          };
+        }
+        return next;
+      });
 
       delete segmentSectionMapRef.current[segment.id];
 
       if (segment.id === latestSegment.id) {
         messageStartSectionRef.current = null;
-        setInterimTargetSection(null);
-        setInterimText("");
+        clearLiveUtterance();
       }
     }
-  }, [segments, mapSpeakerLabel]);
+  }, [segments, mapSpeakerLabel, showLiveUtterance, clearLiveUtterance]);
 
   // Drop the in-flight interim line as soon as capture stops for any reason.
   // Keyed on capture rather than on the raw connection status so a collapsed
   // session does not leave a half-spoken sentence on screen looking live.
   useEffect(() => {
     if (previousIsCapturingRef.current && !isCapturing) {
-      setInterimText("");
       messageStartSectionRef.current = null;
-      setInterimTargetSection(null);
+      clearLiveUtterance();
     }
 
     previousIsCapturingRef.current = isCapturing;
-  }, [isCapturing]);
+  }, [isCapturing, clearLiveUtterance]);
 
   // The editor is shown the transcript in the page's sections (shownTranscript):
   // only the sections it changed are written back. What is kept under a section
@@ -603,6 +754,7 @@ export default function LiveDictation({
               activeSection={activeSection}
               interimTargetSection={interimTargetSection}
               interimText={interimText}
+              interimEarlier={interimEarlier}
               isListening={isListening}
               onTranscriptUpdate={handleTranscriptUpdate}
               showSectionNames={showSectionNames}
@@ -659,6 +811,7 @@ export default function LiveDictation({
                   activeSection={activeSection}
                   interimTargetSection={interimTargetSection}
                   interimText={interimText}
+                  interimEarlier={interimEarlier}
                   isListening={isListening}
                   onTranscriptUpdate={handleTranscriptUpdate}
                   showSectionNames={showSectionNames}

@@ -16,6 +16,7 @@ import {
 import { LiveDraftError } from "@/lib/live-draft-errors";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import { describeSpeechAlert } from "@/lib/speech-alerts";
+import { waitForToastsToGo } from "../toast-helpers";
 
 const mockSetIsRecording = vi.hoisted(() => vi.fn());
 const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
@@ -27,6 +28,9 @@ const mockDeleteLiveDraft = vi.hoisted(() => vi.fn());
 
 // DIAAT-322: the record page as the IAC sees it, unless a test says otherwise.
 let mockJurisdiction: "IAC" | "ET" = "IAC";
+
+waitForToastsToGo();
+
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule(
     () => mockJurisdiction
