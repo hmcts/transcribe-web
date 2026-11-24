@@ -5,6 +5,7 @@ import {
   ArrowUp,
   Copy,
   Loader2,
+  Plus,
   Save,
   Trash2,
   Upload,
@@ -46,7 +47,9 @@ import {
   signOffToSend,
 } from "@/lib/sign-off";
 import {
+  ANSWER_TYPES,
   type AdminTemplate,
+  type AnswerRule,
   BENCHNOTES_SOURCES,
   type BenchNotesSource,
   deleteTemplate,
@@ -520,6 +523,10 @@ function TemplateFieldsEditor({
             : [],
           source: f.type === "benchnotes" ? f.source : null,
           prefill: f.type === "text" ? f.prefill : undefined,
+          rules:
+            f.type === "benchnotes" && f.source === "answer_text"
+              ? (f.rules ?? [])
+              : undefined,
         })),
       });
       setRefused(null);
@@ -775,7 +782,36 @@ function TemplateFieldsEditor({
                       onOptions={(text) =>
                         setOptionText((all) => ({ ...all, [f.tag]: text }))
                       }
-                      onSource={(source) => update(f.tag, { source })}
+                      onSource={(source) =>
+                        update(f.tag, {
+                          source,
+                          // DIAAT-411: a first rule to fill in.
+                          ...(source === "answer_text" &&
+                            !f.rules?.length && { rules: [NEW_RULE] }),
+                        })
+                      }
+                      questions={fields.flatMap((o) =>
+                        o.tag !== f.tag && ANSWER_TYPES.includes(o.type)
+                          ? [
+                              {
+                                tag: o.tag,
+                                label: o.label || o.tag,
+                                answers:
+                                  o.type === "yes_no"
+                                    ? YES_NO_ANSWERS
+                                    : (ownValue(optionText, o.tag) ?? "")
+                                        .split("\n")
+                                        .map((line) => line.trim())
+                                        .filter(Boolean)
+                                        .map((line) => ({
+                                          value: line,
+                                          label: line,
+                                        })),
+                              },
+                            ]
+                          : []
+                      )}
+                      onRules={(rules) => update(f.tag, { rules })}
                       onEmptyText={(text) =>
                         update(f.tag, { empty_text: text || null })
                       }
@@ -1017,6 +1053,20 @@ function SharedTemplatePicker({
   );
 }
 
+/** A question a box's text can depend on (DIAAT-411), and its answers as saved. */
+interface Question {
+  tag: string;
+  label: string;
+  answers: { value: string; label: string }[];
+}
+
+const YES_NO_ANSWERS = [
+  { value: "yes", label: "Yes" },
+  { value: "no", label: "No" },
+];
+
+const NEW_RULE: AnswerRule = { field: "", answer: "", text: "" };
+
 function FieldConfiguration({
   field,
   options,
@@ -1024,6 +1074,8 @@ function FieldConfiguration({
   onSource,
   onEmptyText,
   onPrefill,
+  questions,
+  onRules,
 }: {
   field: TemplateField;
   options: string;
@@ -1031,6 +1083,8 @@ function FieldConfiguration({
   onSource: (source: BenchNotesSource) => void;
   onEmptyText: (text: string) => void;
   onPrefill: (prefill: TemplatePrefill | null) => void;
+  questions: Question[];
+  onRules: (rules: AnswerRule[]) => void;
 }) {
   const name = field.label || field.tag;
   // Not from the tag, which can hold spaces (an ID reference list would split it).
@@ -1096,6 +1150,14 @@ function FieldConfiguration({
             </span>
           </div>
         )}
+        {field.source === "answer_text" && (
+          <AnswerRules
+            name={name}
+            rules={field.rules ?? []}
+            questions={questions}
+            onRules={onRules}
+          />
+        )}
       </div>
     );
   }
@@ -1132,4 +1194,111 @@ function FieldConfiguration({
     );
   }
   return <span className="text-sm text-muted-foreground">No list needed</span>;
+}
+
+/**
+ * DIAAT-411: the rules of a box whose text depends on the judge's answers, as the
+ * IAC's decision adds its rule 28 paragraphs. Each prints its text when its question
+ * has its answer, in this order; with none applying, the box's line is removed.
+ */
+function AnswerRules({
+  name,
+  rules,
+  questions,
+  onRules,
+}: {
+  name: string;
+  rules: AnswerRule[];
+  questions: Question[];
+  onRules: (rules: AnswerRule[]) => void;
+}) {
+  const hintId = useId();
+  const change = (index: number, rule: Partial<AnswerRule>) =>
+    onRules(rules.map((r, i) => (i === index ? { ...r, ...rule } : r)));
+  return (
+    <div className="space-y-3">
+      <p id={hintId} className="text-xs text-muted-foreground">
+        Prints each rule's text when the judge gives its answer, in this order.
+        With none applying, the line is removed. Use **bold**, lists and
+        [placeholders] for the judge to complete.
+      </p>
+      {questions.length === 0 && (
+        <p className="text-xs text-muted-foreground">
+          Link a box to a dropdown, list or yes/no question for a rule to depend
+          on.
+        </p>
+      )}
+      {rules.map((rule, index) => {
+        const label = `rule ${index + 1} of ${name}`;
+        const question = questions.find((q) => q.tag === rule.field);
+        return (
+          // Rules have no identity of their own; editing one keeps its place.
+          <fieldset key={index} className="space-y-2 rounded-md border p-2">
+            <legend className="px-1 text-xs font-medium">
+              Rule {index + 1}
+            </legend>
+            <Select
+              value={rule.field}
+              onValueChange={(field) => change(index, { field, answer: "" })}
+            >
+              <SelectTrigger aria-label={`Question of ${label}`}>
+                <SelectValue placeholder="When the question" />
+              </SelectTrigger>
+              <SelectContent>
+                {questions.map((q) => (
+                  <SelectItem key={q.tag} value={q.tag}>
+                    {q.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={rule.answer}
+              onValueChange={(answer) => change(index, { answer })}
+              disabled={!question}
+            >
+              <SelectTrigger aria-label={`Answer of ${label}`}>
+                <SelectValue placeholder="has the answer" />
+              </SelectTrigger>
+              <SelectContent>
+                {question?.answers.map((answer) => (
+                  <SelectItem key={answer.value} value={answer.value}>
+                    {answer.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Textarea
+              aria-label={`Text of ${label}`}
+              aria-describedby={hintId}
+              rows={4}
+              maxLength={10000}
+              placeholder="print"
+              value={rule.text}
+              onChange={(e) => change(index, { text: e.target.value })}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              aria-label={`Remove ${label}`}
+              onClick={() => onRules(rules.filter((_, i) => i !== index))}
+            >
+              <Trash2 className="mr-1 h-4 w-4" aria-hidden />
+              Remove
+            </Button>
+          </fieldset>
+        );
+      })}
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        onClick={() => onRules([...rules, NEW_RULE])}
+      >
+        <Plus className="mr-1 h-4 w-4" aria-hidden />
+        Add a rule
+      </Button>
+    </div>
+  );
 }

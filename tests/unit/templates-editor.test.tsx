@@ -499,6 +499,112 @@ describe("TemplatesEditor", () => {
     expect(puts()[0].fields[0]).not.toHaveProperty("prefill");
   });
 
+  it("prints text depending on an answer, by rules in order (DIAAT-411)", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", { name: "Type of Reference" })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Filled by BenchNotes" })
+    );
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "What BenchNotes fills Reference with",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Text depending on an answer" })
+    );
+    // A first rule to fill in; its answers are its question's.
+    const answer = within(fields).getByRole("combobox", {
+      name: "Answer of rule 1 of Reference",
+    });
+    expect(answer.hasAttribute("disabled")).toBe(true);
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Question of rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Party1Title" })
+    );
+    await user.click(answer);
+    await user.click(await screen.findByRole("option", { name: "Respondent" }));
+    await user.click(
+      within(fields).getByLabelText("Text of rule 1 of Reference")
+    );
+    await user.paste("The respondent did not attend. [REASONS]");
+    // A second rule, then removed.
+    await user.click(
+      within(fields).getByRole("button", { name: "Add a rule" })
+    );
+    await user.click(
+      within(fields).getByRole("button", { name: "Remove rule 2 of Reference" })
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).toMatchObject({
+      type: "benchnotes",
+      source: "answer_text",
+      rules: [
+        {
+          field: "Party1Title",
+          answer: "Respondent",
+          text: "The respondent did not attend. [REASONS]",
+        },
+      ],
+    });
+    // Other fields are saved with no rules.
+    expect(puts()[0].fields[1]).not.toHaveProperty("rules");
+  });
+
+  it("shows a rule's answer as unchosen once its question changes, and a removed rule's choices go with it (DIAAT-411)", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: "One." },
+              { field: "", answer: "", text: "" },
+            ],
+          }),
+          ...UPLOADED.fields.slice(1),
+          field("Agreed", { type: "yes_no" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const answerOf = (n: number) =>
+      within(fields).getByRole("combobox", {
+        name: `Answer of rule ${n} of Reference`,
+      });
+    const questionOf = (n: number) =>
+      within(fields).getByRole("combobox", {
+        name: `Question of rule ${n} of Reference`,
+      });
+    expect(answerOf(1).textContent).toBe("Respondent");
+
+    await user.click(questionOf(1));
+    await user.click(await screen.findByRole("option", { name: "Agreed" }));
+    expect(answerOf(1).textContent).toBe("has the answer");
+
+    // Rule 1 removed: the blank rule takes its place, blank.
+    await user.click(
+      within(fields).getByRole("button", { name: "Remove rule 1 of Reference" })
+    );
+    expect(questionOf(1).textContent).toBe("When the question");
+    expect(answerOf(1).textContent).toBe("has the answer");
+  });
+
   it("edits the options of a box tagged like one of Object's own properties", async () => {
     const odd: AdminTemplate = {
       ...UPLOADED,
