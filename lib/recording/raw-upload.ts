@@ -46,17 +46,11 @@ export function unsupportedMediaType() {
 const TOO_LARGE_ERROR =
   "Uploaded file is too large or the request body was malformed.";
 
-// The message for an audio upload over the size limit. The limit is the API's
-// (_MAX_UPLOAD_BYTES, which words its own 413 the same way); the upload route
-// (app/api/upload) keeps the figure in step with it.
-export const AUDIO_TOO_LARGE_ERROR =
-  "The audio file is too large (the limit is 1 GB). Uncompressed audio such as WAV is much larger for the same length: save long recordings as MP3 or M4A.";
-
 /**
  * The 413 for an upload over the size limit, or whose body did not match its
  * declared size. `error` is the message for the user; the default fits any
  * upload, a route whose files have a limit worth stating passes its own
- * (AUDIO_TOO_LARGE_ERROR).
+ * (audioTooLargeError, lib/recording/upload-limits.ts).
  */
 export function tooLarge(error: string = TOO_LARGE_ERROR) {
   return NextResponse.json({ error }, { status: 413 });

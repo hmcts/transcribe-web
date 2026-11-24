@@ -554,9 +554,11 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
 
         {(job.status === "PENDING" || job.status === "PROCESSING") && (
           <div className="border border-border rounded-lg p-6 space-y-4">
+            {/* DIAAT-408: PENDING is a job whose recording is still being prepared (converted and, over 240 minutes, split) before it is sent for transcription: no audio to play yet, and no new status for it. */}
             <p className="text-muted-foreground">
-              Transcription is still in progress. This page updates
-              automatically — no need to refresh.
+              {job.status === "PENDING"
+                ? "Your recording is being prepared for transcription. A long recording can take a few minutes. This page updates automatically — no need to refresh."
+                : "Transcription is still in progress. This page updates automatically — no need to refresh."}
             </p>
             <JobProgress job={job} />
           </div>
