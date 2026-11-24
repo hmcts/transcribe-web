@@ -15,6 +15,7 @@
 
 import { apiClient } from "@/lib/api-client";
 import type { SignOff } from "@/lib/sign-off";
+import { DATE_FORMAT_HINT, isIsoDate } from "@/lib/typed-date";
 
 export type TemplateFieldType =
   | "text"
@@ -28,6 +29,9 @@ export type TemplateFieldType =
   | "dictated";
 
 export type BenchNotesSource = "jurisdiction" | "year" | "legal_framework";
+
+/** What a text field's answer starts as on the judge's form (DIAAT-340). */
+export type TemplatePrefill = "judge_name";
 
 /** The admin's field types, in the order the field list offers them. */
 export const FIELD_TYPES: { value: TemplateFieldType; label: string }[] = [
@@ -74,6 +78,8 @@ export interface TemplateField {
   source: BenchNotesSource | null;
   /** A legal framework box's text when no framework is chosen (DIAAT-415). */
   empty_text?: string | null;
+  /** Sent only when set, so a field without one is saved as before. */
+  prefill?: TemplatePrefill;
 }
 
 export interface AdminTemplate {
@@ -243,6 +249,8 @@ export interface TemplateFormField {
   type: Exclude<TemplateFieldType, "benchnotes" | "dictated">;
   required: boolean;
   options: TemplateOption[];
+  /** DIAAT-340: the form starts with the signed-in judge's name; they can change it. */
+  prefill?: TemplatePrefill | null;
 }
 
 /** A dictation section (DIAAT-416): a box the judge's dictation goes in. */
@@ -311,16 +319,52 @@ export function hasAnswers(values: TemplateValues): boolean {
   return Object.values(values).some((value) => !isEmpty(value));
 }
 
-/** Each required field left empty, by tag: the message to show beside it. */
+/** What a typed date that is not one is told (DIAAT-340). */
+export function dateFormatMessage(label: string): string {
+  return `Enter ${label} as ${DATE_FORMAT_HINT}`;
+}
+
+/** Each required field left empty, and each date typed that is not one, by tag: the
+ * message to show beside it. */
 export function missingValues(
   template: AvailableTemplate,
   values: TemplateValues
 ): Record<string, string> {
   return Object.fromEntries(
-    template.fields
-      .filter((field) => field.required && isEmpty(ownValue(values, field.tag)))
-      .map((field) => [field.tag, `${field.label} is required`])
+    template.fields.flatMap((field) => {
+      const value = ownValue(values, field.tag);
+      if (isEmpty(value))
+        return field.required
+          ? [[field.tag, `${field.label} is required`]]
+          : [];
+      if (
+        field.type === "date" &&
+        !(typeof value === "string" && isIsoDate(value))
+      )
+        return [[field.tag, dateFormatMessage(field.label)]];
+      return [];
+    })
   );
+}
+
+/**
+ * DIAAT-340: the answers with the signed-in judge's name in each field that starts
+ * with it, until the judge changes it. Changed, even to nothing, it is theirs.
+ */
+export function withPrefills(
+  template: AvailableTemplate,
+  values: TemplateValues,
+  judgeName: string
+): TemplateValues {
+  const prefilled = template.fields.filter(
+    (field) =>
+      field.prefill === "judge_name" && !Object.hasOwn(values, field.tag)
+  );
+  if (!judgeName || prefilled.length === 0) return values;
+  return {
+    ...values,
+    ...Object.fromEntries(prefilled.map((field) => [field.tag, judgeName])),
+  };
 }
 
 /** The values to send: the template's fields only, empty ones left out. */

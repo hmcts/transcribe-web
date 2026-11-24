@@ -23,6 +23,7 @@ const mockFetchTemplates = vi.hoisted(() => vi.fn());
 const mockFetchRevision = vi.hoisted(() => vi.fn());
 const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
 const mockRouterPush = vi.hoisted(() => vi.fn());
+const signedIn = vi.hoisted(() => ({ user: null as { email: string } | null }));
 
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule(() => "ET")
@@ -39,7 +40,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/hooks/use-media-query", () => ({ useMediaQuery: () => true }));
 vi.mock("@/providers/user-settings", () => ({
   useUserSettings: () => ({
-    user: null,
+    user: signedIn.user,
     loading: false,
     updateUserSettings: vi.fn(),
   }),
@@ -188,6 +189,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     toast.dismiss();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
+    signedIn.user = null;
   });
 
   it("works as before without templates: no form, copy the text out", async () => {
@@ -1086,5 +1088,87 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
         lastSpeechDemoProps.current.sections.map((s: { key: string }) => s.key)
       ).toEqual(["box:Facts"])
     );
+  });
+
+  // DIAAT-340: the jurisdiction's own case details form.
+  const CASE_DETAILS: AvailableTemplate = {
+    id: "44444444-4444-4444-8444-444444444444",
+    name: "Case details",
+    service: null,
+    fields: [
+      {
+        tag: "Judge",
+        label: "First judge",
+        type: "text",
+        required: true,
+        options: [],
+        prefill: "judge_name",
+      },
+      {
+        tag: "HearingDate",
+        label: "Hearing date",
+        type: "date",
+        required: true,
+        options: [],
+      },
+    ],
+  };
+
+  it("fills in the signed-in judge's name, which they can change (DIAAT-340)", async () => {
+    signedIn.user = { email: "DDJ.Gareth.McMahon@ejudiciary.net" };
+    const user = userEvent.setup();
+    await renderPage([CASE_DETAILS]);
+    const judge = (await screen.findByLabelText(
+      /First judge/
+    )) as HTMLInputElement;
+
+    expect(judge.value).toBe("G McMahon");
+    // Not an answer of theirs: nothing to save, nothing to clear.
+    await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
+    expect(putLiveDraft).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: /clear answers/i })).toBeNull();
+
+    await user.type(screen.getByRole("textbox", { name: /Hearing date/ }), "27/03/2026");
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted().values).toEqual({
+      Judge: "G McMahon",
+      HearingDate: "2026-03-27",
+    });
+
+    await user.clear(judge);
+    await user.type(judge, "B Jones");
+    expect(judge.value).toBe("B Jones");
+    await user.clear(judge);
+    // Emptied, it stays empty: the judge's own answer, and required.
+    expect(judge.value).toBe("");
+  });
+
+  it("tells the judge the date format when a typed date is not one (DIAAT-340)", async () => {
+    const user = userEvent.setup();
+    await renderPage([CASE_DETAILS]);
+    const date = (await screen.findByRole("textbox", {
+      name: /Hearing date/,
+    })) as HTMLInputElement;
+    const message =
+      "Enter Hearing date as DD/MM/YYYY, for example 27/03/2026";
+
+    await user.type(date, "31/02/2026");
+    expect(screen.queryByText(message)).toBeNull(); // not while typing
+    await user.tab();
+    expect(await screen.findByText(message)).toBeTruthy();
+    expect(date.getAttribute("aria-invalid")).toBe("true");
+    await user.type(screen.getByLabelText(/First judge/), "G McMahon");
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    await user.clear(date);
+    await user.type(date, "3-4-2026");
+    await user.tab();
+    expect(date.value).toBe("03/04/2026");
+    expect(screen.queryByText(message)).toBeNull();
+    await user.click(screen.getByRole("button", { name: /submit hearing/i }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect(submitted().values.HearingDate).toBe("2026-04-03");
   });
 });
