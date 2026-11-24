@@ -480,7 +480,7 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
        * delay) moves it later, and a stall only ever does, so speech is never dated
        * before it was said.
        */
-      const clock = audioClock(Date.now(), RECOGNITION_DELAY_ALLOWANCE_MS);
+      const clock = audioClock(Date.now());
       const timingOf = (result: {
         offset?: number;
         duration?: number;
@@ -504,7 +504,8 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         if (!isCurrent()) return;
         if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
           const heardFor = heardUntil(0, e.result.offset, e.result.duration);
-          if (heardFor !== undefined) clock.heard(heardFor, Date.now());
+          if (heardFor !== undefined)
+            clock.heard(heardFor, Date.now(), RECOGNITION_DELAY_ALLOWANCE_MS);
           // The audio this result covers, for the judge's view of it.
           const heardUntilMs =
             heardFor === undefined ? undefined : clock.at(heardFor);
@@ -580,6 +581,21 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
             (current ? currentSegmentIdRef.current : partialSegmentId) ??
             `seg-${++segmentCounterRef.current}`;
           partialSegmentId = null;
+          // A stall since the last partial result shows here too; a final is sent only
+          // once the judge has paused, so that pause is allowed for as well.
+          const finalHeardFor = heardUntil(
+            0,
+            e.result.offset,
+            e.result.duration
+          );
+          if (current && finalHeardFor !== undefined) {
+            clock.heard(
+              finalHeardFor,
+              Date.now(),
+              RECOGNITION_DELAY_ALLOWANCE_MS +
+                SPEECH_TUNING.segmentationSilenceMs
+            );
+          }
           const timing = timingOf(e.result);
           if (!current) {
             // Counted in the dictation session (OBS-4), not in the stopped

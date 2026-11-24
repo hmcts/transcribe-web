@@ -38,7 +38,7 @@ const TICKS_PER_MS = 10_000;
 /** The most of Speech's words one written token stands for ("1,234,567" and the like). */
 const MAX_WORDS_PER_TOKEN = 12;
 
-/** Beyond this, the written text is matched to the words from both ends only. */
+/** Beyond this, the written text is placed among the words by position alone. */
 const MAX_ALIGNMENT_CELLS = 250_000;
 
 /** The section chosen at ``time``: the last switch by then, or ``first``. */
@@ -70,11 +70,12 @@ export type ToEpochMs = (audioMs: number) => number;
 
 /**
  * Speech's audio time as epoch ms: from when capture began (``start``), which its
- * offsets count from. A result that arrives later than any recognition delay allows
- * (``allowanceMs``) can only mean the audio stalled: the audio heard after the last
- * result is then dated later, and what was heard before keeps its time.
+ * offsets count from. A result that arrives later than its audio and any recognition
+ * delay allow (``allowanceMs``, more for a result sent only after a pause) can only
+ * mean the audio stalled: the audio heard after the last result is then dated later,
+ * and what was heard before keeps its time.
  */
-export function audioClock(start: number, allowanceMs: number) {
+export function audioClock(start: number) {
   const steps = [{ fromMs: 0, origin: start }];
   let heardSoFar = 0;
   const at: ToEpochMs = (audioMs) => {
@@ -83,7 +84,7 @@ export function audioClock(start: number, allowanceMs: number) {
     return origin + audioMs;
   };
   /** A result received at ``receivedAt`` covers the audio up to ``heardMs``. */
-  const heard = (heardMs: number, receivedAt: number) => {
+  const heard = (heardMs: number, receivedAt: number, allowanceMs: number) => {
     const needed = receivedAt - heardMs - allowanceMs;
     const last = steps[steps.length - 1];
     if (needed > last.origin)
@@ -223,96 +224,74 @@ function saysYear(year: number, words: string[]): boolean {
 
 /**
  * For each written token, the index of the first of Speech's words it stands for, or
- * null for punctuation alone. Written and spoken differ for numbers and the like
- * ("2014" for "twenty fourteen"), so the two are aligned as a whole, matching as many
- * words exactly as can be. Null when no alignment uses every word.
+ * null for punctuation alone. Written and spoken differ ("2014" for "twenty fourteen",
+ * "£2.50" for "two pounds fifty"), so first the most tokens are matched to words that
+ * are the same, or say the same number or year; each token in between is then placed
+ * among the words between those matches by position.
  */
-function alignTokens(
-  tokens: string[],
-  words: string[]
-): (number | null)[] | null {
+function tokenWords(tokens: string[], words: string[]): (number | null)[] {
   const t = tokens.length;
   const w = words.length;
-  // best[i][j]: the most exact matches aligning tokens[i:] with words[j:].
-  const impossible = -1;
-  const best = Array.from({ length: t + 1 }, () =>
-    new Array<number>(w + 1).fill(impossible)
-  );
-  const span = Array.from({ length: t + 1 }, () =>
-    new Array<number>(w + 1).fill(0)
-  );
-  best[t][w] = 0;
-  for (let i = t - 1; i >= 0; i--) {
-    for (let j = w; j >= 0; j--) {
-      if (!tokens[i]) {
-        best[i][j] = best[i + 1][j];
-        continue;
-      }
-      for (let m = 1; m <= MAX_WORDS_PER_TOKEN && j + m <= w; m++) {
-        const rest = best[i + 1][j + m];
-        if (rest === impossible) continue;
-        // A match: the same word, or the number its words say.
-        const matches =
-          (m === 1 && tokens[i] === words[j]) ||
-          saysNumber(tokens[i], words.slice(j, j + m));
-        const score = rest + (matches ? 1 : 0);
-        if (score > best[i][j]) {
-          best[i][j] = score;
-          span[i][j] = m;
+  // Token index -> the first of its words, and how many it stands for.
+  const matched = new Map<number, { word: number; count: number }>();
+  if ((t + 1) * (w + 1) <= MAX_ALIGNMENT_CELLS) {
+    // best[i][j]: the most tokens of tokens[i:] matched with words of words[j:].
+    const best = Array.from({ length: t + 1 }, () =>
+      new Array<number>(w + 1).fill(0)
+    );
+    const span = Array.from({ length: t + 1 }, () =>
+      new Array<number>(w + 1).fill(0)
+    );
+    for (let i = t - 1; i >= 0; i--) {
+      for (let j = w - 1; j >= 0; j--) {
+        best[i][j] = Math.max(best[i + 1][j], best[i][j + 1]);
+        if (!tokens[i]) continue;
+        for (let m = 1; m <= MAX_WORDS_PER_TOKEN && j + m <= w; m++) {
+          const matches =
+            (m === 1 && tokens[i] === words[j]) ||
+            saysNumber(tokens[i], words.slice(j, j + m));
+          if (matches && 1 + best[i + 1][j + m] > best[i][j]) {
+            best[i][j] = 1 + best[i + 1][j + m];
+            span[i][j] = m;
+          }
         }
       }
     }
-  }
-  // Matching nothing exactly is no better than matching by position.
-  if (best[0][0] === impossible || best[0][0] === 0) return null;
-  const first: (number | null)[] = [];
-  let j = 0;
-  for (let i = 0; i < t; i++) {
-    if (!tokens[i]) {
-      first.push(null);
-      continue;
+    let i = 0;
+    let j = 0;
+    while (i < t && j < w) {
+      if (span[i][j] > 0) {
+        matched.set(i, { word: j, count: span[i][j] });
+        j += span[i][j];
+        i++;
+      } else if (best[i][j] === best[i + 1][j]) i++;
+      else j++;
     }
-    first.push(j);
-    j += span[i][j];
   }
-  return first;
-}
 
-/**
- * When the written text cannot be aligned with the words as a whole: matched one for
- * one from the start and from the end as far as they agree, and in between by
- * position, so the written text is kept whatever happens.
- */
-function approximateTokens(
-  tokens: string[],
-  words: string[]
-): (number | null)[] {
   const first: (number | null)[] = tokens.map(() => null);
-  let i = 0;
-  let j = 0;
-  while (i < tokens.length && j < words.length) {
-    if (!tokens[i]) {
-      i++;
-    } else if (tokens[i] === words[j]) {
-      first[i++] = j++;
-    } else break;
+  // The tokens between matches, spread over the words between them; with no word
+  // between, they go with the word before.
+  let tokensFrom = 0;
+  let wordsFrom = 0;
+  const place = (tokensTo: number, wordsTo: number) => {
+    const gap: number[] = [];
+    for (let k = tokensFrom; k < tokensTo; k++) if (tokens[k]) gap.push(k);
+    const room = wordsTo - wordsFrom;
+    gap.forEach((k, n) => {
+      first[k] =
+        room > 0
+          ? wordsFrom + Math.floor((n * room) / gap.length)
+          : Math.max(0, Math.min(w - 1, wordsFrom - 1));
+    });
+  };
+  for (const [i, { word, count }] of matched) {
+    place(i, word);
+    first[i] = word;
+    tokensFrom = i + 1;
+    wordsFrom = word + count;
   }
-  let ti = tokens.length - 1;
-  let wj = words.length - 1;
-  while (ti >= i && wj >= j) {
-    if (!tokens[ti]) {
-      ti--;
-    } else if (tokens[ti] === words[wj]) {
-      first[ti--] = wj--;
-    } else break;
-  }
-  const middleTokens = ti - i + 1;
-  const middleWords = wj - j + 1;
-  for (let k = i; k <= ti; k++) {
-    if (!tokens[k]) continue;
-    const share = middleTokens > 0 ? (k - i) / middleTokens : 0;
-    first[k] = Math.min(words.length - 1, j + Math.floor(share * middleWords));
-  }
+  place(t, w);
   return first;
 }
 
@@ -345,11 +324,7 @@ export function splitBySection(
   const tokens = text.split(/\s+/).filter(Boolean);
   const plainTokens = tokens.map(normalised);
   const plainWords = timing.words.map((w) => normalised(w.word));
-  const firstWords =
-    (plainTokens.length + 1) * (plainWords.length + 1) <= MAX_ALIGNMENT_CELLS
-      ? (alignTokens(plainTokens, plainWords) ??
-        approximateTokens(plainTokens, plainWords))
-      : approximateTokens(plainTokens, plainWords);
+  const firstWords = tokenWords(plainTokens, plainWords);
 
   const pieces: { section: string; tokens: string[] }[] = [];
   tokens.forEach((token, i) => {

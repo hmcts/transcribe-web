@@ -550,6 +550,66 @@ describe("useRealtimeTranscription session health", () => {
     }
   });
 
+  it("notices a stall between the last partial and a final, but not the pause a final follows (DIAAT-417)", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const finalAt = (offsetMs: number) => ({
+      result: {
+        reason: 3,
+        speakerId: "Guest-1",
+        text: "Words.",
+        offset: offsetMs * 10_000,
+        duration: 3_000_000,
+        json: JSON.stringify({
+          NBest: [
+            {
+              Words: [
+                {
+                  Word: "words",
+                  Offset: offsetMs * 10_000,
+                  Duration: 3_000_000,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    });
+    try {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      now.mockReturnValue(1_003_500);
+      await act(async () => {
+        latest().transcribing?.(null, {
+          result: {
+            reason: 2,
+            speakerId: "Guest-1",
+            text: "words",
+            offset: 0,
+            duration: 30_000_000,
+          },
+        });
+      });
+      // An ordinary final: sent after the judge's pause, 2.3 s after its audio ended.
+      now.mockReturnValue(1_000_000 + 1800 + 300 + 2300);
+      await act(async () => {
+        latest().transcribed?.(null, finalAt(1800));
+      });
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_001_800
+      );
+      // A stall since: at 12 s, the next final covers audio only to 4.8 s.
+      now.mockReturnValue(1_012_000);
+      await act(async () => {
+        latest().transcribed?.(null, finalAt(4500));
+      });
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_012_000 - 4800 - 1500 - 1800 + 4500
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   describe("pausing mid-utterance (PR #14 review)", () => {
     /** Holds the stop open, as the SDK does while it flushes the last result. */
     function holdStop(transcriber: FakeTranscriber) {

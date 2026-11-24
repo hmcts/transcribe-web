@@ -190,6 +190,22 @@ describe("splitting an utterance by section (DIAAT-417)", () => {
     ]);
   });
 
+  it("places unmatched written text among the words between the matched ones", () => {
+    // i(1000) award(1400) two(1800) pounds(2200) fifty(2600) three(3000)...
+    const timing = said("i award two pounds fifty three pounds fifty");
+    expect(
+      splitBySection(
+        "I award £2.50, £3.50.",
+        timing,
+        "background",
+        switched([3000, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "I award £2.50," },
+      { section: "evidence", text: "£3.50." },
+    ]);
+  });
+
   it("keeps the written text when it cannot be matched to the words, splitting by position", () => {
     // More written tokens than words can be aligned with: matched from both ends.
     const timing = said("the sum was owed");
@@ -266,12 +282,12 @@ describe("reading Speech's timing (DIAAT-417)", () => {
   });
 
   it("dates audio from when capture began, later only after a stall, and what came before the stall as it was", () => {
-    const clock = audioClock(1_000_000, 1500);
+    const clock = audioClock(1_000_000);
     // Results arriving 500 ms after the speech: no stall.
-    clock.heard(3000, 1_003_500);
+    clock.heard(3000, 1_003_500, 1500);
     expect(clock.at(1800)).toBe(1_001_800);
     // At 10 s only 5 s has been heard: the audio after 3 s stalled.
-    clock.heard(5000, 1_010_000);
+    clock.heard(5000, 1_010_000, 1500);
     expect(clock.at(2000)).toBe(1_002_000);
     expect(clock.at(4500)).toBe(1_003_500 + 4500);
   });
