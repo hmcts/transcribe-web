@@ -77,9 +77,13 @@ export function DateInput({
           onChange(typedValue(e.target.value));
         }}
         onBlur={() => {
-          // A day typed another way (1/3/2026) is shown as the hint shows it.
+          // A day typed another way (1/3/2026) is shown as the hint shows it, and
+          // is the form's value even if it came from elsewhere (an older draft).
           const typed = typedValue(text);
-          if (typed && isIsoDate(typed)) setText(shown(typed));
+          if (typed && isIsoDate(typed)) {
+            setText(shown(typed));
+            if (typed !== value) onChange(typed);
+          }
           onBlur?.();
         }}
         aria-describedby={errorId ? `${hintId} ${errorId}` : hintId}

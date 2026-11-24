@@ -14,6 +14,7 @@ import {
   ownValue,
   type TemplateValues,
 } from "@/lib/templates-api";
+import { parseTypedDate } from "@/lib/typed-date";
 
 /**
  * What the record page saves in its draft besides the transcript (DIAAT-414):
@@ -123,8 +124,9 @@ export function fromDraftFormData(saved: DraftFormData): {
 
 /** Restored answers as they fit their template now (its fields and options may
  * have changed since the save): any its form could not show, or the API would
- * refuse, are left out rather than submitted unseen. A date still being typed is
- * kept as typed (DIAAT-340): the form shows it, and says its format before a submit. */
+ * refuse, are left out rather than submitted unseen. A date is kept as the day it
+ * names, else as typed (DIAAT-340): the form shows it, and says its format before a
+ * submit. */
 export function fitToTemplate(
   template: AvailableTemplate,
   values: TemplateValues
@@ -134,7 +136,7 @@ export function fitToTemplate(
       const value = ownValue(values, field.tag);
       const fitted =
         field.type === "date" && typeof value === "string"
-          ? value
+          ? (parseTypedDate(value) ?? value)
           : fittingValue(field, value);
       return fitted === undefined || fitted === null
         ? []
