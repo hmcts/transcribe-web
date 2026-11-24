@@ -94,7 +94,7 @@ import {
   SPEECH_FAILED_EARLIER_ALERT,
   SPEECH_NO_CONTENT_EARLIER_ALERT,
 } from "@/lib/speech-alerts";
-import cn from "@/lib/utils";
+import cn, { getJudgeNameFromEmail } from "@/lib/utils";
 import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import { TemplateForm } from "@/components/audio/dictation/template-form";
 import {
@@ -103,9 +103,11 @@ import {
   fetchTemplateRevision,
   hasAnswers,
   missingValues,
+  ownValue,
   TemplateRefusedError,
   type TemplateValues,
   valuesToSend,
+  withPrefills,
 } from "@/lib/templates-api";
 
 const TEMPLATES_FAILED_TOAST = "templates-failed";
@@ -122,6 +124,7 @@ const LEAVE_BEFORE_RESTORE =
 type DraftLookup = "pending" | "offered" | "settled";
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
+import { useUserSettings } from "@/providers/user-settings";
 
 function formatDraftDate(isoString: string): string {
   const savedDate = new Date(isoString);
@@ -209,6 +212,9 @@ export default function RecordPage() {
   const [templates, setTemplates] = useState<AvailableTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [templateValues, setTemplateValues] = useState<TemplateValues>({});
+  // DIAAT-340: fields that start with the judge's name, as the IAC's form does.
+  const { user } = useUserSettings();
+  const judgeName = user?.email ? getJudgeNameFromEmail(user.email) : "";
   const [templatesLoaded, setTemplatesLoaded] = useState(false);
   // DIAAT-414: a restored template's answers, as saved, until the templates have
   // loaded and they are fitted to it; or, if it is no longer offered, until the
@@ -1002,7 +1008,8 @@ export default function RecordPage() {
         return;
       }
       if (!chosenTemplate) return;
-      const missing = missingValues(chosenTemplate, templateValues);
+      const answers = withPrefills(chosenTemplate, templateValues, judgeName);
+      const missing = missingValues(chosenTemplate, answers);
       setTemplateErrors(missing);
       if (Object.keys(missing).length > 0) {
         toast.error(
@@ -1028,7 +1035,7 @@ export default function RecordPage() {
           ...(chosenTemplate.revision && {
             template_revision: chosenTemplate.revision,
           }),
-          values: valuesToSend(chosenTemplate, templateValues),
+          values: valuesToSend(chosenTemplate, answers),
           messages: {
             background: dictationSections.flatMap((section) =>
               sectionEntries(fittedTranscript, section.key)
@@ -1199,6 +1206,7 @@ export default function RecordPage() {
     hasDecisionTemplate,
     chosenTemplate,
     templateValues,
+    judgeName,
     startedPending,
   ]);
 
@@ -1434,9 +1442,19 @@ export default function RecordPage() {
         toast.dismiss(STARTED_TEMPLATE_TOAST);
       }}
       values={templateValues}
+      judgeName={judgeName}
       onValuesChange={(values) => {
         // Answering this template: answers kept for one no longer offered go.
         setRestoredTemplate(null);
+        // A field the judge changed is no longer what the last submit said of it
+        // (DIAAT-340: a date corrected); a typed date is checked as they move on.
+        setTemplateErrors((errors) =>
+          Object.fromEntries(
+            Object.entries(errors).filter(
+              ([tag]) => ownValue(values, tag) === ownValue(templateValues, tag)
+            )
+          )
+        );
         setTemplateValues(values);
       }}
       errors={templateErrors}

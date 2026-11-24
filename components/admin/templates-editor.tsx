@@ -62,6 +62,7 @@ import {
   TEMPLATE_STAGES,
   type TemplateField,
   type TemplateFieldType,
+  type TemplatePrefill,
   TemplateRefusedError,
   type TemplateStage,
   type TemplateValues,
@@ -518,6 +519,7 @@ function TemplateFieldsEditor({
                 .filter(Boolean)
             : [],
           source: f.type === "benchnotes" ? f.source : null,
+          prefill: f.type === "text" ? f.prefill : undefined,
         })),
       });
       setRefused(null);
@@ -777,6 +779,9 @@ function TemplateFieldsEditor({
                       onEmptyText={(text) =>
                         update(f.tag, { empty_text: text || null })
                       }
+                      onPrefill={(prefill) =>
+                        update(f.tag, { prefill: prefill ?? undefined })
+                      }
                     />
                   </TableCell>
                   <TableCell className="align-top">
@@ -1018,12 +1023,14 @@ function FieldConfiguration({
   onOptions,
   onSource,
   onEmptyText,
+  onPrefill,
 }: {
   field: TemplateField;
   options: string;
   onOptions: (text: string) => void;
   onSource: (source: BenchNotesSource) => void;
   onEmptyText: (text: string) => void;
+  onPrefill: (prefill: TemplatePrefill | null) => void;
 }) {
   const name = field.label || field.tag;
   // Not from the tag, which can hold spaces (an ID reference list would split it).
@@ -1098,6 +1105,30 @@ function FieldConfiguration({
         A section the judge dictates, chosen by this field's label. Several
         boxes can each be one.
       </span>
+    );
+  }
+  if (field.type === "text") {
+    // DIAAT-340: as the IAC's form does for its first judge.
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id={`${hintId}-judge`}
+            checked={field.prefill === "judge_name"}
+            aria-label={`Fill in the judge's name in ${name}`}
+            aria-describedby={hintId}
+            onCheckedChange={(value) =>
+              onPrefill(value === true ? "judge_name" : null)
+            }
+          />
+          <Label htmlFor={`${hintId}-judge`} className="font-normal">
+            Fill in the judge's name
+          </Label>
+        </div>
+        <span id={hintId} className="block text-xs text-muted-foreground">
+          The form starts with the signed-in judge's name. They can change it.
+        </span>
+      </div>
     );
   }
   return <span className="text-sm text-muted-foreground">No list needed</span>;

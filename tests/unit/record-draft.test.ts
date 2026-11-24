@@ -125,6 +125,32 @@ describe("the record page's draft (DIAAT-414)", () => {
     expect(fitToTemplate(template, { Issues: ["removed"] })).toEqual({});
   });
 
+  it("keeps a date still being typed, for the form to say its format (DIAAT-340)", () => {
+    const template = {
+      id: "t1",
+      name: "Judgment",
+      service: null,
+      fields: [
+        {
+          tag: "HearingDate",
+          label: "Hearing date",
+          type: "date",
+          required: true,
+          options: [],
+        },
+      ],
+    } as unknown as Parameters<typeof fitToTemplate>[0];
+
+    expect(fitToTemplate(template, { HearingDate: "27/03/20" })).toEqual({
+      HearingDate: "27/03/20",
+    });
+    expect(fitToTemplate(template, { HearingDate: ["27"] })).toEqual({});
+    // A day typed another way, from a field that was text then: as the day.
+    expect(fitToTemplate(template, { HearingDate: "3-4-2026" })).toEqual({
+      HearingDate: "2026-04-03",
+    });
+  });
+
   it("keeps the template with dictation, whose sections are its (DIAAT-416)", () => {
     const dictated = {
       ...BLANK,

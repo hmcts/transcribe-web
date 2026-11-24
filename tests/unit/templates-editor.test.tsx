@@ -448,6 +448,57 @@ describe("TemplatesEditor", () => {
     });
   });
 
+  it("starts a text field with the judge's name, and sends it only for a text field (DIAAT-340)", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("checkbox", {
+        name: "Fill in the judge's name in Reference",
+      })
+    );
+    within(fields).getByText(
+      "The form starts with the signed-in judge's name. They can change it."
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).toMatchObject({ prefill: "judge_name" });
+    // Not a choice for a list, nor sent for one.
+    expect(puts()[0].fields[1]).not.toHaveProperty("prefill");
+    expect(
+      within(fields).queryByRole("checkbox", {
+        name: "Fill in the judge's name in Party1Title",
+      })
+    ).toBeNull();
+  });
+
+  it("sends no judge's name for a field that is no longer text", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", { prefill: "judge_name" }),
+          ...UPLOADED.fields.slice(1),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    const name = within(fields).getByRole("checkbox", {
+      name: "Fill in the judge's name in Reference",
+    });
+    expect(name.getAttribute("aria-checked")).toBe("true");
+    await user.click(
+      within(fields).getByRole("combobox", { name: "Type of Reference" })
+    );
+    await user.click(await screen.findByRole("option", { name: "Number" }));
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).not.toHaveProperty("prefill");
+  });
+
   it("edits the options of a box tagged like one of Object's own properties", async () => {
     const odd: AdminTemplate = {
       ...UPLOADED,
@@ -1527,7 +1578,11 @@ describe("A template shared as a base (DIAAT-336)", () => {
     const user = userEvent.setup();
     const fields = await open(user);
 
-    expect(within(fields).queryByRole("checkbox")).toBeNull();
+    expect(
+      within(fields).queryByRole("checkbox", {
+        name: "Share as a base template for other jurisdictions",
+      })
+    ).toBeNull();
     await user.click(within(fields).getByRole("button", { name: "Save" }));
     await waitFor(() => expect(puts()).toHaveLength(1));
     expect(puts()[0]).not.toHaveProperty("shared_as_base");
