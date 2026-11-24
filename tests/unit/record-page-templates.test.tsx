@@ -14,6 +14,7 @@ import {
   type AvailableTemplate,
   TemplateRefusedError,
 } from "@/lib/templates-api";
+import { waitForToastsToGo } from "../toast-helpers";
 
 // DIAAT-344: in a jurisdiction without the decision template, a judge chooses one of
 // its uploaded templates and fills that template's own Hearing Details form, then
@@ -24,6 +25,8 @@ const mockFetchRevision = vi.hoisted(() => vi.fn());
 const lastSpeechDemoProps = vi.hoisted(() => ({ current: null as any }));
 const mockRouterPush = vi.hoisted(() => vi.fn());
 const signedIn = vi.hoisted(() => ({ user: null as { email: string } | null }));
+
+waitForToastsToGo();
 
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule(() => "ET")
