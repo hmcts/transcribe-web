@@ -1238,7 +1238,7 @@ function AnswerRules({
               Rule {index + 1}
             </legend>
             <Select
-              value={rule.field || undefined}
+              value={rule.field}
               onValueChange={(field) => change(index, { field, answer: "" })}
             >
               <SelectTrigger aria-label={`Question of ${label}`}>
@@ -1253,7 +1253,7 @@ function AnswerRules({
               </SelectContent>
             </Select>
             <Select
-              value={rule.answer || undefined}
+              value={rule.answer}
               onValueChange={(answer) => change(index, { answer })}
               disabled={!question}
             >

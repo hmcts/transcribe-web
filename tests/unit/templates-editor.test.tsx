@@ -562,6 +562,49 @@ describe("TemplatesEditor", () => {
     expect(puts()[0].fields[1]).not.toHaveProperty("rules");
   });
 
+  it("shows a rule's answer as unchosen once its question changes, and a removed rule's choices go with it (DIAAT-411)", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: "One." },
+              { field: "", answer: "", text: "" },
+            ],
+          }),
+          ...UPLOADED.fields.slice(1),
+          field("Agreed", { type: "yes_no" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const answerOf = (n: number) =>
+      within(fields).getByRole("combobox", {
+        name: `Answer of rule ${n} of Reference`,
+      });
+    const questionOf = (n: number) =>
+      within(fields).getByRole("combobox", {
+        name: `Question of rule ${n} of Reference`,
+      });
+    expect(answerOf(1).textContent).toBe("Respondent");
+
+    await user.click(questionOf(1));
+    await user.click(await screen.findByRole("option", { name: "Agreed" }));
+    expect(answerOf(1).textContent).toBe("has the answer");
+
+    // Rule 1 removed: the blank rule takes its place, blank.
+    await user.click(
+      within(fields).getByRole("button", { name: "Remove rule 1 of Reference" })
+    );
+    expect(questionOf(1).textContent).toBe("When the question");
+    expect(answerOf(1).textContent).toBe("has the answer");
+  });
+
   it("edits the options of a box tagged like one of Object's own properties", async () => {
     const odd: AdminTemplate = {
       ...UPLOADED,
