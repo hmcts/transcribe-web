@@ -28,7 +28,11 @@ export type TemplateFieldType =
   | "benchnotes"
   | "dictated";
 
-export type BenchNotesSource = "jurisdiction" | "year" | "legal_framework";
+export type BenchNotesSource =
+  | "jurisdiction"
+  | "year"
+  | "legal_framework"
+  | "answer_text";
 
 /** What a text field's answer starts as on the judge's form (DIAAT-340). */
 export type TemplatePrefill = "judge_name";
@@ -55,7 +59,24 @@ export const BENCHNOTES_SOURCES: { value: BenchNotesSource; label: string }[] =
       value: "legal_framework",
       label: "Legal framework text (of the legal issues chosen)",
     },
+    // DIAAT-411: as the IAC's decision adds its rule 28 paragraphs.
+    { value: "answer_text", label: "Text depending on an answer" },
   ];
+
+/** The questions text can depend on (DIAAT-411): those with set answers. */
+export const ANSWER_TYPES: TemplateFieldType[] = [
+  "dropdown",
+  "multi_select",
+  "yes_no",
+];
+
+/** DIAAT-411: print ``text`` (Markdown) when the question ``field`` has ``answer``:
+ * one of its options, or "yes" or "no". */
+export interface AnswerRule {
+  field: string;
+  answer: string;
+  text: string;
+}
 
 export const LIST_TYPES: TemplateFieldType[] = ["dropdown", "multi_select"];
 
@@ -80,6 +101,8 @@ export interface TemplateField {
   empty_text?: string | null;
   /** Sent only when set, so a field without one is saved as before. */
   prefill?: TemplatePrefill;
+  /** A "text depending on an answer" box's rules, in the order printed (DIAAT-411). */
+  rules?: AnswerRule[] | null;
 }
 
 export interface AdminTemplate {
