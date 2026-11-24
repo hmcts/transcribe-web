@@ -1128,7 +1128,10 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(putLiveDraft).not.toHaveBeenCalled();
     expect(screen.queryByRole("button", { name: /clear answers/i })).toBeNull();
 
-    await user.type(screen.getByRole("textbox", { name: /Hearing date/ }), "27/03/2026");
+    await user.type(
+      screen.getByRole("textbox", { name: /Hearing date/ }),
+      "27/03/2026"
+    );
     await user.click(screen.getByRole("button", { name: /submit hearing/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(submitted().values).toEqual({
@@ -1150,8 +1153,7 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     const date = (await screen.findByRole("textbox", {
       name: /Hearing date/,
     })) as HTMLInputElement;
-    const message =
-      "Enter Hearing date as DD/MM/YYYY, for example 27/03/2026";
+    const message = "Enter Hearing date as DD/MM/YYYY, for example 27/03/2026";
 
     await user.type(date, "31/02/2026");
     expect(screen.queryByText(message)).toBeNull(); // not while typing
@@ -1170,5 +1172,19 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     await user.click(screen.getByRole("button", { name: /submit hearing/i }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     expect(submitted().values.HearingDate).toBe("2026-04-03");
+  });
+
+  it("names the calendar a date can be picked from (DIAAT-340)", async () => {
+    const user = userEvent.setup();
+    await renderPage([CASE_DETAILS]);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Choose Hearing date from a calendar",
+      })
+    );
+    expect(
+      await screen.findByRole("dialog", { name: "Hearing date calendar" })
+    ).toBeTruthy();
   });
 });

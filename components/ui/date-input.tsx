@@ -59,7 +59,9 @@ export function DateInput({
   const [open, setOpen] = useState(false);
   // Changed from outside (cleared, or a draft restored): show it.
   useEffect(() => {
-    setText((current) => (typedValue(current) === value ? current : shown(value)));
+    setText((current) =>
+      typedValue(current) === value ? current : shown(value)
+    );
   }, [value]);
   const day = value && isIsoDate(value) ? value : undefined;
 
@@ -68,7 +70,6 @@ export function DateInput({
       <Input
         id={id}
         type="text"
-        inputMode="numeric"
         autoComplete="off"
         value={text}
         onChange={(e) => {
@@ -97,7 +98,12 @@ export function DateInput({
             <CalendarIcon className="size-4" aria-hidden />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-auto p-0" align="end">
+        <PopoverContent
+          role="dialog"
+          aria-label={`${label} calendar`}
+          className="w-auto p-0"
+          align="end"
+        >
           <Calendar
             mode="single"
             selected={day ? new Date(`${day}T00:00:00`) : undefined}
