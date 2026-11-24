@@ -1228,6 +1228,8 @@ function AnswerRules({
 }) {
   const hintId = useId();
   const texts = useRef<(HTMLTextAreaElement | null)[]>([]);
+  // The text boxes given their starting cursor, which later renders must keep.
+  const placed = useRef(new WeakSet<HTMLTextAreaElement>());
   // Where the cursor goes once an inserted answer is in the text: React's update
   // would otherwise put it at the end, and the next answer there.
   const caret = useRef<{ index: number; at: number } | null>(null);
@@ -1313,6 +1315,11 @@ function AnswerRules({
             </Select>
             <Textarea
               ref={(box) => {
+                // Until the admin places the cursor, an answer goes at the end.
+                if (box && !placed.current.has(box)) {
+                  placed.current.add(box);
+                  box.setSelectionRange(box.value.length, box.value.length);
+                }
                 texts.current[index] = box;
               }}
               aria-label={`Text of ${label}`}

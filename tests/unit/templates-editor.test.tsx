@@ -666,6 +666,44 @@ describe("TemplatesEditor", () => {
     );
   });
 
+  it("inserts an answer at the end of a saved rule's text the admin has not clicked into (DIAAT-412)", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: "Counsel: " },
+            ],
+          }),
+          ...UPLOADED.fields.slice(1),
+          field("RepName", { label: "Representative's name" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Insert an answer into rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Representative's name" })
+    );
+    expect(
+      (
+        within(fields).getByLabelText(
+          "Text of rule 1 of Reference"
+        ) as HTMLTextAreaElement
+      ).value
+    ).toBe("Counsel: {{RepName}}");
+  });
+
   it("edits the options of a box tagged like one of Object's own properties", async () => {
     const odd: AdminTemplate = {
       ...UPLOADED,
