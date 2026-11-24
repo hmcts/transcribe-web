@@ -443,6 +443,46 @@ describe("useRealtimeTranscription session health", () => {
     expect(result.current.session.health).not.toBe("healthy");
   });
 
+  it("dates a final result and its words from when the audio began, to split it by section (DIAAT-417)", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      now.mockReturnValue(1_003_000);
+      await act(async () => {
+        latest().transcribed?.(null, {
+          result: {
+            reason: 3,
+            speakerId: "Guest-1",
+            text: "Hello there.",
+            offset: 10_000_000,
+            duration: 12_000_000,
+            json: JSON.stringify({
+              NBest: [
+                {
+                  Words: [
+                    { Word: "hello", Offset: 10_000_000, Duration: 5_000_000 },
+                    { Word: "there", Offset: 16_000_000, Duration: 6_000_000 },
+                  ],
+                },
+              ],
+            }),
+          },
+        });
+      });
+      expect(result.current.segments.at(-1)?.timing).toEqual({
+        startMs: 1_001_000,
+        endMs: 1_002_200,
+        words: [
+          { word: "hello", startMs: 1_001_000, endMs: 1_001_500 },
+          { word: "there", startMs: 1_001_600, endMs: 1_002_200 },
+        ],
+      });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   describe("pausing mid-utterance (PR #14 review)", () => {
     /** Holds the stop open, as the SDK does while it flushes the last result. */
     function holdStop(transcriber: FakeTranscriber) {
