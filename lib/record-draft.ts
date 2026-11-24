@@ -24,8 +24,16 @@ import {
  */
 export type DraftFormData = Partial<DictationFormValues> & {
   notes?: string;
-  template?: { id: string; values: TemplateValues };
+  template?: DraftTemplate;
 };
+
+/** The template a draft was started with: which, the judge's answers, and (DIAAT-339)
+ * the version of it, which the draft keeps when the template changes. */
+export interface DraftTemplate {
+  id: string;
+  values: TemplateValues;
+  revision?: string;
+}
 
 export interface RecordDraftWork {
   transcript: SectionedTranscript;
@@ -35,6 +43,8 @@ export interface RecordDraftWork {
   defaultNotes: string;
   templateId: string | null;
   templateValues: TemplateValues;
+  /** The version of the template (DIAAT-339), when the API gives one. */
+  templateRevision?: string;
 }
 
 export function hasTranscript(transcript: SectionedTranscript): boolean {
@@ -67,15 +77,22 @@ export function hasWork(work: RecordDraftWork): boolean {
 }
 
 /** The draft's form data: the hearing details, and the notes and template
- * answers only when there are any. The template is kept with its answers, and
- * with dictation (DIAAT-416: which sections it was dictated in are its). */
+ * answers only when there are any. The template is kept with its answers, with
+ * dictation (DIAAT-416: which sections it was dictated in are its) and with notes
+ * (DIAAT-339: the draft keeps the version it was started with). */
 export function draftFormData(work: RecordDraftWork): DraftFormData {
   return {
     ...work.formData,
     ...(hasNotes(work.notes, work.defaultNotes) && { notes: work.notes }),
     ...(work.templateId !== null &&
-      (hasAnswers(work.templateValues) || hasTranscript(work.transcript)) && {
-        template: { id: work.templateId, values: work.templateValues },
+      (hasAnswers(work.templateValues) ||
+        hasTranscript(work.transcript) ||
+        hasNotes(work.notes, work.defaultNotes)) && {
+        template: {
+          id: work.templateId,
+          values: work.templateValues,
+          ...(work.templateRevision && { revision: work.templateRevision }),
+        },
       }),
   };
 }
@@ -85,7 +102,7 @@ export function draftFormData(work: RecordDraftWork): DraftFormData {
 export function fromDraftFormData(saved: DraftFormData): {
   formData: DictationFormValues;
   notes: string | null;
-  template: { id: string; values: TemplateValues } | null;
+  template: DraftTemplate | null;
 } {
   const { notes, template, ...hearingDetails } = saved;
   return {
@@ -93,7 +110,13 @@ export function fromDraftFormData(saved: DraftFormData): {
     notes: typeof notes === "string" ? notes : null,
     template:
       template && typeof template.id === "string" && template.values
-        ? template
+        ? {
+            id: template.id,
+            values: template.values,
+            ...(typeof template.revision === "string" && {
+              revision: template.revision,
+            }),
+          }
         : null,
   };
 }

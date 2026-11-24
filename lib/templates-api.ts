@@ -91,6 +91,31 @@ export interface AdminTemplate {
   /** What stops it being saved or moved on; empty when it is complete. */
   problems: string[];
   version: string;
+  /** Shared as a base: admins of any jurisdiction can start a template from a copy
+   * of it (DIAAT-336). Absent from an API from before then. */
+  shared_as_base?: boolean;
+  /** The shared template it was copied from, as it was then; null for one uploaded
+   * here. */
+  started_from?: StartedFrom | null;
+}
+
+export interface StartedFrom {
+  template_id: string;
+  name: string;
+  jurisdiction: string;
+  jurisdiction_name: string;
+  copied_at: string;
+}
+
+/** A template a jurisdiction shares as a base (DIAAT-336). */
+export interface SharedTemplate {
+  id: string;
+  name: string;
+  service: string | null;
+  jurisdiction: string;
+  jurisdiction_name: string;
+  /** How many fields it has. */
+  field_count: number;
 }
 
 export type TemplateStage = "draft" | "test" | "live";
@@ -111,6 +136,8 @@ export interface TemplateSave {
   stage: TemplateStage;
   /** Needed when it goes live (DIAAT-347). */
   sign_off?: { service_lead: string; confirmed: true } | null;
+  /** Share it as a base, or stop (DIAAT-336); left out, as it is. */
+  shared_as_base?: boolean;
   version: string;
 }
 
@@ -177,6 +204,25 @@ export function saveTemplate(
   });
 }
 
+/** The templates any jurisdiction shares as a base, to start one from (DIAAT-336). */
+export function fetchSharedTemplates(code: string): Promise<SharedTemplate[]> {
+  return request(
+    `/admin/jurisdictions/${encodeURIComponent(code)}/base-templates`
+  );
+}
+
+/** A new draft template of the jurisdiction from a copy of a shared one: its
+ * own from then on, which later changes to the shared one do not change. */
+export function startFromSharedTemplate(
+  code: string,
+  templateId: string
+): Promise<AdminTemplate> {
+  return request(`${base(code)}/from-base`, {
+    method: "POST",
+    body: JSON.stringify({ template_id: templateId }),
+  });
+}
+
 export function deleteTemplate(code: string, id: string): Promise<void> {
   return request(`${base(code)}/${encodeURIComponent(id)}`, {
     method: "DELETE",
@@ -213,6 +259,10 @@ export interface AvailableTemplate {
   /** Its dictation sections, in order: with several, the judge chooses which they
    * are dictating. Absent from an API from before DIAAT-416. */
   sections?: TemplateSection[];
+  /** This version of it (DIAAT-339): a draft keeps it, and its submission names it,
+   * so the document is made from the version the draft started with. Absent from
+   * an API from before then. */
+  revision?: string;
 }
 
 export type TemplateValue = string | boolean | string[];
@@ -221,6 +271,18 @@ export type TemplateValues = Record<string, TemplateValue | undefined>;
 /** The templates the tab's jurisdiction's judges can choose. */
 export function fetchAvailableTemplates(): Promise<AvailableTemplate[]> {
   return request("/jurisdictions/templates");
+}
+
+/** A template as a draft started with it (DIAAT-339), once it has changed or been
+ * switched off: refused (TemplateRefusedError, 404) when the judge could never
+ * choose that version. */
+export function fetchTemplateRevision(
+  id: string,
+  revision: string
+): Promise<AvailableTemplate> {
+  return request(
+    `/jurisdictions/templates/${encodeURIComponent(id)}/revisions/${encodeURIComponent(revision)}`
+  );
 }
 
 /**

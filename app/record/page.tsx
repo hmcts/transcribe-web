@@ -67,6 +67,7 @@ import {
 } from "@/lib/dictation-session";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
 import {
+  type DraftTemplate,
   draftFormData,
   fitToTemplate,
   fromDraftFormData,
@@ -99,6 +100,7 @@ import { TemplateForm } from "@/components/audio/dictation/template-form";
 import {
   type AvailableTemplate,
   fetchAvailableTemplates,
+  fetchTemplateRevision,
   hasAnswers,
   missingValues,
   TemplateRefusedError,
@@ -108,6 +110,7 @@ import {
 
 const TEMPLATES_FAILED_TOAST = "templates-failed";
 const RESTORED_TEMPLATE_GONE_TOAST = "restored-template-gone";
+const STARTED_TEMPLATE_TOAST = "started-template";
 /** How soon after the judge stops typing their hearing details or notes the
  * draft is saved (DIAAT-414); while recording, the 3-second interval saves. */
 const EDIT_SAVE_DELAY_MS = 1_000;
@@ -210,16 +213,38 @@ export default function RecordPage() {
   // DIAAT-414: a restored template's answers, as saved, until the templates have
   // loaded and they are fitted to it; or, if it is no longer offered, until the
   // judge answers another. Meanwhile the draft keeps them as they were.
-  const [restoredTemplate, setRestoredTemplate] = useState<{
-    id: string;
-    values: TemplateValues;
-  } | null>(null);
+  const [restoredTemplate, setRestoredTemplate] =
+    useState<DraftTemplate | null>(null);
+  // DIAAT-339: a restored draft's template as it was started with, once it has
+  // changed or been switched off: offered in its place (or as well) for this draft
+  // alone, until the judge chooses another.
+  const [startedTemplate, setStartedTemplate] =
+    useState<AvailableTemplate | null>(null);
+  // While that version loads, or after it could not be loaded: the form waits for
+  // it, so nothing is answered or submitted with another version meanwhile.
+  const [startedPending, setStartedPending] = useState<
+    "loading" | "failed" | null
+  >(null);
   const [templateErrors, setTemplateErrors] = useState<Record<string, string>>(
     {}
   );
+  const choosableTemplates = useMemo(() => {
+    if (!startedTemplate) return templates;
+    return templates.some((t) => t.id === startedTemplate.id)
+      ? templates.map((t) =>
+          t.id === startedTemplate.id ? startedTemplate : t
+        )
+      : [startedTemplate, ...templates];
+  }, [templates, startedTemplate]);
   const chosenTemplate =
-    templates.find((t) => t.id === templateId) ?? templates[0] ?? null;
-  const hasTemplateForm = !hasDecisionTemplate && chosenTemplate !== null;
+    choosableTemplates.find((t) => t.id === templateId) ??
+    choosableTemplates[0] ??
+    null;
+  // DIAAT-339: also while a restored draft's template loads, which may be one no
+  // longer offered: its status shows where Hearing details goes.
+  const hasTemplateForm =
+    !hasDecisionTemplate &&
+    (chosenTemplate !== null || startedPending !== null);
   // A form to fill and a hearing to submit, rather than text to copy out.
   const hasHearingForm = hasDecisionTemplate || hasTemplateForm;
   // DIAAT-416: the sections the judge dictates into: the IAC decision's, or an
@@ -229,15 +254,38 @@ export default function RecordPage() {
   const templateSections = hasTemplateForm
     ? chosenTemplate?.sections
     : undefined;
+  const [restoredTranscript, setRestoredTranscript] = useState<
+    SectionedTranscript | undefined
+  >();
   const dictationSections = useMemo<DictationSection[]>(() => {
     if (hasDecisionTemplate) return IAC_SECTIONS;
+    // DIAAT-339: while the draft's template version loads (or could not be
+    // loaded), the sections its dictation was kept in, so nothing is moved out of
+    // them meanwhile. Named by their boxes until the template has loaded.
+    const kept = startedPending
+      ? Object.keys(restoredTranscript ?? {}).filter((key) =>
+          key.startsWith("box:")
+        )
+      : [];
+    if (kept.length > 0) {
+      return kept.map((key, index) => ({
+        key,
+        label: key.slice("box:".length),
+        color: SECTION_COLORS[index % SECTION_COLORS.length],
+      }));
+    }
     if (!templateSections || templateSections.length < 2) return SINGLE_SECTION;
     return templateSections.map((section, index) => ({
       key: `box:${section.tag}`,
       label: section.label,
       color: SECTION_COLORS[index % SECTION_COLORS.length],
     }));
-  }, [hasDecisionTemplate, templateSections]);
+  }, [
+    hasDecisionTemplate,
+    templateSections,
+    startedPending,
+    restoredTranscript,
+  ]);
   const hasSectionChoice = dictationSections.length > 1;
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
@@ -266,7 +314,6 @@ export default function RecordPage() {
   const [sessionHadNoContent, setSessionHadNoContent] = useState(false);
   const [postSessionNoticeDismissed, setPostSessionNoticeDismissed] =
     useState(false);
-  const [restoredTranscript, setRestoredTranscript] = useState<SectionedTranscript | undefined>();
   // DIAAT-296: a restore lookup that failed is not the same fact as "you have
   // no draft", and the two must never look alike on screen again.
   const [restoreFailureAlert, setRestoreFailureAlert] =
@@ -294,13 +341,18 @@ export default function RecordPage() {
   // DIAAT-414: everything of the judge's the draft keeps. The template answers
   // are the restored ones while those are not yet fitted to their template.
   const chosenTemplateId = chosenTemplate?.id ?? null;
+  const chosenTemplateRevision = chosenTemplate?.revision;
   const work = useMemo<RecordDraftWork>(() => {
-    const template = hasDecisionTemplate
+    const template: DraftTemplate | null = hasDecisionTemplate
       ? null
       : (restoredTemplate ??
         (chosenTemplateId === null
           ? null
-          : { id: chosenTemplateId, values: templateValues }));
+          : {
+              id: chosenTemplateId,
+              values: templateValues,
+              revision: chosenTemplateRevision,
+            }));
     return {
       transcript: sectionedTranscript,
       formData,
@@ -308,6 +360,7 @@ export default function RecordPage() {
       defaultNotes,
       templateId: template?.id ?? null,
       templateValues: template?.values ?? {},
+      templateRevision: template?.revision,
     };
   }, [
     sectionedTranscript,
@@ -317,6 +370,7 @@ export default function RecordPage() {
     hasDecisionTemplate,
     restoredTemplate,
     chosenTemplateId,
+    chosenTemplateRevision,
     templateValues,
   ]);
   const pageHasWork = hasWork(work);
@@ -628,26 +682,87 @@ export default function RecordPage() {
     };
   }, [deleteDraft, setDraftLookup]);
 
-  // DIAAT-414: restored answers are fitted to their template as it is now, once
-  // the templates have loaded: only answers its form can show and the API takes.
+  // DIAAT-414: restored answers are fitted to their template, once the templates
+  // have loaded: only answers its form can show and the API takes. DIAAT-339: the
+  // template as the draft started with it, even if it has changed or been switched
+  // off since; else (a draft from before then, or a version the API no longer
+  // gives) as it is now.
   useEffect(() => {
     if (!restoredTemplate || !templatesLoaded) return;
-    const template = templates.find((t) => t.id === restoredTemplate.id);
-    if (!template && !hasAnswers(restoredTemplate.values)) {
-      // Only its dictation was kept: that is in the first section now.
+    const restored = restoredTemplate;
+    const listed = templates.find((t) => t.id === restored.id);
+    const answerWith = (template: AvailableTemplate) => {
+      setTemplateId(template.id);
+      setTemplateValues(fitToTemplate(template, restored.values));
       setRestoredTemplate(null);
+    };
+    const asItIsNow = () => {
+      if (!listed && !hasAnswers(restored.values)) {
+        // Only its dictation was kept: that is in the first section now.
+        setRestoredTemplate(null);
+        return;
+      }
+      if (!listed) {
+        toast.info(
+          "The template your saved answers were for is no longer offered. They stay saved until you answer another template.",
+          { id: RESTORED_TEMPLATE_GONE_TOAST }
+        );
+        return;
+      }
+      answerWith(listed);
+    };
+    // The listed one is the version it started with; or an API with no versions.
+    if (
+      !restored.revision ||
+      (listed && (!listed.revision || listed.revision === restored.revision))
+    ) {
+      asItIsNow();
       return;
     }
-    if (!template) {
-      toast.info(
-        "The template your saved answers were for is no longer offered. They stay saved until you answer another template.",
-        { id: RESTORED_TEMPLATE_GONE_TOAST }
-      );
-      return;
-    }
-    setTemplateId(template.id);
-    setTemplateValues(fitToTemplate(template, restoredTemplate.values));
-    setRestoredTemplate(null);
+    const revision = restored.revision;
+    let cancelled = false;
+    setStartedPending("loading");
+    fetchTemplateRevision(restored.id, revision).then(
+      (fetched) => {
+        if (cancelled) return;
+        const started = { ...fetched, revision: fetched.revision ?? revision };
+        setStartedPending(null);
+        setStartedTemplate(started);
+        answerWith(started);
+        toast.info(
+          listed
+            ? `${started.name} has changed since you started this draft. It keeps the version you started with.`
+            : `${started.name} is no longer offered for new documents. You can still finish this draft with it.`,
+          { id: STARTED_TEMPLATE_TOAST }
+        );
+      },
+      (error) => {
+        if (cancelled) return;
+        if (error instanceof TemplateRefusedError && error.status === 404) {
+          setStartedPending(null);
+          // Not a version the judge may use (or an API with none): as it is now.
+          asItIsNow();
+          return;
+        }
+        // Not known: the draft keeps its version and answers until it loads.
+        setStartedPending("failed");
+        console.error("The draft's template version could not be loaded", error);
+        toast.error(
+          "The template this draft was started with could not be loaded, so Hearing details is not shown.",
+          {
+            id: STARTED_TEMPLATE_TOAST,
+            duration: Number.POSITIVE_INFINITY,
+            action: {
+              label: "Try again",
+              onClick: () => setRestoredTemplate({ ...restored }),
+            },
+          }
+        );
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
   }, [restoredTemplate, templatesLoaded, templates]);
 
   // Delete the server draft as soon as the page holds nothing of the judge's
@@ -878,7 +993,14 @@ export default function RecordPage() {
   const handleSubmitHearing = useCallback(async () => {
     let buildBody: () => string;
     if (!hasDecisionTemplate) {
-      // DIAAT-344: the chosen template, filled with the judge's values.
+      // DIAAT-344: the chosen template, filled with the judge's values. Not while
+      // a restored draft's answers wait for their template (DIAAT-339).
+      if (startedPending) {
+        toast.error(
+          "Hearing details are not ready yet: wait for the draft's template to load, then submit again."
+        );
+        return;
+      }
       if (!chosenTemplate) return;
       const missing = missingValues(chosenTemplate, templateValues);
       setTemplateErrors(missing);
@@ -902,6 +1024,10 @@ export default function RecordPage() {
       buildBody = () =>
         JSON.stringify({
           template_id: chosenTemplate.id,
+          // DIAAT-339: the version the work was started with makes the document.
+          ...(chosenTemplate.revision && {
+            template_revision: chosenTemplate.revision,
+          }),
           values: valuesToSend(chosenTemplate, templateValues),
           messages: {
             background: dictationSections.flatMap((section) =>
@@ -1073,6 +1199,7 @@ export default function RecordPage() {
     hasDecisionTemplate,
     chosenTemplate,
     templateValues,
+    startedPending,
   ]);
 
   // Only "healthy" counts as recording. `isRecordingActive` is intent; a
@@ -1273,9 +1400,16 @@ export default function RecordPage() {
       documentContent={documentContent}
       legalIssuesFallback={legalIssuesFallback}
     />
+  ) : startedPending ? (
+    // DIAAT-339: the draft's answers are for the version it started with.
+    <p role="status" className="text-sm text-muted-foreground">
+      {startedPending === "loading"
+        ? "Loading the template this draft was started with"
+        : "The template this draft was started with could not be loaded."}
+    </p>
   ) : chosenTemplate ? (
     <TemplateForm
-      templates={templates}
+      templates={choosableTemplates}
       templateId={chosenTemplate.id}
       onTemplateChange={(id) => {
         // Another template's fields differ: its answers start empty. So do
@@ -1295,6 +1429,9 @@ export default function RecordPage() {
         setTemplateValues({});
         setTemplateErrors({});
         setRestoredTemplate(null);
+        // Another template: the draft's earlier version is no longer offered.
+        setStartedTemplate(null);
+        toast.dismiss(STARTED_TEMPLATE_TOAST);
       }}
       values={templateValues}
       onValuesChange={(values) => {
