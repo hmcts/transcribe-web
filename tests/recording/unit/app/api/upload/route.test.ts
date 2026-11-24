@@ -791,3 +791,79 @@ describe("POST /api/upload", () => {
     });
   });
 });
+
+// The recording page asks for the size limit so that it can refuse a file that is
+// too large before sending it (the browser keeps sending a body after the server
+// has answered 413, so a file over the limit was refused only after all of it had
+// been uploaded).
+describe("GET /api/upload", () => {
+  const getRequest = (headers: Record<string, string> = {}) =>
+    new Request("http://localhost/api/upload", {
+      method: "GET",
+      headers,
+    }) as unknown as NextRequest;
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    backendOk();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("answers the size limit, 1 GiB unless MAX_UPLOAD_BYTES says otherwise", async () => {
+    const { GET } = await import("@/app/api/upload/route");
+
+    const response = await GET(getRequest());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      max_upload_bytes: MAX_UPLOAD_BYTES,
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("follows MAX_UPLOAD_BYTES, the number the POST refuses by", async () => {
+    vi.stubEnv("MAX_UPLOAD_BYTES", String(512 * 1024 * 1024));
+    const { GET } = await import("@/app/api/upload/route");
+
+    expect(await (await GET(getRequest())).json()).toEqual({
+      max_upload_bytes: 512 * 1024 * 1024,
+    });
+  });
+
+  it("answers 1 GiB for a MAX_UPLOAD_BYTES that is not a positive whole number", async () => {
+    const { GET } = await import("@/app/api/upload/route");
+    for (const bad of ["", "abc", "0", "-5", "1.5", "12abc"]) {
+      vi.stubEnv("MAX_UPLOAD_BYTES", bad);
+      expect(await (await GET(getRequest())).json()).toEqual({
+        max_upload_bytes: MAX_UPLOAD_BYTES,
+      });
+    }
+  });
+
+  it("answers 401 without a session when login is enabled", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    const { GET } = await import("@/app/api/upload/route");
+
+    const response = await GET(getRequest());
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers with a session when login is enabled", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    await seedSession("sess-limit", "user-id-token");
+    const { GET } = await import("@/app/api/upload/route");
+
+    const response = await GET(
+      getRequest({ cookie: "transcribe_session=sess-limit" })
+    );
+
+    expect(response.status).toBe(200);
+  });
+});

@@ -109,7 +109,7 @@ Two values decide what the upload page accepts. Both live in transcribe-api; thi
 | What | Where it comes from | Must match |
 |---|---|---|
 | Longest recording (the "Recordings up to N hours" hint on the upload page) | `GET /api/flags` `max_recording_seconds`, read at runtime by `providers/runtime-flags.tsx` (4 hours until it has loaded, and for an API that does not send it) | Nothing to set: it is the API's effective limit, which follows the system feature flags `async_upload_preparation` and `long_recordings_enabled` and the API's `MAX_AUDIO_DURATION_SECONDS`. |
-| Largest file (413 above it, before any of the body is read) | The `MAX_UPLOAD_BYTES` environment variable of the web pod, read per upload in `app/api/upload/route.ts` (default 1073741824, 1 GiB; not a `NEXT_PUBLIC_` value) | **The API's `MAX_UPLOAD_BYTES` setting: set both to the same number.** 1 GiB is the agreed limit for now; a larger one would also need the API's setting and an upload in blocks that can resume (not built, no follow-up planned). |
+| Largest file (413 above it, before any of the body is read; the recording page also refuses a larger file when it is chosen, before sending any of it, using `GET /api/upload`) | The `MAX_UPLOAD_BYTES` environment variable of the web pod, read per request in `app/api/upload/route.ts` (default 1073741824, 1 GiB; not a `NEXT_PUBLIC_` value) | **The API's `MAX_UPLOAD_BYTES` setting: set both to the same number.** 1 GiB is the agreed limit for now; a larger one would also need the API's setting and an upload in blocks that can resume (not built, no follow-up planned). |
 
 ### Long recordings and the web app (DIAAT-408)
 
