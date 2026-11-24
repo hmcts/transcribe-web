@@ -190,6 +190,61 @@ describe("splitting an utterance by section (DIAAT-417)", () => {
     ]);
   });
 
+  it("starts a number where its words start", () => {
+    // one(1000) hundred(1400) pounds(1800): switched between "one" and "hundred".
+    const timing = said("one hundred pounds");
+    expect(
+      splitBySection(
+        "100 pounds.",
+        timing,
+        "background",
+        switched([1400, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "100" },
+      { section: "evidence", text: "Pounds." },
+    ]);
+  });
+
+  it("matches amounts of money with their spoken words, pounds and pence", () => {
+    // i award three pounds four(2600) pounds fifty
+    expect(
+      splitBySection(
+        "I award £3, £4.50.",
+        said("i award three pounds four pounds fifty"),
+        "background",
+        switched([2600, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "I award £3," },
+      { section: "evidence", text: "£4.50." },
+    ]);
+    // £250 is not £2.50: two(1000)...pounds(2600) and(3000) two(3400) pounds fifty
+    expect(
+      splitBySection(
+        "£250 and £2.50.",
+        said("two hundred and fifty pounds and two pounds fifty"),
+        "background",
+        switched([3400, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "£250 and" },
+      { section: "evidence", text: "£2.50." },
+    ]);
+    // fifty(1000) pence(1400) and(1800) one(2200) pound(2600)
+    expect(
+      splitBySection(
+        "£0.50 and £1.",
+        said("fifty pence and one pound"),
+        "background",
+        switched([2200, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "£0.50 and" },
+      { section: "evidence", text: "£1." },
+    ]);
+  });
+
   it("places unmatched written text among the words between the matched ones", () => {
     // i(1000) award(1400) two(1800) pounds(2200) fifty(2600) three(3000)...
     const timing = said("i award two pounds fifty three pounds fifty");

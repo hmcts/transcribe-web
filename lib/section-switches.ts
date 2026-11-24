@@ -193,6 +193,58 @@ function spokenNumber(words: string[]): number | null {
   return any ? total + current : null;
 }
 
+/** A written amount of money ("£4.50,"): pounds and pence, else null. */
+function writtenAmount(
+  token: string
+): { pounds: number; pence: number } | null {
+  const amount = /^£(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d{2}))?$/.exec(
+    token.replace(/[.,;:!?)"'\u2019]+$/, "")
+  );
+  if (!amount) return null;
+  return {
+    pounds: Number(amount[1].replaceAll(",", "")),
+    pence: Number(amount[2] ?? 0),
+  };
+}
+
+/** Whether ``words`` say an amount ("four pounds fifty", "fifty pence"). */
+function saysAmount(
+  amount: { pounds: number; pence: number },
+  words: string[]
+): boolean {
+  const pence = (said: string[]) => {
+    const unit = said.at(-1) === "pence" || said.at(-1) === "p";
+    return spokenNumber(unit ? said.slice(0, -1) : said);
+  };
+  const pound = words.findIndex((w) => w === "pound" || w === "pounds");
+  if (pound < 0) {
+    return (
+      amount.pounds === 0 && amount.pence > 0 && pence(words) === amount.pence
+    );
+  }
+  if (spokenNumber(words.slice(0, pound)) !== amount.pounds) return false;
+  const rest = words.slice(pound + 1);
+  return amount.pence === 0 ? rest.length === 0 : pence(rest) === amount.pence;
+}
+
+/** Whether a written token stands for these spoken words: the same word, the same
+ * whole number or year, or the same amount of money. */
+function matchesWords(
+  written: string,
+  plain: string,
+  words: string[]
+): boolean {
+  const amount = writtenAmount(written);
+  if (amount) return saysAmount(amount, words);
+  if (words.length === 1 && plain === words[0]) return true;
+  // A written whole number only: a decimal or amount is not one ("£2.50" is no 250).
+  return (
+    /^\(?\d[\d,]*[.,;:!?)]*$/.test(written) &&
+    !/\d[.]\d/.test(written) &&
+    saysNumber(plain, words)
+  );
+}
+
 /** Whether a written token is the number spoken ``words`` say ("105"). */
 function saysNumber(token: string, words: string[]): boolean {
   if (!/^\d+$/.test(token)) return false;
@@ -229,7 +281,11 @@ function saysYear(year: number, words: string[]): boolean {
  * are the same, or say the same number or year; each token in between is then placed
  * among the words between those matches by position.
  */
-function tokenWords(tokens: string[], words: string[]): (number | null)[] {
+function tokenWords(
+  written: string[],
+  tokens: string[],
+  words: string[]
+): (number | null)[] {
   const t = tokens.length;
   const w = words.length;
   // Token index -> the first of its words, and how many it stands for.
@@ -247,11 +303,16 @@ function tokenWords(tokens: string[], words: string[]): (number | null)[] {
         best[i][j] = Math.max(best[i + 1][j], best[i][j + 1]);
         if (!tokens[i]) continue;
         for (let m = 1; m <= MAX_WORDS_PER_TOKEN && j + m <= w; m++) {
-          const matches =
-            (m === 1 && tokens[i] === words[j]) ||
-            saysNumber(tokens[i], words.slice(j, j + m));
-          if (matches && 1 + best[i + 1][j + m] > best[i][j]) {
-            best[i][j] = 1 + best[i + 1][j + m];
+          if (!matchesWords(written[i], tokens[i], words.slice(j, j + m)))
+            continue;
+          // A match is taken over a skip that scores as well, as a token starts
+          // where its words do; and of matches, the shortest.
+          const score = 1 + best[i + 1][j + m];
+          if (
+            score > best[i][j] ||
+            (score === best[i][j] && span[i][j] === 0)
+          ) {
+            best[i][j] = score;
             span[i][j] = m;
           }
         }
@@ -324,7 +385,7 @@ export function splitBySection(
   const tokens = text.split(/\s+/).filter(Boolean);
   const plainTokens = tokens.map(normalised);
   const plainWords = timing.words.map((w) => normalised(w.word));
-  const firstWords = tokenWords(plainTokens, plainWords);
+  const firstWords = tokenWords(tokens, plainTokens, plainWords);
 
   const pieces: { section: string; tokens: string[] }[] = [];
   tokens.forEach((token, i) => {
