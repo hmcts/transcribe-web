@@ -483,6 +483,73 @@ describe("useRealtimeTranscription session health", () => {
     }
   });
 
+  it("dates speech from when capture began, not from results that arrive late, unless the audio stalls (DIAAT-417)", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const partial = (offsetMs: number, durationMs: number) => ({
+      result: {
+        reason: 2,
+        speakerId: "Guest-1",
+        text: "words",
+        offset: offsetMs * 10_000,
+        duration: durationMs * 10_000,
+      },
+    });
+    const wordAt = (offsetMs: number) => ({
+      result: {
+        reason: 3,
+        speakerId: "Guest-1",
+        text: "Words.",
+        offset: offsetMs * 10_000,
+        duration: 3_000_000,
+        json: JSON.stringify({
+          NBest: [
+            {
+              Words: [
+                {
+                  Word: "words",
+                  Offset: offsetMs * 10_000,
+                  Duration: 3_000_000,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    });
+    try {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      // Audio up to 3 s, received 500 ms after it was said.
+      now.mockReturnValue(1_003_500);
+      await act(async () => {
+        latest().transcribing?.(null, partial(0, 3000));
+      });
+      expect(result.current.segments.at(-1)?.heardUntilMs).toBe(1_003_000);
+      await act(async () => {
+        latest().transcribed?.(null, wordAt(1800));
+      });
+      // Said 1.8 s in: dated then, not 500 ms later.
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_001_800
+      );
+
+      // The audio stalls: at 10 s, only 5 s of it has been heard.
+      now.mockReturnValue(1_010_000);
+      await act(async () => {
+        latest().transcribing?.(null, partial(4000, 1000));
+      });
+      await act(async () => {
+        latest().transcribed?.(null, wordAt(4500));
+      });
+      // Dated no earlier than the stall allows (beyond any recognition delay).
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_010_000 - 5000 - 1500 + 4500
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   describe("pausing mid-utterance (PR #14 review)", () => {
     /** Holds the stop open, as the SDK does while it flushes the last result. */
     function holdStop(transcriber: FakeTranscriber) {

@@ -109,13 +109,33 @@ const EMPTY_SECTIONED_TRANSCRIPT: SectionedTranscript = {
 };
 
 const DEFAULT_SPEAKER_NAME = "Judge";
-// DIAAT-417: the utterance being said, and how much of its text had been heard when
-// the judge switched section while saying it (``section``: the one it was said in).
+// DIAAT-417: the utterance being said, and for each switch made while saying it, how
+// much of its text was said in the section before (``section``). Speech delivers text
+// after it is said, so a switch's ``upTo`` follows the text while the audio results
+// cover ends before the switch (``at``); the first result covering more settles it.
 interface LiveUtterance {
   id: string;
   speaker: string;
   text: string;
-  splits: { section: TranscriptSection; upTo: number }[];
+  splits: {
+    section: TranscriptSection;
+    at: number;
+    upTo: number;
+    settled: boolean;
+  }[];
+}
+
+/** ``upTo`` moved back to the start of a word it would cut through. */
+function atWordStart(text: string, upTo: number): number {
+  let at = Math.min(upTo, text.length);
+  while (
+    at > 0 &&
+    at < text.length &&
+    /\S/.test(text[at - 1]) &&
+    /\S/.test(text[at])
+  )
+    at--;
+  return at;
 }
 
 const formatTimestamp = () => {
@@ -238,8 +258,13 @@ export default function LiveDictation({
     const live = liveUtteranceRef.current;
     if (live) {
       // What was heard so far was said in the previous section; what follows goes
-      // to this one, and shows there at once.
-      live.splits.push({ section: previous, upTo: live.text.length });
+      // to this one, and shows there as Speech delivers it.
+      live.splits.push({
+        section: previous,
+        at: Date.now(),
+        upTo: live.text.length,
+        settled: false,
+      });
       showLiveUtterance(live);
     }
   }, [activeSection, showLiveUtterance]);
@@ -426,6 +451,17 @@ export default function LiveDictation({
               : { id: segment.id, speaker: "", text: "", splits: [] };
           live.speaker = mapSpeakerLabel(incomingId);
           live.text = segment.text;
+          for (const split of live.splits) {
+            if (split.settled) continue;
+            const heardUntil = segment.heardUntilMs;
+            if (heardUntil !== undefined && heardUntil <= split.at) {
+              // All of it was said before the switch.
+              split.upTo = segment.text.length;
+            } else {
+              split.settled = true;
+              split.upTo = atWordStart(segment.text, split.upTo);
+            }
+          }
           liveUtteranceRef.current = live;
           showLiveUtterance(live);
         }

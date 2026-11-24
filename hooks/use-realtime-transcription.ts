@@ -36,6 +36,8 @@ export interface TranscriptionSegment {
   isFinal: boolean;
   /** DIAAT-417: when a final segment and its words were said, to split it by section. */
   timing?: SegmentTiming;
+  /** DIAAT-417: an interim segment: when the audio it covers ended (epoch ms). */
+  heardUntilMs?: number;
 }
 
 type ConnectionStatus = "disconnected" | "connecting" | "connected";
@@ -61,8 +63,8 @@ const SPEECH_TUNING = {
   stablePartialThreshold: 2,
 } as const;
 
-/** DIAAT-417: how many recent partial results date the audio (a few seconds' worth). */
-const ORIGIN_SAMPLES = 20;
+/** DIAAT-417: more than Speech takes to return a result, so only a stall counts. */
+const RECOGNITION_DELAY_ALLOWANCE_MS = 1500;
 
 /** How often the sliding collapse window is re-evaluated while recording. */
 const HEALTH_HEARTBEAT_MS = 2000;
@@ -470,13 +472,13 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
       /**
        * DIAAT-417: when this recognizer's audio began (epoch ms), from which Speech's
        * offsets count, to date what the judge said against when they switched section.
-       * Audio is heard after it is spoken, so each partial result received at ``now``
-       * for audio up to ``offset`` says it began no later than ``now - offset``; the
-       * least of the recent ones is used, so the estimate follows any drift and is
-       * never earlier than it really began. Until a result comes, when it started.
+       * The SDK reads the microphone from the start call, so that is when; arrival
+       * times are not used for it, as they lag the speech. Only audio that stalls
+       * (a result covering less than its arrival allows, by more than any recognition
+       * delay) moves it later, and a stall only ever does, so speech is never dated
+       * before it was said.
        */
       let audioOrigin = Date.now();
-      const recentOrigins: number[] = [];
       const timingOf = (result: {
         offset?: number;
         duration?: number;
@@ -501,10 +503,14 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
           const heardFor = heardUntil(0, e.result.offset, e.result.duration);
           if (heardFor !== undefined) {
-            recentOrigins.push(Date.now() - heardFor);
-            if (recentOrigins.length > ORIGIN_SAMPLES) recentOrigins.shift();
-            audioOrigin = Math.min(...recentOrigins);
+            audioOrigin = Math.max(
+              audioOrigin,
+              Date.now() - heardFor - RECOGNITION_DELAY_ALLOWANCE_MS
+            );
           }
+          // When the audio this result covers ended, for the judge's view of it.
+          const heardUntilMs =
+            heardFor === undefined ? undefined : audioOrigin + heardFor;
           const speaker = e.result.speakerId || "Unknown";
           const text = e.result.text || "";
           reportFirstText(e.sessionId, text);
@@ -523,7 +529,8 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
               if (
                 existing.speaker === speaker &&
                 existing.text === text &&
-                existing.isFinal === false
+                existing.isFinal === false &&
+                existing.heardUntilMs === heardUntilMs
               ) {
                 return prev;
               }
@@ -533,10 +540,14 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
                 speaker,
                 text,
                 isFinal: false,
+                heardUntilMs,
               };
               return updated;
             }
-            return [...prev, { id: segmentId, speaker, text, isFinal: false }];
+            return [
+              ...prev,
+              { id: segmentId, speaker, text, isFinal: false, heardUntilMs },
+            ];
           });
         }
       };
@@ -658,8 +669,6 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
       // Start transcription
       // ------------------------------------------------------------------
 
-      // The SDK reads the microphone from here, buffering while it connects.
-      audioOrigin = Date.now();
       transcriber.startTranscribingAsync(
         () => {
           console.info("[speech] Transcription started successfully");

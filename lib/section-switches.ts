@@ -167,7 +167,30 @@ function spokenNumber(words: string[]): number | null {
 /** Whether a written token is the number spoken ``words`` say ("105"). */
 function saysNumber(token: string, words: string[]): boolean {
   if (!/^\d+$/.test(token)) return false;
-  return spokenNumber(words) === Number(token);
+  const value = Number(token);
+  return spokenNumber(words) === value || saysYear(value, words);
+}
+
+/** Whether ``words`` say ``year`` as years are said: in two halves ("twenty fourteen",
+ * "nineteen ninety nine", "twenty oh five"). */
+function saysYear(year: number, words: string[]): boolean {
+  if (year < 1000 || year > 2999) return false;
+  for (let half = 1; half < words.length; half++) {
+    const century = spokenNumber(words.slice(0, half));
+    const second = words.slice(half);
+    // "oh five": the 0 of 05.
+    const rest = spokenNumber(second[0] === "oh" ? second.slice(1) : second);
+    if (
+      century !== null &&
+      rest !== null &&
+      century >= 10 &&
+      century < 100 &&
+      rest < 100 &&
+      century * 100 + rest === year
+    )
+      return true;
+  }
+  return false;
 }
 
 /**

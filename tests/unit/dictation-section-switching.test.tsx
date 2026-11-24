@@ -108,6 +108,7 @@ describe("switching sections while recording (DIAAT-417)", () => {
       1000
     );
     // Said without a pause: Findings chosen as "i heard" begins, Reasons as "i find".
+    // Speech delivers the words a little after they are said.
     dictation.hear(
       [
         {
@@ -115,19 +116,37 @@ describe("switching sections while recording (DIAAT-417)", () => {
           speaker: "Guest-1",
           text: "the claimant",
           isFinal: false,
+          heardUntilMs: first[1].endMs,
         },
       ],
-      1500,
+      first[2].startMs,
       "box:Summary"
     );
     dictation.choose("box:Findings", first[4].startMs);
-    // What is being said shows at once under the section now chosen.
     expect(editor.props.activeSection).toBe("box:Findings");
     expect(editor.props.interimTargetSection).toBe("box:Findings");
     // What was being said before the switch stays shown under Case Summary.
     expect(editor.props.interimEarlier).toEqual([
       { section: "box:Summary", text: "the claimant" },
     ]);
+    // Delivered after the switch, but said before it: still Case Summary's.
+    dictation.hear(
+      [
+        {
+          id: "seg-1",
+          speaker: "Guest-1",
+          text: "the claimant was dismissed",
+          isFinal: false,
+          heardUntilMs: first[3].endMs,
+        },
+      ],
+      first[5].startMs,
+      "box:Findings"
+    );
+    expect(editor.props.interimEarlier).toEqual([
+      { section: "box:Summary", text: "the claimant was dismissed" },
+    ]);
+    // Speech has now heard past the switch: what follows shows under Findings.
     dictation.hear(
       [
         {
@@ -135,15 +154,16 @@ describe("switching sections while recording (DIAAT-417)", () => {
           speaker: "Guest-1",
           text: "the claimant was dismissed i heard",
           isFinal: false,
+          heardUntilMs: first[5].endMs,
         },
       ],
-      first[5].startMs,
+      first[6].startMs,
       "box:Findings"
     );
     expect(editor.props.interimEarlier).toEqual([
-      { section: "box:Summary", text: "the claimant" },
+      { section: "box:Summary", text: "the claimant was dismissed" },
     ]);
-    expect(editor.props.interimText).toBe("Judge: was dismissed i heard");
+    expect(editor.props.interimText).toBe("Judge: i heard");
     dictation.choose("box:Reasons", first[9].startMs);
     expect(editor.props.interimTargetSection).toBe("box:Reasons");
 

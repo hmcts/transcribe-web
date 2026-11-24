@@ -144,6 +144,35 @@ describe("splitting an utterance by section (DIAAT-417)", () => {
     ]);
   });
 
+  it("aligns written years with the way they are said", () => {
+    // twenty(1000) fourteen(1400) twenty(1800) fifteen(2200): switched at the second.
+    const timing = said("twenty fourteen twenty fifteen");
+    expect(
+      splitBySection(
+        "2014, 2015.",
+        timing,
+        "background",
+        switched([1800, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "2014," },
+      { section: "evidence", text: "2015." },
+    ]);
+    const oh = said("in twenty oh five and nineteen ninety nine");
+    // in(1000) twenty(1400) oh(1800) five(2200) and(2600) nineteen(3000)...
+    expect(
+      splitBySection(
+        "In 2005 and 1999.",
+        oh,
+        "background",
+        switched([3000, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "In 2005 and" },
+      { section: "evidence", text: "1999." },
+    ]);
+  });
+
   it("keeps the written text when it cannot be matched to the words, splitting by position", () => {
     // More written tokens than words can be aligned with: matched from both ends.
     const timing = said("the sum was owed");
