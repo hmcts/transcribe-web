@@ -148,6 +148,7 @@ function TemplateFieldInput({
     (leftDate &&
     field.type === "date" &&
     typeof value === "string" &&
+    value.trim() !== "" &&
     !isIsoDate(value)
       ? dateFormatMessage(field.label)
       : undefined);

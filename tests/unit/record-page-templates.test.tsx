@@ -1174,6 +1174,34 @@ describe("A judge's uploaded template (DIAAT-344)", () => {
     expect(submitted().values.HearingDate).toBe("2026-04-03");
   });
 
+  it("does not call a blank date restored from a draft malformed (DIAAT-340)", async () => {
+    const optional: AvailableTemplate = {
+      ...CASE_DETAILS,
+      fields: CASE_DETAILS.fields.map((f) =>
+        f.tag === "HearingDate" ? { ...f, required: false } : f
+      ),
+    };
+    vi.mocked(getLiveDraft).mockResolvedValueOnce({
+      transcript: { background: [], evidence: [], facts: [] },
+      form_data: {
+        template: {
+          id: optional.id,
+          values: { Judge: "B Jones", HearingDate: " " },
+        },
+      },
+      saved_at: new Date().toISOString(),
+    });
+    await renderPage([optional]);
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Restore" }));
+    const date = await screen.findByRole("textbox", { name: /Hearing date/ });
+
+    await user.click(date);
+    await user.tab();
+    expect(screen.queryByText(/as DD\/MM\/YYYY/)).toBeNull();
+    expect(date.getAttribute("aria-invalid")).toBeNull();
+  });
+
   it("names the calendar a date can be picked from (DIAAT-340)", async () => {
     const user = userEvent.setup();
     await renderPage([CASE_DETAILS]);
