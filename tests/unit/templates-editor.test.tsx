@@ -704,6 +704,64 @@ describe("TemplatesEditor", () => {
     ).toBe("Counsel: {{RepName}}");
   });
 
+  it.each([
+    // "{{RepName}}" is 11 characters; the limit is 10,000.
+    ["reaches the limit exactly", "x".repeat(9989), null, true],
+    ["would pass the limit", "x".repeat(9990), null, false],
+    [
+      "replaces a selection, within the limit",
+      "x".repeat(10000),
+      [0, 11],
+      true,
+    ],
+    ["replaces a selection, past the limit", "x".repeat(10000), [0, 10], false],
+  ] as const)("keeps a rule's text within its limit when an answer is inserted: %s (DIAAT-412)", async (_, saved, selection, inserted) => {
+    vi.mocked(toast.error).mockClear();
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: saved },
+            ],
+          }),
+          ...UPLOADED.fields.slice(1),
+          field("RepName", { label: "Representative's name" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const text = within(fields).getByLabelText(
+      "Text of rule 1 of Reference"
+    ) as HTMLTextAreaElement;
+    if (selection) text.setSelectionRange(selection[0], selection[1]);
+
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Insert an answer into rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Representative's name" })
+    );
+
+    if (inserted) {
+      expect(text.value.length).toBeLessThanOrEqual(10000);
+      expect(text.value).toContain("{{RepName}}");
+      expect(toast.error).not.toHaveBeenCalled();
+    } else {
+      expect(text.value).toBe(saved);
+      expect(toast.error).toHaveBeenCalledWith(
+        "The rule's text is too long to insert another answer."
+      );
+    }
+  });
+
   it("edits the options of a box tagged like one of Object's own properties", async () => {
     const odd: AdminTemplate = {
       ...UPLOADED,
