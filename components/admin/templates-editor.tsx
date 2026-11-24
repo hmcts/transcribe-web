@@ -55,6 +55,7 @@ import {
   deleteTemplate,
   FIELD_TYPES,
   fetchSharedTemplates,
+  isAsked,
   fetchTemplates,
   LIST_TYPES,
   ownValue,
@@ -435,6 +436,10 @@ function TemplateFieldsEditor({
   const fileInput = useRef<HTMLInputElement>(null);
 
   const linked = new Set(fields.map((f) => f.tag));
+  // DIAAT-412: the questions whose answers a rule's text can print.
+  const answerable = fields.flatMap((f) =>
+    isAsked(f.type) ? [{ tag: f.tag, label: f.label || f.tag }] : []
+  );
   const unlinked = template.boxes.filter((b) => !linked.has(b.key));
   const form = JSON.stringify({
     name,
@@ -717,7 +722,7 @@ function TemplateFieldsEditor({
           <TableBody>
             {fields.map((f, index) => {
               const box = template.boxes.find((b) => b.key === f.tag);
-              const asked = f.type !== "benchnotes" && f.type !== "dictated";
+              const asked = isAsked(f.type);
               return (
                 <TableRow key={f.tag}>
                   <TableCell className="align-top">
@@ -812,6 +817,7 @@ function TemplateFieldsEditor({
                           : []
                       )}
                       onRules={(rules) => update(f.tag, { rules })}
+                      answerable={answerable}
                       onEmptyText={(text) =>
                         update(f.tag, { empty_text: text || null })
                       }
@@ -1066,6 +1072,8 @@ const YES_NO_ANSWERS = [
 ];
 
 const NEW_RULE: AnswerRule = { field: "", answer: "", text: "" };
+// The API's limit on a rule's text.
+const RULE_TEXT_LIMIT = 10000;
 
 function FieldConfiguration({
   field,
@@ -1076,6 +1084,7 @@ function FieldConfiguration({
   onPrefill,
   questions,
   onRules,
+  answerable,
 }: {
   field: TemplateField;
   options: string;
@@ -1085,6 +1094,8 @@ function FieldConfiguration({
   onPrefill: (prefill: TemplatePrefill | null) => void;
   questions: Question[];
   onRules: (rules: AnswerRule[]) => void;
+  /** The questions the judge answers, whose answers a rule's text can print. */
+  answerable: { tag: string; label: string }[];
 }) {
   const name = field.label || field.tag;
   // Not from the tag, which can hold spaces (an ID reference list would split it).
@@ -1156,6 +1167,7 @@ function FieldConfiguration({
             rules={field.rules ?? []}
             questions={questions}
             onRules={onRules}
+            answerable={answerable}
           />
         )}
       </div>
@@ -1206,21 +1218,54 @@ function AnswerRules({
   rules,
   questions,
   onRules,
+  answerable,
 }: {
   name: string;
   rules: AnswerRule[];
   questions: Question[];
   onRules: (rules: AnswerRule[]) => void;
+  answerable: { tag: string; label: string }[];
 }) {
   const hintId = useId();
+  const texts = useRef<(HTMLTextAreaElement | null)[]>([]);
+  // The text boxes given their starting cursor, which later renders must keep.
+  const placed = useRef(new WeakSet<HTMLTextAreaElement>());
+  // Where the cursor goes once an inserted answer is in the text: React's update
+  // would otherwise put it at the end, and the next answer there.
+  const caret = useRef<{ index: number; at: number } | null>(null);
+  useEffect(() => {
+    if (!caret.current) return;
+    texts.current[caret.current.index]?.setSelectionRange(
+      caret.current.at,
+      caret.current.at
+    );
+    caret.current = null;
+  });
   const change = (index: number, rule: Partial<AnswerRule>) =>
     onRules(rules.map((r, i) => (i === index ? { ...r, ...rule } : r)));
+  // DIAAT-412: an answer goes where the admin's cursor is, else at the end.
+  const insert = (index: number, tag: string) => {
+    const text = rules[index].text;
+    const box = texts.current[index];
+    const start = box?.selectionStart ?? text.length;
+    const end = box?.selectionEnd ?? start;
+    const placeholder = `{{${tag}}}`;
+    const next = `${text.slice(0, start)}${placeholder}${text.slice(end)}`;
+    if (next.length > RULE_TEXT_LIMIT) {
+      toast.error("The rule's text is too long to insert another answer.");
+      return;
+    }
+    caret.current = { index, at: start + placeholder.length };
+    change(index, { text: next });
+  };
   return (
     <div className="space-y-3">
       <p id={hintId} className="text-xs text-muted-foreground">
         Prints each rule's text when the judge gives its answer, in this order.
         With none applying, the line is removed. Use **bold**, lists and
-        [placeholders] for the judge to complete.
+        [placeholders] for the judge to complete. An inserted answer prints as
+        its own box would (a date as 12 February 2026, a yes/no question as Yes
+        or No). Left empty, it prints nothing, nor the comma next to it.
       </p>
       {questions.length === 0 && (
         <p className="text-xs text-muted-foreground">
@@ -1269,14 +1314,36 @@ function AnswerRules({
               </SelectContent>
             </Select>
             <Textarea
+              ref={(box) => {
+                // Until the admin places the cursor, an answer goes at the end.
+                if (box && !placed.current.has(box)) {
+                  placed.current.add(box);
+                  box.setSelectionRange(box.value.length, box.value.length);
+                }
+                texts.current[index] = box;
+              }}
               aria-label={`Text of ${label}`}
               aria-describedby={hintId}
               rows={4}
-              maxLength={10000}
+              maxLength={RULE_TEXT_LIMIT}
               placeholder="print"
               value={rule.text}
               onChange={(e) => change(index, { text: e.target.value })}
             />
+            {answerable.length > 0 && (
+              <Select value="" onValueChange={(tag) => insert(index, tag)}>
+                <SelectTrigger aria-label={`Insert an answer into ${label}`}>
+                  <SelectValue placeholder="Insert an answer" />
+                </SelectTrigger>
+                <SelectContent>
+                  {answerable.map((q) => (
+                    <SelectItem key={q.tag} value={q.tag}>
+                      {q.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            )}
             <Button
               type="button"
               variant="ghost"

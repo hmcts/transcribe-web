@@ -80,6 +80,10 @@ export interface AnswerRule {
 
 export const LIST_TYPES: TemplateFieldType[] = ["dropdown", "multi_select"];
 
+/** Whether the judge is asked for a field: not those BenchNotes fills. */
+export const isAsked = (type: TemplateFieldType): boolean =>
+  type !== "benchnotes" && type !== "dictated";
+
 /** A box in the uploaded file: every content control with this key. */
 export interface TemplateBox {
   key: string;
