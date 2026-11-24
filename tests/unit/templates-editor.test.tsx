@@ -605,6 +605,67 @@ describe("TemplatesEditor", () => {
     expect(answerOf(1).textContent).toBe("has the answer");
   });
 
+  it("inserts a question's answer into a rule's text where the cursor is (DIAAT-412)", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: ", Counsel" },
+            ],
+          }),
+          field("Party1Title", {
+            label: "First party",
+            type: "dropdown",
+            options: ["Claimant", "Respondent"],
+          }),
+          UPLOADED.fields[2],
+          field("RepName", { label: "Representative's name" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const text = within(fields).getByLabelText(
+      "Text of rule 1 of Reference"
+    ) as HTMLTextAreaElement;
+    text.setSelectionRange(0, 0);
+
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Insert an answer into rule 1 of Reference",
+      })
+    );
+    // Only the questions the judge answers: not the dictated text, nor itself.
+    expect(
+      (await screen.findAllByRole("option")).map((o) => o.textContent)
+    ).toEqual(["First party", "Representative's name"]);
+    await user.click(
+      screen.getByRole("option", { name: "Representative's name" })
+    );
+    expect(text.value).toBe("{{RepName}}, Counsel");
+    // The next answer goes after it, not at the end.
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Insert an answer into rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "First party" })
+    );
+    expect(text.value).toBe("{{RepName}}{{Party1Title}}, Counsel");
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0].rules[0].text).toBe(
+      "{{RepName}}{{Party1Title}}, Counsel"
+    );
+  });
+
   it("edits the options of a box tagged like one of Object's own properties", async () => {
     const odd: AdminTemplate = {
       ...UPLOADED,
