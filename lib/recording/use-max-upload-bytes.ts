@@ -18,7 +18,8 @@ export function useMaxUploadBytes(): number | null {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    // Fire and forget: every failure is handled inside, and a late answer is dropped.
+    void (async () => {
       try {
         const response = await recordingFetch(apiPath("/api/upload"), {
           cache: "no-store",
