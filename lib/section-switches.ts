@@ -65,20 +65,48 @@ export function heardUntil(
   return origin + (offsetTicks + (durationTicks ?? 0)) / TICKS_PER_MS;
 }
 
+/** Speech's audio time (ms from when it began) as epoch ms. */
+export type ToEpochMs = (audioMs: number) => number;
+
 /**
- * An utterance's timing from Speech's detailed result: ``origin`` is when its audio
- * began (epoch ms), from which the result's offsets count. Undefined when the result
- * has no offset (then the utterance is not split).
+ * Speech's audio time as epoch ms: from when capture began (``start``), which its
+ * offsets count from. A result that arrives later than any recognition delay allows
+ * (``allowanceMs``) can only mean the audio stalled: the audio heard after the last
+ * result is then dated later, and what was heard before keeps its time.
+ */
+export function audioClock(start: number, allowanceMs: number) {
+  const steps = [{ fromMs: 0, origin: start }];
+  let heardSoFar = 0;
+  const at: ToEpochMs = (audioMs) => {
+    let origin = start;
+    for (const step of steps) if (step.fromMs <= audioMs) origin = step.origin;
+    return origin + audioMs;
+  };
+  /** A result received at ``receivedAt`` covers the audio up to ``heardMs``. */
+  const heard = (heardMs: number, receivedAt: number) => {
+    const needed = receivedAt - heardMs - allowanceMs;
+    const last = steps[steps.length - 1];
+    if (needed > last.origin)
+      steps.push({ fromMs: heardSoFar, origin: needed });
+    heardSoFar = Math.max(heardSoFar, heardMs);
+  };
+  return { at, heard };
+}
+
+/**
+ * An utterance's timing from Speech's detailed result, its offsets dated by ``toEpoch``.
+ * Undefined when the result has no offset (then the utterance is not split).
  */
 export function segmentTiming(
-  origin: number,
+  toEpoch: ToEpochMs,
   offsetTicks: number | undefined,
   durationTicks: number | undefined,
   json: string | undefined
 ): SegmentTiming | undefined {
-  const endMs = heardUntil(origin, offsetTicks, durationTicks);
-  if (endMs === undefined || offsetTicks === undefined) return undefined;
-  const startMs = origin + offsetTicks / TICKS_PER_MS;
+  const heardMs = heardUntil(0, offsetTicks, durationTicks);
+  if (heardMs === undefined || offsetTicks === undefined) return undefined;
+  const startMs = toEpoch(offsetTicks / TICKS_PER_MS);
+  const endMs = toEpoch(heardMs);
   let words: TimedWord[] = [];
   try {
     const best = JSON.parse(json ?? "")?.NBest?.[0];
@@ -89,12 +117,12 @@ export function segmentTiming(
             ? [
                 {
                   word: w.Word,
-                  startMs: origin + w.Offset / TICKS_PER_MS,
-                  endMs:
-                    origin +
+                  startMs: toEpoch(w.Offset / TICKS_PER_MS),
+                  endMs: toEpoch(
                     (w.Offset +
                       (typeof w.Duration === "number" ? w.Duration : 0)) /
-                      TICKS_PER_MS,
+                      TICKS_PER_MS
+                  ),
                 },
               ]
             : []
@@ -235,7 +263,8 @@ function alignTokens(
       }
     }
   }
-  if (best[0][0] === impossible) return null;
+  // Matching nothing exactly is no better than matching by position.
+  if (best[0][0] === impossible || best[0][0] === 0) return null;
   const first: (number | null)[] = [];
   let j = 0;
   for (let i = 0; i < t; i++) {

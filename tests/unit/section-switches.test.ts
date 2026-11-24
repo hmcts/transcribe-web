@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  audioClock,
   type SectionSwitch,
   type SegmentTiming,
   sectionAt,
@@ -173,6 +174,22 @@ describe("splitting an utterance by section (DIAAT-417)", () => {
     ]);
   });
 
+  it("splits by position when no written token matches a word, as amounts can", () => {
+    // two(1000) pounds(1400) fifty(1800) three(2200) pounds(2600) fifty(3000)
+    const timing = said("two pounds fifty three pounds fifty");
+    expect(
+      splitBySection(
+        "£2.50, £3.50.",
+        timing,
+        "background",
+        switched([2200, "evidence"])
+      )
+    ).toEqual([
+      { section: "background", text: "£2.50," },
+      { section: "evidence", text: "£3.50." },
+    ]);
+  });
+
   it("keeps the written text when it cannot be matched to the words, splitting by position", () => {
     // More written tokens than words can be aligned with: matched from both ends.
     const timing = said("the sum was owed");
@@ -211,6 +228,9 @@ describe("splitting an utterance by section (DIAAT-417)", () => {
   });
 });
 
+/** Speech's audio time dated from ``origin``. */
+const from = (origin: number) => (audioMs: number) => origin + audioMs;
+
 describe("reading Speech's timing (DIAAT-417)", () => {
   it("dates the utterance and its words from when the audio began", () => {
     const json = JSON.stringify({
@@ -224,7 +244,7 @@ describe("reading Speech's timing (DIAAT-417)", () => {
         },
       ],
     });
-    expect(segmentTiming(10_000, 5_000_000, 6_000_000, json)).toEqual({
+    expect(segmentTiming(from(10_000), 5_000_000, 6_000_000, json)).toEqual({
       startMs: 10_500,
       endMs: 11_100,
       words: [
@@ -235,12 +255,25 @@ describe("reading Speech's timing (DIAAT-417)", () => {
   });
 
   it("has no words for a result that is not detailed, and no timing without an offset", () => {
-    expect(segmentTiming(0, 10_000, 10_000, "not json")).toEqual({
+    expect(segmentTiming(from(0), 10_000, 10_000, "not json")).toEqual({
       startMs: 1,
       endMs: 2,
       words: [],
     });
-    expect(segmentTiming(0, undefined, undefined, undefined)).toBeUndefined();
+    expect(
+      segmentTiming(from(0), undefined, undefined, undefined)
+    ).toBeUndefined();
+  });
+
+  it("dates audio from when capture began, later only after a stall, and what came before the stall as it was", () => {
+    const clock = audioClock(1_000_000, 1500);
+    // Results arriving 500 ms after the speech: no stall.
+    clock.heard(3000, 1_003_500);
+    expect(clock.at(1800)).toBe(1_001_800);
+    // At 10 s only 5 s has been heard: the audio after 3 s stalled.
+    clock.heard(5000, 1_010_000);
+    expect(clock.at(2000)).toBe(1_002_000);
+    expect(clock.at(4500)).toBe(1_003_500 + 4500);
   });
 
   it("takes the section chosen last by then", () => {

@@ -34,7 +34,10 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
 import { useMediaQuery } from "@/hooks/use-media-query";
 import { useNoSpeechWatchdog } from "@/hooks/use-no-speech-watchdog";
-import { useRealtimeTranscription } from "@/hooks/use-realtime-transcription";
+import {
+  type TranscriptionSegment,
+  useRealtimeTranscription,
+} from "@/hooks/use-realtime-transcription";
 import { shouldPrepopulateLocalDemoData } from "@/lib/environment";
 import { submitDictation } from "@/lib/dictation-submission";
 import { type SectionSwitch, splitBySection } from "@/lib/section-switches";
@@ -123,6 +126,38 @@ interface LiveUtterance {
     upTo: number;
     settled: boolean;
   }[];
+}
+
+/**
+ * DIAAT-417: an utterance first heard after switches made while it was being said:
+ * those switches, from the audio Speech says it covers. A switch after all it covers
+ * waits for more; one within it splits its text by time, as near as can be told.
+ */
+function splitsSince(
+  segment: TranscriptionSegment,
+  switches: readonly SectionSwitch[],
+  first: TranscriptSection
+): LiveUtterance["splits"] {
+  const { heardFromMs: from, heardUntilMs: until, text } = segment;
+  if (from === undefined || until === undefined) return [];
+  return switches.flatMap((change, i): LiveUtterance["splits"] => {
+    if (change.at <= from) return [];
+    const section = (
+      i > 0 ? switches[i - 1].section : first
+    ) as TranscriptSection;
+    if (until <= change.at) {
+      return [{ section, at: change.at, upTo: text.length, settled: false }];
+    }
+    const share = until > from ? (change.at - from) / (until - from) : 0;
+    return [
+      {
+        section,
+        at: change.at,
+        upTo: atWordStart(text, Math.round(share * text.length)),
+        settled: true,
+      },
+    ];
+  });
 }
 
 /** ``upTo`` moved back to the start of a word it would cut through. */
@@ -448,7 +483,16 @@ export default function LiveDictation({
           const live: LiveUtterance =
             liveUtteranceRef.current?.id === segment.id
               ? liveUtteranceRef.current
-              : { id: segment.id, speaker: "", text: "", splits: [] };
+              : {
+                  id: segment.id,
+                  speaker: "",
+                  text: "",
+                  splits: splitsSince(
+                    segment,
+                    sectionSwitchesRef.current,
+                    firstSectionRef.current
+                  ),
+                };
           live.speaker = mapSpeakerLabel(incomingId);
           live.text = segment.text;
           for (const split of live.splits) {

@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiClient } from "@/lib/api-client";
 import type { SpeechSessionKey } from "@/lib/dictation-session";
 import {
+  audioClock,
   heardUntil,
   type SegmentTiming,
   segmentTiming,
@@ -36,7 +37,8 @@ export interface TranscriptionSegment {
   isFinal: boolean;
   /** DIAAT-417: when a final segment and its words were said, to split it by section. */
   timing?: SegmentTiming;
-  /** DIAAT-417: an interim segment: when the audio it covers ended (epoch ms). */
+  /** DIAAT-417: an interim segment: when the audio it covers began and ended (epoch ms). */
+  heardFromMs?: number;
   heardUntilMs?: number;
 }
 
@@ -478,13 +480,13 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
        * delay) moves it later, and a stall only ever does, so speech is never dated
        * before it was said.
        */
-      let audioOrigin = Date.now();
+      const clock = audioClock(Date.now(), RECOGNITION_DELAY_ALLOWANCE_MS);
       const timingOf = (result: {
         offset?: number;
         duration?: number;
         json?: string;
       }) =>
-        segmentTiming(audioOrigin, result.offset, result.duration, result.json);
+        segmentTiming(clock.at, result.offset, result.duration, result.json);
 
       /** OBS-4: start-to-first-text, once per speech session. */
       const reportFirstText = (sessionId: string | undefined, text: string) => {
@@ -502,15 +504,14 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
         if (!isCurrent()) return;
         if (e.result.reason === sdk.ResultReason.RecognizingSpeech) {
           const heardFor = heardUntil(0, e.result.offset, e.result.duration);
-          if (heardFor !== undefined) {
-            audioOrigin = Math.max(
-              audioOrigin,
-              Date.now() - heardFor - RECOGNITION_DELAY_ALLOWANCE_MS
-            );
-          }
-          // When the audio this result covers ended, for the judge's view of it.
+          if (heardFor !== undefined) clock.heard(heardFor, Date.now());
+          // The audio this result covers, for the judge's view of it.
           const heardUntilMs =
-            heardFor === undefined ? undefined : audioOrigin + heardFor;
+            heardFor === undefined ? undefined : clock.at(heardFor);
+          const heardFromMs =
+            typeof e.result.offset === "number"
+              ? clock.at(e.result.offset / 10_000)
+              : undefined;
           const speaker = e.result.speakerId || "Unknown";
           const text = e.result.text || "";
           reportFirstText(e.sessionId, text);
@@ -530,7 +531,8 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
                 existing.speaker === speaker &&
                 existing.text === text &&
                 existing.isFinal === false &&
-                existing.heardUntilMs === heardUntilMs
+                existing.heardUntilMs === heardUntilMs &&
+                existing.heardFromMs === heardFromMs
               ) {
                 return prev;
               }
@@ -540,13 +542,21 @@ export function useRealtimeTranscription(): UseRealtimeTranscriptionReturn {
                 speaker,
                 text,
                 isFinal: false,
+                heardFromMs,
                 heardUntilMs,
               };
               return updated;
             }
             return [
               ...prev,
-              { id: segmentId, speaker, text, isFinal: false, heardUntilMs },
+              {
+                id: segmentId,
+                speaker,
+                text,
+                isFinal: false,
+                heardFromMs,
+                heardUntilMs,
+              },
             ];
           });
         }

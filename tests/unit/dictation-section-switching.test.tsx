@@ -226,6 +226,48 @@ describe("switching sections while recording (DIAAT-417)", () => {
     expect(texts(after, "box:Reasons")).toHaveLength(1);
   });
 
+  it("shows speech from before a switch under its section, though Speech first delivers it after", () => {
+    const dictation = renderDictation();
+    // Findings chosen at 2 s, before Speech has delivered anything of this utterance.
+    dictation.choose("box:Findings", 2000);
+    dictation.hear(
+      [
+        {
+          id: "seg-1",
+          speaker: "Guest-1",
+          text: "the claimant was",
+          isFinal: false,
+          heardFromMs: 1000,
+          heardUntilMs: 1800,
+        },
+      ],
+      2300,
+      "box:Findings"
+    );
+    expect(editor.props.interimEarlier).toEqual([
+      { section: "box:Summary", text: "the claimant was" },
+    ]);
+    expect(editor.props.interimText).toBe("Judge: ");
+    dictation.hear(
+      [
+        {
+          id: "seg-1",
+          speaker: "Guest-1",
+          text: "the claimant was dismissed i heard",
+          isFinal: false,
+          heardFromMs: 1000,
+          heardUntilMs: 2600,
+        },
+      ],
+      2900,
+      "box:Findings"
+    );
+    expect(editor.props.interimEarlier).toEqual([
+      { section: "box:Summary", text: "the claimant was" },
+    ]);
+    expect(editor.props.interimText).toBe("Judge: dismissed i heard");
+  });
+
   it("leaves a sentence finished before the switch where it was said, though Speech closed it after", () => {
     const dictation = renderDictation();
     const sentence = words("the claimant was dismissed", 1000);
