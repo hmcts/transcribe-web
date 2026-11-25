@@ -6,6 +6,8 @@ import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import { Button } from "@/components/recording/ui/button";
 import { describeRecordingLimit } from "@/lib/flags/runtime-flags";
+import { audioTooLargeError } from "@/lib/recording/upload-limits";
+import { useMaxUploadBytes } from "@/lib/recording/use-max-upload-bytes";
 import { cn } from "@/lib/recording/utils";
 import { useMaxRecordingSeconds } from "@/providers/runtime-flags";
 
@@ -25,10 +27,32 @@ const ACCEPTED_TYPES = {
 export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const maxRecording = describeRecordingLimit(useMaxRecordingSeconds());
+  const maxUploadBytes = useMaxUploadBytes();
 
-  const onDrop = useCallback((accepted: File[]) => {
-    if (accepted[0]) setSelectedFile(accepted[0]);
-  }, []);
+  // A file over the size limit is refused here, before any of it is sent: the
+  // browser keeps sending after the server has answered 413, so the user would
+  // otherwise wait for the whole upload (minutes for a gigabyte) to be told.
+  const tooLarge = useCallback(
+    (file: File) => {
+      if (maxUploadBytes === null || file.size <= maxUploadBytes) return false;
+      toast.error(audioTooLargeError(maxUploadBytes));
+      return true;
+    },
+    [maxUploadBytes]
+  );
+
+  const onDrop = useCallback(
+    (accepted: File[]) => {
+      const file = accepted[0];
+      if (!file) return;
+      if (tooLarge(file)) {
+        setSelectedFile(null);
+        return;
+      }
+      setSelectedFile(file);
+    },
+    [tooLarge]
+  );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -42,6 +66,11 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
   const handleSubmit = () => {
     if (!selectedFile) {
       toast.error("Please select a file first.");
+      return;
+    }
+    // The limit may only have been read after the file was chosen.
+    if (tooLarge(selectedFile)) {
+      setSelectedFile(null);
       return;
     }
     onUpload(selectedFile);

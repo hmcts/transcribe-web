@@ -52,6 +52,20 @@ function parseDuration(raw: string | null): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+// The size limit, for the recording page to refuse a file that is too large
+// before sending it: the browser keeps sending a body after this route has
+// answered 413, so a file over the limit was refused only once it had all been
+// uploaded (minutes for a gigabyte). The same exact path as POST, so Caddy's
+// @next_api matcher already routes it here.
+export async function GET(request: NextRequest) {
+  const denied = unauthenticated(await getBackendAuthContext(request));
+  if (denied) return denied;
+  return NextResponse.json(
+    { max_upload_bytes: maxUploadBytes() },
+    { headers: { "Cache-Control": "no-store" } }
+  );
+}
+
 export async function POST(request: NextRequest) {
   const auth = await getBackendAuthContext(request);
   const denied = unauthenticated(auth);
