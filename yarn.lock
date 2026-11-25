@@ -8837,13 +8837,13 @@ __metadata:
   linkType: hard
 
 "prosemirror-view@npm:^1.0.0, prosemirror-view@npm:^1.1.0, prosemirror-view@npm:^1.27.0, prosemirror-view@npm:^1.31.0, prosemirror-view@npm:^1.41.4, prosemirror-view@npm:^1.41.8, prosemirror-view@npm:^1.42.3":
-  version: 1.42.6
-  resolution: "prosemirror-view@npm:1.42.6"
+  version: 1.44.0
+  resolution: "prosemirror-view@npm:1.44.0"
   dependencies:
     prosemirror-model: "npm:^1.25.12"
     prosemirror-state: "npm:^1.0.0"
     prosemirror-transform: "npm:^1.1.0"
-  checksum: 10/9ab506530f84bddb4521debfe385a3a69f7285d898e03f2bd0ccb11f4714500cdcd13daebefd25b64f00e4366b9346b6e28a86b685f42671000a072f7e81944e
+  checksum: 10/4fd130b708c538ab70d011689eb91b7cea30ae6978db6d03e6aa652597b2e9b69929b631d83a5b73e5160ca99ccd34f7f01b7323ce5c69c0429fdc1615e54582
   languageName: node
   linkType: hard
 
