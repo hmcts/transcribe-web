@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { HearingDetailView } from "@/components/recording/transcript/hearing-detail-view";
 import type { TranscriptionJob } from "@/lib/recording/types";
@@ -236,5 +242,24 @@ describe("the day selector", () => {
     expect(isExpanded(1)).toBe(true);
     expect(isExpanded(2)).toBe(false);
     expect(scrolledTo).toEqual(["day-1-s1"]);
+  });
+
+  it("goes back to All once the day shown is deleted", async () => {
+    render(<HearingDetailView initialHearing={THREE_DAYS()} />);
+    fireEvent.change(selector(), { target: { value: "day-2" } });
+
+    fireEvent.click(
+      within(daySection(2)).getByRole("button", { name: "Delete day 2" })
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Delete" }));
+
+    await waitFor(() =>
+      expect(screen.queryByRole("region", { name: "Day 3" })).toBeNull()
+    );
+    expect(selector().value).toBe("all");
+    expect(selector().selectedOptions[0].textContent).toBe("All");
+    for (const text of ["Said on day-1.", "Said on day-3."]) {
+      expect(screen.getByText(text).closest("[hidden]")).toBeNull();
+    }
   });
 });

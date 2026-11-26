@@ -439,6 +439,7 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
       );
     }
     applyHearing(withoutDay(hearingRef.current, day.id));
+    setDaySelection((current) => (current === day.id ? ALL_DAYS : current));
   };
 
   const addDay = (job: TranscriptionJob) =>
