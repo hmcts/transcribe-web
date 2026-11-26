@@ -109,14 +109,24 @@ export function HoverPopover({
   };
 
   const onPanelKeyDown = (e: React.KeyboardEvent) => {
-    const items = panelRef.current ? tabbablesIn(panelRef.current) : [];
+    const panel = panelRef.current;
+    if (!panel) return;
+    const items = tabbablesIn(panel);
     if (e.key === "Escape") {
       close();
       triggerRef.current?.focus();
-    } else if (e.key === "Tab" && e.shiftKey && e.target === items[0]) {
+    } else if (
+      e.key === "Tab" &&
+      e.shiftKey &&
+      (e.target === panel || e.target === items[0])
+    ) {
       e.preventDefault();
       triggerRef.current?.focus();
-    } else if (e.key === "Tab" && !e.shiftKey && e.target === items.at(-1)) {
+    } else if (
+      e.key === "Tab" &&
+      !e.shiftKey &&
+      e.target === (items.at(-1) ?? panel)
+    ) {
       e.preventDefault();
       close();
       focusAfterTrigger();
@@ -162,7 +172,10 @@ export function HoverPopover({
           if (e.key === "Escape") {
             close();
           } else if (e.key === "Tab" && !e.shiftKey && open) {
-            const first = panelRef.current && tabbablesIn(panelRef.current)[0];
+            const panel = panelRef.current;
+            // A text-only panel takes focus itself, so its content can be
+            // scrolled from the keyboard.
+            const first = panel && (tabbablesIn(panel)[0] ?? panel);
             if (first) {
               e.preventDefault();
               first.focus();
@@ -187,6 +200,7 @@ export function HoverPopover({
             ref={panelRef}
             id={panelId}
             role="dialog"
+            tabIndex={-1}
             // Reuse the trigger's descriptive name so screen readers announce
             // what the dialog is about (e.g. "Transcription run details for …").
             aria-label={ariaLabel}

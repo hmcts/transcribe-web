@@ -110,3 +110,35 @@ describe("HoverPopover keyboard access", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
+
+describe("HoverPopover with text only", () => {
+  it("lets the keyboard into a panel with nothing focusable, and on past it", async () => {
+    const user = userEvent.setup();
+    render(
+      <>
+        <HoverPopover ariaLabel="Days" trigger="3 days">
+          <p>Day 1</p>
+        </HoverPopover>
+        <a href="/next">Next link</a>
+      </>
+    );
+    const trigger = screen.getByRole("button", { name: "Days" });
+
+    await user.tab();
+    await user.keyboard("{Enter}");
+    await user.tab();
+
+    const panel = screen.getByRole("dialog", { name: "Days" });
+    expect(document.activeElement).toBe(panel);
+
+    await user.tab({ shift: true });
+    expect(document.activeElement).toBe(trigger);
+
+    await user.tab();
+    await user.tab();
+    expect(document.activeElement).toBe(
+      screen.getByRole("link", { name: "Next link" })
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
