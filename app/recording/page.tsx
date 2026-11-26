@@ -5,7 +5,13 @@ import { toast } from "sonner";
 import { AudioUpload } from "@/components/recording/audio-upload/audio-upload";
 import { FilterableJobsSection } from "@/components/recording/jobs-table/filterable-jobs-section";
 import { apiPath } from "@/lib/recording/base-path";
-import { type HearingRow, hearingRow } from "@/lib/recording/hearing-rows";
+import {
+  type HearingRow,
+  hasTranscript,
+  hearingRow,
+  isInFlight,
+  transcriptRow,
+} from "@/lib/recording/hearing-rows";
 import type { HearingSummary } from "@/lib/recording/types";
 import { uploadRecording } from "@/lib/recording/upload-recording";
 import { recordingFetch } from "@/lib/recording/browser-fetch";
@@ -57,15 +63,12 @@ export default function DashboardPage() {
     refresh();
   }, [refresh]);
 
-  // Poll while any job is still in flight; stop refetching as soon as
-  // everything has reached a terminal state so the dashboard doesn't poll
+  // Poll while any hearing has a day still in flight; stop refetching as soon
+  // as every day has reached a terminal state so the dashboard doesn't poll
   // forever.
   useEffect(() => {
     const id = setInterval(() => {
-      const hasActiveJobs = jobsRef.current.some(
-        (job) => job.status === "PENDING" || job.status === "PROCESSING"
-      );
-      if (hasActiveJobs) refresh();
+      if (jobsRef.current.some(isInFlight)) refresh();
     }, POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [refresh]);
@@ -104,7 +107,7 @@ export default function DashboardPage() {
     setJobs((prev) => prev.filter((job) => job.id !== jobId));
   }, []);
 
-  const completedJobs = jobs.filter((job) => job.status === "COMPLETED");
+  const transcripts = jobs.filter(hasTranscript).map(transcriptRow);
 
   return (
     <main className="min-h-screen bg-background">
@@ -133,7 +136,7 @@ export default function DashboardPage() {
           </div>
         </section>
 
-        {/* Transcripts: completed jobs only, ready to open */}
+        {/* Transcripts: hearings with at least one day complete, ready to open */}
         {loading ? (
           <section>
             <h2 className="text-lg font-semibold mb-4">Transcripts</h2>
@@ -142,7 +145,7 @@ export default function DashboardPage() {
         ) : (
           <FilterableJobsSection
             title="Transcripts"
-            jobs={completedJobs}
+            jobs={transcripts}
             onDelete={handleDelete}
           />
         )}

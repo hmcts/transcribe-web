@@ -12,11 +12,12 @@ import { JobProgress } from "@/components/recording/job-status/job-progress";
 import { JobStatusBadge } from "@/components/recording/job-status/job-status-badge";
 import { DeleteJobButton } from "@/components/recording/jobs-table/delete-job-button";
 import {
+  HearingDaysPopover,
   hasRunMetadata,
   JobMetadataPopover,
 } from "@/components/recording/jobs-table/job-metadata-popover";
+import { dayStatusNotes, type HearingRow } from "@/lib/recording/hearing-rows";
 import { jobPath } from "@/lib/recording/routes";
-import type { HearingRow } from "@/lib/recording/hearing-rows";
 import type { JobStatus } from "@/lib/recording/types";
 
 const TRANSCRIPT_LINK_LABEL: Record<JobStatus, string> = {
@@ -142,7 +143,12 @@ export function JobsTable({
               <td className="px-4 py-3 text-muted-foreground">
                 <div className="flex items-center gap-2 min-w-0">
                   <FileAudio className="size-4 shrink-0" />
-                  {hasRunMetadata(job) ? (
+                  {job.days ? (
+                    <HearingDaysPopover
+                      caseReference={job.caseReference}
+                      days={job.days}
+                    />
+                  ) : hasRunMetadata(job) ? (
                     <JobMetadataPopover job={job} />
                   ) : (
                     <span className="truncate max-w-48">
@@ -166,6 +172,18 @@ export function JobsTable({
                   {job.status === "PROCESSING" && (
                     <JobProgress job={job.inFlightDay ?? job} compact />
                   )}
+                  {dayStatusNotes(job).map((note) => (
+                    <span
+                      key={note.text}
+                      className={`text-xs ${
+                        note.tone === "error"
+                          ? "text-destructive"
+                          : "text-muted-foreground"
+                      }`}
+                    >
+                      {note.text}
+                    </span>
+                  ))}
                 </div>
               </td>
               <td className="px-4 py-3">
@@ -182,6 +200,7 @@ export function JobsTable({
                   <DeleteJobButton
                     hearingId={job.id}
                     caseReference={job.caseReference}
+                    dayCount={job.days?.length}
                     onDeleted={onDelete}
                   />
                 )}

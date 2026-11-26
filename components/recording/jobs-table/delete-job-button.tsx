@@ -22,12 +22,14 @@ interface DeleteJobButtonProps {
   // DIAAT-428: the rows are hearings; deleting one deletes every day of it.
   hearingId: string;
   caseReference: string;
+  dayCount?: number;
   onDeleted: (hearingId: string) => void;
 }
 
 export function DeleteJobButton({
   hearingId,
   caseReference,
+  dayCount = 1,
   onDeleted,
 }: DeleteJobButtonProps) {
   const [open, setOpen] = useState(false);
@@ -77,7 +79,9 @@ export function DeleteJobButton({
         <AlertDialogHeader>
           <AlertDialogTitle>Delete this record?</AlertDialogTitle>
           <AlertDialogDescription>
-            This will permanently delete the audio file and transcript for
+            {dayCount > 1
+              ? `This will permanently delete all ${dayCount} days of audio and their transcripts for`
+              : "This will permanently delete the audio file and transcript for"}{" "}
             &ldquo;{caseReference}&rdquo;. This cannot be undone.
           </AlertDialogDescription>
         </AlertDialogHeader>

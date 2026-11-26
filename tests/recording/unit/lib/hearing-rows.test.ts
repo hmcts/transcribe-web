@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { hearingRow } from "@/lib/recording/hearing-rows";
+import {
+  dayStatusNotes,
+  hasTranscript,
+  hearingRow,
+  isInFlight,
+  transcriptRow,
+} from "@/lib/recording/hearing-rows";
 import type { HearingDaySummary, HearingSummary } from "@/lib/recording/types";
 
 function day(overrides: Partial<HearingDaySummary> = {}): HearingDaySummary {
@@ -155,5 +161,123 @@ describe("hearingRow of a hearing of several days", () => {
       hearing([day(), { ...day2, status: "FAILED" }], { status: "partial" })
     );
     expect(row.status).toBe("COMPLETED");
+  });
+});
+
+// DIAAT-430: what the lists say about a hearing's days.
+describe("the days of a hearing row", () => {
+  const day2 = day({
+    jobId: "job-2",
+    dayNumber: 2,
+    hearingDate: "2026-11-11",
+    audioFileName: "day2.mp3",
+  });
+  const day3 = day({
+    jobId: "job-3",
+    dayNumber: 3,
+    hearingDate: "2026-11-12",
+    audioFileName: "day3.mp3",
+  });
+  const processing = { status: "PROCESSING" as const, progressPercent: 40 };
+  const failed = { status: "FAILED" as const };
+
+  it("lists each day of a hearing of several days", () => {
+    const row = hearingRow(hearing([day(), day2]));
+    expect(row.days?.map((d) => d.audioFileName)).toEqual([
+      "day1.mp3",
+      "day2.mp3",
+    ]);
+  });
+
+  it("gives a one-day hearing no list of days", () => {
+    expect(hearingRow(hearing([day()])).days).toBeUndefined();
+  });
+
+  describe("hasTranscript", () => {
+    it("is true of a completed one-day hearing only", () => {
+      expect(hasTranscript(hearingRow(hearing([day()])))).toBe(true);
+      expect(hasTranscript(hearingRow(hearing([day(processing)])))).toBe(false);
+      expect(hasTranscript(hearingRow(hearing([day(failed)])))).toBe(false);
+    });
+
+    it("is true of a hearing of several days once any day is complete", () => {
+      const row = hearingRow(hearing([day(), { ...day2, ...processing }]));
+      expect(hasTranscript(row)).toBe(true);
+    });
+
+    it("is false of a hearing of several days with no day complete", () => {
+      const row = hearingRow(
+        hearing([day(failed), { ...day2, ...processing }])
+      );
+      expect(hasTranscript(row)).toBe(false);
+    });
+  });
+
+  describe("transcriptRow", () => {
+    it("is a transcript to open while other days are still processing", () => {
+      const row = hearingRow(hearing([day(), { ...day2, ...processing }]));
+      expect(row.status).toBe("PROCESSING");
+      expect(transcriptRow(row).status).toBe("COMPLETED");
+    });
+
+    it("leaves a one-day hearing as it is", () => {
+      const row = hearingRow(hearing([day()]));
+      expect(transcriptRow(row)).toBe(row);
+    });
+  });
+
+  describe("dayStatusNotes", () => {
+    it("says nothing of a one-day hearing", () => {
+      expect(dayStatusNotes(hearingRow(hearing([day(failed)])))).toEqual([]);
+    });
+
+    it("says nothing more once every day is complete", () => {
+      expect(dayStatusNotes(hearingRow(hearing([day(), day2])))).toEqual([]);
+    });
+
+    it("counts the days complete while others are processing", () => {
+      const row = hearingRow(
+        hearing([day(), day2, { ...day3, ...processing }])
+      );
+      expect(dayStatusNotes(row)).toEqual([
+        { text: "2 of 3 days complete", tone: "neutral" },
+      ]);
+    });
+
+    it("counts the failed days of a partial hearing", () => {
+      const row = hearingRow(
+        hearing([day(), { ...day2, ...failed }, day3], { status: "partial" })
+      );
+      expect(dayStatusNotes(row)).toEqual([
+        { text: "2 of 3 days complete", tone: "neutral" },
+        { text: "1 day failed", tone: "error" },
+      ]);
+    });
+
+    it("says how many days failed when none completed", () => {
+      const row = hearingRow(
+        hearing([day(failed), { ...day2, ...failed }], { status: "failed" })
+      );
+      expect(dayStatusNotes(row)).toEqual([
+        { text: "2 days failed", tone: "error" },
+      ]);
+    });
+  });
+
+  describe("isInFlight", () => {
+    it("is true while any day is pending or processing", () => {
+      expect(
+        isInFlight(hearingRow(hearing([day(), { ...day2, ...processing }])))
+      ).toBe(true);
+      expect(
+        isInFlight(hearingRow(hearing([day(), { ...day2, status: "PENDING" }])))
+      ).toBe(true);
+    });
+
+    it("is false once every day has finished, failed or not", () => {
+      expect(
+        isInFlight(hearingRow(hearing([day(), { ...day2, ...failed }])))
+      ).toBe(false);
+    });
   });
 });

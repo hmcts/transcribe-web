@@ -1,6 +1,14 @@
 "use client";
 
-import { useId, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  useCallback,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { createPortal } from "react-dom";
 import { cn } from "@/lib/recording/utils";
 
 interface HoverPopoverProps {
@@ -14,10 +22,20 @@ interface HoverPopoverProps {
   panelClassName?: string;
 }
 
+const GAP_PX = 8;
+const VIEWPORT_MARGIN_PX = 8;
+const MIN_PANEL_HEIGHT_PX = 160;
+const TABBABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function tabbablesIn(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE));
+}
+
 /**
  * A lightweight info popover that opens on hover *or* click — plain React
  * state rather than a UI library, since it only needs to render a small
- * metadata card, not full positioning/portal machinery.
+ * metadata card next to its trigger.
  *
  * Visibility is derived from two independent inputs — `hovering` (mouse over
  * the trigger/panel) and `pinned` (toggled by activating the trigger) — so
@@ -37,9 +55,94 @@ export function HoverPopover({
   const [hovering, setHovering] = useState(false);
   const [pinned, setPinned] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const [panelStyle, setPanelStyle] = useState<CSSProperties>();
   const panelId = useId();
 
   const open = hovering || pinned;
+
+  // The panel is portalled out of the table: its overflow-x-auto wrapper
+  // clips anything positioned inside it, horizontally and vertically.
+  const place = useCallback(() => {
+    const trigger = triggerRef.current;
+    const panel = panelRef.current;
+    if (!trigger || !panel) return;
+    const rect = trigger.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - rect.bottom - GAP_PX;
+    const spaceAbove = rect.top - GAP_PX;
+    const below = spaceBelow >= MIN_PANEL_HEIGHT_PX || spaceBelow >= spaceAbove;
+    const left = Math.max(
+      VIEWPORT_MARGIN_PX,
+      Math.min(
+        rect.left,
+        window.innerWidth - panel.offsetWidth - VIEWPORT_MARGIN_PX
+      )
+    );
+    setPanelStyle({
+      position: "fixed",
+      left,
+      ...(below
+        ? { top: rect.bottom + GAP_PX }
+        : { bottom: window.innerHeight - rect.top + GAP_PX }),
+      maxHeight: Math.max(
+        (below ? spaceBelow : spaceAbove) - VIEWPORT_MARGIN_PX,
+        0
+      ),
+    });
+  }, []);
+
+  const close = () => {
+    setPinned(false);
+    setHovering(false);
+  };
+
+  // The panel sits at the end of the body, out of the tab order around its
+  // trigger, so keyboard focus is carried into and back out of it by hand.
+  const focusAfterTrigger = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const order = tabbablesIn(document).filter(
+      (el) => !panelRef.current?.contains(el)
+    );
+    order[order.indexOf(trigger) + 1]?.focus();
+  };
+
+  const onPanelKeyDown = (e: React.KeyboardEvent) => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    const items = tabbablesIn(panel);
+    if (e.key === "Escape") {
+      close();
+      triggerRef.current?.focus();
+    } else if (
+      e.key === "Tab" &&
+      e.shiftKey &&
+      (e.target === panel || e.target === items[0])
+    ) {
+      e.preventDefault();
+      triggerRef.current?.focus();
+    } else if (
+      e.key === "Tab" &&
+      !e.shiftKey &&
+      e.target === (items.at(-1) ?? panel)
+    ) {
+      e.preventDefault();
+      close();
+      focusAfterTrigger();
+    }
+  };
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    place();
+    window.addEventListener("scroll", place, true);
+    window.addEventListener("resize", place);
+    return () => {
+      window.removeEventListener("scroll", place, true);
+      window.removeEventListener("resize", place);
+    };
+  }, [open, place]);
 
   return (
     <div
@@ -49,6 +152,7 @@ export function HoverPopover({
       onMouseLeave={() => setHovering(false)}
     >
       <button
+        ref={triggerRef}
         type="button"
         className={cn(
           "min-w-0 truncate text-left underline decoration-dotted decoration-muted-foreground/50 underline-offset-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded",
@@ -66,35 +170,66 @@ export function HoverPopover({
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
-            setPinned(false);
-            setHovering(false);
+            close();
+          } else if (e.key === "Tab" && !e.shiftKey && open) {
+            const panel = panelRef.current;
+            // A text-only panel takes focus itself, so its content can be
+            // scrolled from the keyboard.
+            const first = panel && (tabbablesIn(panel)[0] ?? panel);
+            if (first) {
+              e.preventDefault();
+              first.focus();
+            }
           }
         }}
         onBlur={(e) => {
-          if (!containerRef.current?.contains(e.relatedTarget as Node)) {
+          const next = e.relatedTarget as Node | null;
+          if (
+            !containerRef.current?.contains(next) &&
+            !panelRef.current?.contains(next)
+          ) {
             setPinned(false);
           }
         }}
       >
         {trigger}
       </button>
-      {open && (
-        <div
-          id={panelId}
-          role="dialog"
-          // Reuse the trigger's descriptive name so screen readers announce
-          // what the dialog is about (e.g. "Transcription run details for …").
-          aria-label={ariaLabel}
-          className={cn(
-            "absolute left-0 top-full z-20 mt-2 w-64 rounded-md border border-border bg-popover p-3 text-xs text-popover-foreground shadow-md",
-            panelClassName
-          )}
-          // Clicking inside the panel shouldn't bubble up to the row either.
-          onClick={(e) => e.stopPropagation()}
-        >
-          {children}
-        </div>
-      )}
+      {open &&
+        createPortal(
+          <div
+            ref={panelRef}
+            id={panelId}
+            role="dialog"
+            tabIndex={-1}
+            // Reuse the trigger's descriptive name so screen readers announce
+            // what the dialog is about (e.g. "Transcription run details for …").
+            aria-label={ariaLabel}
+            className={cn(
+              "z-50 w-64 overflow-y-auto rounded-md border border-border bg-popover p-3 text-xs text-popover-foreground shadow-md",
+              panelClassName
+            )}
+            // Hidden until placed, so it never flashes at the page's corner.
+            style={panelStyle ?? { position: "fixed", visibility: "hidden" }}
+            onMouseEnter={() => setHovering(true)}
+            onMouseLeave={() => setHovering(false)}
+            onKeyDown={onPanelKeyDown}
+            onBlur={(e) => {
+              const next = e.relatedTarget as Node | null;
+              if (
+                !containerRef.current?.contains(next) &&
+                !panelRef.current?.contains(next)
+              ) {
+                close();
+              }
+            }}
+            // React bubbles portal events through the component tree, so a
+            // click in the panel would otherwise still reach the row.
+            onClick={(e) => e.stopPropagation()}
+          >
+            {children}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

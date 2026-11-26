@@ -2,6 +2,7 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { FilterableJobsSection } from "@/components/recording/jobs-table/filterable-jobs-section";
+import type { HearingRow } from "@/lib/recording/hearing-rows";
 import type { TranscriptionJob } from "@/lib/recording/types";
 
 vi.mock("next/navigation", () => ({
@@ -110,5 +111,42 @@ describe("FilterableJobsSection", () => {
     expect(within(rows[0]).getByText("EA/00002/2026")).toBeDefined();
     expect(within(rows[1]).getByText("PA/00001/2026")).toBeDefined();
     expect(within(rows[2]).getByText("RP/00003/2026")).toBeDefined();
+  });
+
+  it("finds a hearing of several days by any day's file name", async () => {
+    const user = userEvent.setup();
+    const hearing: HearingRow = {
+      ...JOBS[0],
+      id: "hearing-4",
+      caseReference: "HR/00004/2026",
+      audioFileName: "first-day.mp3",
+      days: [
+        {
+          jobId: "hearing-4",
+          dayNumber: 1,
+          hearingDate: "2026-06-01",
+          audioFileName: "first-day.mp3",
+          status: "COMPLETED",
+          progressPercent: 100,
+          uploadedAt: "2026-06-01T09:00:00Z",
+        },
+        {
+          jobId: "job-5",
+          dayNumber: 2,
+          hearingDate: "2026-06-02",
+          audioFileName: "second-day.mp3",
+          status: "COMPLETED",
+          progressPercent: 100,
+          uploadedAt: "2026-06-02T09:00:00Z",
+        },
+      ],
+    };
+    render(<FilterableJobsSection title="Uploads" jobs={[...JOBS, hearing]} />);
+
+    await user.type(screen.getByLabelText(/search uploads/i), "second-day");
+
+    const rows = getRows();
+    expect(rows).toHaveLength(1);
+    expect(within(rows[0]).getByText("HR/00004/2026")).toBeDefined();
   });
 });

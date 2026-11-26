@@ -2,7 +2,12 @@
 
 import { Info } from "lucide-react";
 import { HoverPopover } from "@/components/recording/ui/hover-popover";
-import type { TranscriptionJob } from "@/lib/recording/types";
+import { formatHearingDate } from "@/lib/recording/hearing-date";
+import type {
+  HearingDaySummary,
+  JobStatus,
+  TranscriptionJob,
+} from "@/lib/recording/types";
 import { formatDuration } from "@/lib/recording/utils";
 
 interface JobMetadataPopoverProps {
@@ -35,7 +40,9 @@ function isUrlIdentifier(identifier: string | undefined): boolean {
  * label, else a neutral label (never the raw self URL), else `undefined` so
  * the caller can show a progress/terminal placeholder.
  */
-export function safeModelLabel(job: TranscriptionJob): string | undefined {
+export function safeModelLabel(
+  job: Pick<TranscriptionJob, "modelDisplayName" | "modelIdentifier">
+): string | undefined {
   if (job.modelDisplayName !== undefined) {
     return job.modelDisplayName;
   }
@@ -123,6 +130,89 @@ export function JobMetadataPopover({ job }: JobMetadataPopoverProps) {
           </div>
         ) : null}
       </dl>
+    </HoverPopover>
+  );
+}
+
+const DAY_STATUS_LABEL: Record<JobStatus, string | undefined> = {
+  COMPLETED: undefined,
+  FAILED: "Failed",
+  PENDING: "Pending",
+  PROCESSING: "Processing…",
+};
+
+interface HearingDaysPopoverProps {
+  caseReference: string;
+  days: HearingDaySummary[];
+}
+
+/**
+ * The days of a hearing of several days (DIAAT-430): each day's date and file
+ * name, with the run details JobMetadataPopover shows for a single recording.
+ */
+export function HearingDaysPopover({
+  caseReference,
+  days,
+}: HearingDaysPopoverProps) {
+  return (
+    <HoverPopover
+      ariaLabel={`Recording days for ${caseReference}`}
+      panelClassName="w-80"
+      trigger={
+        <span className="inline-flex items-center gap-1">
+          <span>{days.length} days</span>
+          <Info className="size-3.5 shrink-0 text-muted-foreground" />
+        </span>
+      }
+    >
+      <ol className="space-y-2.5">
+        {days.map((day) => {
+          const statusLabel = DAY_STATUS_LABEL[day.status];
+          const modelLabel = safeModelLabel(day);
+          return (
+            <li key={day.jobId} className="space-y-0.5">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="font-medium">
+                  Day {day.dayNumber} · {formatHearingDate(day.hearingDate)}
+                </span>
+                {statusLabel && (
+                  <span
+                    className={
+                      day.status === "FAILED"
+                        ? "text-destructive"
+                        : "text-muted-foreground"
+                    }
+                  >
+                    {statusLabel}
+                  </span>
+                )}
+              </div>
+              <p className="truncate text-muted-foreground">
+                {day.audioFileName}
+              </p>
+              <p className="text-muted-foreground">
+                <span className="tabular-nums">
+                  {formatDuration(day.audioDurationSeconds)}
+                </span>
+                {day.transcriptionDurationSeconds !== undefined && (
+                  <>
+                    {" · transcribed in "}
+                    <span className="tabular-nums">
+                      {formatDuration(day.transcriptionDurationSeconds)}
+                    </span>
+                  </>
+                )}
+                {modelLabel && (
+                  <>
+                    {" · "}
+                    <span title={modelLabel}>{modelLabel}</span>
+                  </>
+                )}
+              </p>
+            </li>
+          );
+        })}
+      </ol>
     </HoverPopover>
   );
 }
