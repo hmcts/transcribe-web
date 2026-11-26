@@ -1252,7 +1252,7 @@ function AnswerRules({
     const placeholder = `{{${tag}}}`;
     const next = `${text.slice(0, start)}${placeholder}${text.slice(end)}`;
     if (next.length > RULE_TEXT_LIMIT) {
-      toast.error("The rule's text is too long to insert another answer.");
+      toast.error("The rule's text is too long to add another answer.");
       return;
     }
     caret.current = { index, at: start + placeholder.length };
@@ -1263,9 +1263,9 @@ function AnswerRules({
       <p id={hintId} className="text-xs text-muted-foreground">
         Prints each rule's text when the judge gives its answer, in this order.
         With none applying, the line is removed. Use **bold**, lists and
-        [placeholders] for the judge to complete. An inserted answer prints as
-        its own box would (a date as 12 February 2026, a yes/no question as Yes
-        or No). Left empty, it prints nothing, nor the comma next to it.
+        [placeholders] for the judge to complete. An added answer prints as its
+        own box would (a date as 12 February 2026, a yes/no question as Yes or
+        No). Left empty, it prints nothing, nor the comma next to it.
       </p>
       {questions.length === 0 && (
         <p className="text-xs text-muted-foreground">
@@ -1331,18 +1331,32 @@ function AnswerRules({
               onChange={(e) => change(index, { text: e.target.value })}
             />
             {answerable.length > 0 && (
-              <Select value="" onValueChange={(tag) => insert(index, tag)}>
-                <SelectTrigger aria-label={`Insert an answer into ${label}`}>
-                  <SelectValue placeholder="Insert an answer" />
-                </SelectTrigger>
-                <SelectContent>
-                  {answerable.map((q) => (
-                    <SelectItem key={q.tag} value={q.tag}>
-                      {q.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <div className="space-y-1">
+                <Select value="" onValueChange={(tag) => insert(index, tag)}>
+                  <SelectTrigger
+                    aria-label={`Add a judge's answer to ${label}`}
+                    aria-describedby={`${hintId}-answer-${index}`}
+                  >
+                    <SelectValue placeholder="Add a judge's answer" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {answerable.map((q) => (
+                      <SelectItem key={q.tag} value={q.tag}>
+                        {q.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span
+                  id={`${hintId}-answer-${index}`}
+                  className="block text-xs text-muted-foreground"
+                >
+                  Puts the judge's answer to another question into this text
+                  where your cursor is, for example their name or the hearing
+                  date. It shows here as {"{{tag}}"} and the answer replaces it
+                  in the document.
+                </span>
+              </div>
             )}
             <Button
               type="button"
