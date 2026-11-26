@@ -74,7 +74,10 @@ export function FilterableJobsSection({
       if (!term) return true;
       return (
         job.caseReference.toLowerCase().includes(term) ||
-        job.audioFileName.toLowerCase().includes(term)
+        job.audioFileName.toLowerCase().includes(term) ||
+        (job.days ?? []).some((day) =>
+          day.audioFileName.toLowerCase().includes(term)
+        )
       );
     });
   }, [jobs, search, effectiveSelected]);

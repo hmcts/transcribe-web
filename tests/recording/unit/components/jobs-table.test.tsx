@@ -1,8 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { JobsTable } from "@/components/recording/jobs-table/jobs-table";
+import type { HearingRow } from "@/lib/recording/hearing-rows";
 import { MOCK_JOBS } from "@/lib/recording/mock-data";
+import type { HearingDaySummary } from "@/lib/recording/types";
 
 const push = vi.fn();
 vi.mock("next/navigation", () => ({
@@ -296,5 +298,178 @@ describe("JobsTable run metadata popover", () => {
     );
 
     expect(screen.getAllByText(/in progress/i).length).toBe(2);
+  });
+});
+
+// DIAAT-430: a hearing of several days is one row that lists its days.
+describe("JobsTable with a hearing of several days", () => {
+  const base = MOCK_JOBS[0];
+  function dayOf(
+    n: number,
+    overrides: Partial<HearingDaySummary> = {}
+  ): HearingDaySummary {
+    return {
+      jobId: n === 1 ? "hearing-1" : `job-${n}`,
+      dayNumber: n,
+      hearingDate: `2026-11-1${n - 1}`,
+      audioFileName: `day${n}.mp3`,
+      status: "COMPLETED",
+      progressPercent: 100,
+      uploadedAt: `2026-11-1${n - 1}T09:00:00Z`,
+      audioDurationSeconds: 3600,
+      transcriptionDurationSeconds: 600,
+      modelDisplayName: "Base model — en-GB",
+      ...overrides,
+    };
+  }
+  function severalDays(
+    days: HearingDaySummary[],
+    overrides: Partial<HearingRow> = {}
+  ): HearingRow {
+    return {
+      ...base,
+      id: "hearing-1",
+      caseReference: "PA/00001/2026",
+      audioFileName: days[0].audioFileName,
+      audioDurationSeconds: undefined,
+      transcriptionDurationSeconds: undefined,
+      modelIdentifier: undefined,
+      modelDisplayName: undefined,
+      status: "COMPLETED",
+      days,
+      ...overrides,
+    };
+  }
+
+  it("shows the number of days instead of one file name", () => {
+    render(<JobsTable jobs={[severalDays([dayOf(1), dayOf(2), dayOf(3)])]} />);
+    expect(screen.getByText("3 days")).toBeDefined();
+    expect(screen.queryByText("day1.mp3")).toBeNull();
+  });
+
+  it("lists each day's date, file name and run details in the popover", async () => {
+    push.mockClear();
+    const user = userEvent.setup();
+    render(
+      <JobsTable
+        jobs={[
+          severalDays([
+            dayOf(1),
+            dayOf(2, {
+              status: "FAILED",
+              transcriptionDurationSeconds: undefined,
+              modelDisplayName: undefined,
+            }),
+          ]),
+        ]}
+      />
+    );
+
+    await user.click(
+      screen.getByRole("button", {
+        name: /recording days for PA\/00001\/2026/i,
+      })
+    );
+
+    const dialog = screen.getByRole("dialog", {
+      name: /recording days for PA\/00001\/2026/i,
+    });
+    const items = within(dialog).getAllByRole("listitem");
+    expect(items).toHaveLength(2);
+    expect(within(items[0]).getByText(/day 1/i)).toBeDefined();
+    expect(within(items[0]).getByText(/10 November 2026/)).toBeDefined();
+    expect(within(items[0]).getByText("day1.mp3")).toBeDefined();
+    expect(within(items[0]).getByText("1h 0m 0s")).toBeDefined();
+    expect(within(items[0]).getByText("Base model — en-GB")).toBeDefined();
+    expect(within(items[1]).getByText(/11 November 2026/)).toBeDefined();
+    expect(within(items[1]).getByText("day2.mp3")).toBeDefined();
+    expect(within(items[1]).getByText(/failed/i)).toBeDefined();
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it("never shows a day's raw model URL", async () => {
+    const rawSelfUrl =
+      "https://uksouth.cognitiveservices.azure.com/speechtotext/v3.2/models/base/guid";
+    const user = userEvent.setup();
+    render(
+      <JobsTable
+        jobs={[
+          severalDays([
+            dayOf(1, {
+              modelDisplayName: undefined,
+              modelIdentifier: rawSelfUrl,
+            }),
+            dayOf(2),
+          ]),
+        ]}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /recording days/i }));
+
+    expect(screen.getByText("Azure Speech model")).toBeDefined();
+    expect(screen.queryByText(rawSelfUrl)).toBeNull();
+    expect(screen.queryByTitle(rawSelfUrl)).toBeNull();
+  });
+
+  it("says how many days are complete and how many failed", () => {
+    render(
+      <JobsTable
+        jobs={[
+          severalDays([dayOf(1), dayOf(2), dayOf(3, { status: "FAILED" })]),
+        ]}
+      />
+    );
+    expect(screen.getByText("Completed")).toBeDefined();
+    expect(screen.getByText("2 of 3 days complete")).toBeDefined();
+    expect(screen.getByText("1 day failed")).toBeDefined();
+    expect(
+      screen.getByRole("link", { name: /view transcript/i })
+    ).toBeDefined();
+  });
+
+  it("shows the progress of the day being transcribed while processing", () => {
+    const running = dayOf(2, {
+      status: "PROCESSING",
+      progressPercent: 30,
+      uploadedAt: new Date().toISOString(),
+    });
+    render(
+      <JobsTable
+        jobs={[
+          severalDays([dayOf(1), running], {
+            status: "PROCESSING",
+            inFlightDay: {
+              ...base,
+              id: running.jobId,
+              audioFileName: running.audioFileName,
+              uploadedAt: running.uploadedAt,
+              status: "PROCESSING",
+              progressPercent: 30,
+              audioDurationSeconds: 3600,
+            },
+          }),
+        ]}
+      />
+    );
+    expect(screen.getByText("Processing…")).toBeDefined();
+    expect(screen.getByRole("progressbar")).toBeDefined();
+    expect(screen.getByText("1 of 2 days complete")).toBeDefined();
+  });
+
+  it("warns that deleting the row deletes every day", async () => {
+    const user = userEvent.setup();
+    render(
+      <JobsTable
+        jobs={[severalDays([dayOf(1), dayOf(2)])]}
+        onDelete={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    expect(
+      await screen.findByText(/all 2 days of audio and their transcripts/i)
+    ).toBeDefined();
   });
 });

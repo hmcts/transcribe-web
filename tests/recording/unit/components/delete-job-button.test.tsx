@@ -110,4 +110,46 @@ describe("DeleteJobButton", () => {
 
     expect(ancestorClick).not.toHaveBeenCalled();
   });
+
+  // DIAAT-430: a hearing of several days goes with all its days.
+  it("warns that every day of a hearing of several days will be deleted", async () => {
+    const user = userEvent.setup();
+    render(
+      <DeleteJobButton
+        hearingId="hearing-1"
+        caseReference="PA/1"
+        dayCount={3}
+        onDeleted={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    expect(await screen.findByRole("alertdialog")).toBeDefined();
+    expect(
+      screen.getByText(
+        /permanently delete all 3 days of audio and their transcripts/i
+      )
+    ).toBeDefined();
+  });
+
+  it("keeps the one-recording wording for a one-day hearing", async () => {
+    const user = userEvent.setup();
+    render(
+      <DeleteJobButton
+        hearingId="hearing-1"
+        caseReference="PA/1"
+        dayCount={1}
+        onDeleted={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /delete/i }));
+
+    expect(
+      await screen.findByText(
+        /permanently delete the audio file and transcript for/i
+      )
+    ).toBeDefined();
+  });
 });

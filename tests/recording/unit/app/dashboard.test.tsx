@@ -1,7 +1,7 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "@/app/recording/page";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import type { HearingDaySummary, HearingSummary } from "@/lib/recording/types";
@@ -101,8 +101,12 @@ describe("DashboardPage", () => {
         json: () =>
           Promise.resolve({
             hearings: [
-              hearing("hearing-1", "PA/05217/2025", [day("hearing-1", "hearing1.wav")]),
-              hearing("hearing-2", "EA/11042/2025", [day("hearing-2", "hearing2.wav")]),
+              hearing("hearing-1", "PA/05217/2025", [
+                day("hearing-1", "hearing1.wav"),
+              ]),
+              hearing("hearing-2", "EA/11042/2025", [
+                day("hearing-2", "hearing2.wav"),
+              ]),
             ],
           }),
       })
@@ -139,8 +143,133 @@ describe("DashboardPage", () => {
     );
     expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/hearings");
     expect(
-      screen.getAllByRole("link", { name: /view transcript/i })[0].getAttribute("href")
+      screen
+        .getAllByRole("link", { name: /view transcript/i })[0]
+        .getAttribute("href")
     ).toBe("/recording/jobs/hearing-1");
+  });
+
+  // DIAAT-430: a hearing is in Transcripts as soon as one day is complete.
+  it("lists a hearing with a day still processing in both lists", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            hearings: [
+              {
+                ...hearing("hearing-1", "PA/00001/2026", [
+                  day("hearing-1", "day1.wav"),
+                  day("job-2", "day2.wav", {
+                    dayNumber: 2,
+                    status: "PROCESSING",
+                    progressPercent: 20,
+                  }),
+                ]),
+                status: "processing",
+                daysComplete: 1,
+              },
+            ],
+          }),
+      })
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("PA/00001/2026")).toHaveLength(2)
+    );
+    const [transcripts, uploads] = screen.getAllByRole("table");
+    expect(within(transcripts).getByText("Completed")).toBeDefined();
+    expect(
+      within(transcripts).getByRole("link", { name: /view transcript/i })
+    ).toBeDefined();
+    expect(within(uploads).getByText("Processing…")).toBeDefined();
+    expect(screen.getAllByText("1 of 2 days complete")).toHaveLength(2);
+  });
+
+  it("leaves a hearing with no day complete out of Transcripts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            hearings: [
+              {
+                ...hearing("hearing-1", "PA/00001/2026", [
+                  day("hearing-1", "day1.wav", { status: "FAILED" }),
+                  day("job-2", "day2.wav", { dayNumber: 2, status: "FAILED" }),
+                ]),
+                status: "failed",
+                daysComplete: 0,
+                daysFailed: 2,
+              },
+            ],
+          }),
+      })
+    );
+
+    render(<DashboardPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("PA/00001/2026")).toHaveLength(1)
+    );
+    expect(screen.getByText("Transcripts (0)")).toBeDefined();
+    expect(screen.getByText("2 days failed")).toBeDefined();
+  });
+
+  describe("polling", () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const hearingsCalls = (fetchMock: ReturnType<typeof vi.fn>) =>
+      fetchMock.mock.calls.filter(([url]) => url === "/api/hearings").length;
+
+    function hearingsWithDay2(status: HearingDaySummary["status"]) {
+      return {
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            hearings: [
+              hearing("hearing-1", "PA/00001/2026", [
+                day("hearing-1", "day1.wav"),
+                day("job-2", "day2.wav", { dayNumber: 2, status }),
+              ]),
+            ],
+          }),
+      };
+    }
+
+    it("refetches while a day of a hearing is still processing", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(hearingsWithDay2("PROCESSING"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<DashboardPage />);
+      await waitFor(() => expect(hearingsCalls(fetchMock)).toBe(1));
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+
+      expect(hearingsCalls(fetchMock)).toBe(2);
+    });
+
+    it("stops once no day is processing, even with a failed day", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      const fetchMock = vi.fn().mockResolvedValue(hearingsWithDay2("FAILED"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<DashboardPage />);
+      await waitFor(() =>
+        expect(screen.getAllByText("PA/00001/2026")).toHaveLength(2)
+      );
+      await act(() => vi.advanceTimersByTimeAsync(5000));
+
+      expect(hearingsCalls(fetchMock)).toBe(1);
+    });
   });
 
   it("removes a hearing from the list after it is deleted", async () => {
@@ -152,7 +281,11 @@ describe("DashboardPage", () => {
         ok: true,
         json: () =>
           Promise.resolve({
-            hearings: [hearing("hearing-1", "PA/00001/2026", [day("hearing-1", "hearing.wav")])],
+            hearings: [
+              hearing("hearing-1", "PA/00001/2026", [
+                day("hearing-1", "hearing.wav"),
+              ]),
+            ],
           }),
       });
     });
@@ -169,7 +302,9 @@ describe("DashboardPage", () => {
     await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(screen.queryByText("PA/00001/2026")).toBeNull());
-    const deleted = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
+    const deleted = fetchMock.mock.calls.find(
+      ([, init]) => init?.method === "DELETE"
+    );
     expect(deleted?.[0]).toBe("/api/hearings/hearing-1");
   });
 
@@ -226,7 +361,10 @@ describe("DashboardPage", () => {
           ? new Promise((resolve) => {
               finish = resolve;
             })
-          : Promise.resolve({ ok: true, json: () => Promise.resolve({ hearings: [] }) })
+          : Promise.resolve({
+              ok: true,
+              json: () => Promise.resolve({ hearings: [] }),
+            })
       );
       vi.stubGlobal("fetch", fetchMock);
       const user = userEvent.setup();
@@ -237,13 +375,23 @@ describe("DashboardPage", () => {
         screen.getByLabelText("Audio file input"),
         new File(["bytes"], "hearing.mp3", { type: "audio/mpeg" })
       );
-      await user.click(screen.getByRole("button", { name: /transcribe a recording/i }));
+      await user.click(
+        screen.getByRole("button", { name: /transcribe a recording/i })
+      );
       await waitFor(() =>
-        expect(fetchMock.mock.calls.some(([, init]) => init?.method === "POST")).toBe(true)
+        expect(
+          fetchMock.mock.calls.some(([, init]) => init?.method === "POST")
+        ).toBe(true)
       );
 
-      await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "busy" });
-      finish({ ok: true, status: 201, json: () => Promise.resolve({ job: { id: "job-1" } }) });
+      await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+        step: "busy",
+      });
+      finish({
+        ok: true,
+        status: 201,
+        json: () => Promise.resolve({ job: { id: "job-1" } }),
+      });
       await waitFor(() => expect(toast.success).toHaveBeenCalled());
       await expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined();
     });
