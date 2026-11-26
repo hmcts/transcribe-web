@@ -635,11 +635,18 @@ describe("TemplatesEditor", () => {
     ) as HTMLTextAreaElement;
     text.setSelectionRange(0, 0);
 
-    await user.click(
-      within(fields).getByRole("combobox", {
-        name: "Insert an answer into rule 1 of Reference",
-      })
+    const add = within(fields).getByRole("combobox", {
+      name: "Add a judge's answer to rule 1 of Reference",
+    });
+    // What it is for, read with it.
+    expect(
+      document
+        .getElementById(add.getAttribute("aria-describedby") ?? "")
+        ?.textContent?.replace(/\s+/g, " ")
+    ).toBe(
+      "Puts the judge's answer to another question into this text where your cursor is, for example their name or the hearing date. It shows here as {{tag}} and the answer replaces it in the document."
     );
+    await user.click(add);
     // Only the questions the judge answers: not the dictated text, nor itself.
     expect(
       (await screen.findAllByRole("option")).map((o) => o.textContent)
@@ -651,7 +658,7 @@ describe("TemplatesEditor", () => {
     // The next answer goes after it, not at the end.
     await user.click(
       within(fields).getByRole("combobox", {
-        name: "Insert an answer into rule 1 of Reference",
+        name: "Add a judge's answer to rule 1 of Reference",
       })
     );
     await user.click(
@@ -689,7 +696,7 @@ describe("TemplatesEditor", () => {
 
     await user.click(
       within(fields).getByRole("combobox", {
-        name: "Insert an answer into rule 1 of Reference",
+        name: "Add a judge's answer to rule 1 of Reference",
       })
     );
     await user.click(
@@ -743,7 +750,7 @@ describe("TemplatesEditor", () => {
 
     await user.click(
       within(fields).getByRole("combobox", {
-        name: "Insert an answer into rule 1 of Reference",
+        name: "Add a judge's answer to rule 1 of Reference",
       })
     );
     await user.click(
@@ -757,7 +764,7 @@ describe("TemplatesEditor", () => {
     } else {
       expect(text.value).toBe(saved);
       expect(toast.error).toHaveBeenCalledWith(
-        "The rule's text is too long to insert another answer."
+        "The rule's text is too long to add another answer."
       );
     }
   });
