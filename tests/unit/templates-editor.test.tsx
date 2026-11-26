@@ -305,6 +305,10 @@ describe("TemplatesEditor", () => {
       expect(toast.success).toHaveBeenCalledWith("Saved ET judgment")
     );
     const [saved] = puts();
+    // As the upload is, so Front Door's WAF does not read the admin's text.
+    expect(
+      request.mock.calls.find(([, o]) => o?.method === "PUT")?.[1]?.headers
+    ).toEqual({ "Content-Type": "application/octet-stream" });
     expect(saved).toMatchObject({
       name: "ET judgment",
       service: null,
