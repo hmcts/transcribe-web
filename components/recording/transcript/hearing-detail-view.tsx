@@ -3,13 +3,16 @@
 import { ChevronDown, ChevronLeft, History } from "lucide-react";
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { JobProgress } from "@/components/recording/job-status/job-progress";
 import { JobStatusBadge } from "@/components/recording/job-status/job-status-badge";
 import { AddAudioPanel } from "@/components/recording/transcript/add-audio-panel";
 import { AudioPlayerBar } from "@/components/recording/transcript/audio-player-bar";
 import {
   ChangeHearingDate,
+  DaySelector,
   DayWithoutTranscript,
+  dayTranscriptId,
   HearingDayHeader,
 } from "@/components/recording/transcript/hearing-day-controls";
 import { ModificationHistoryTable } from "@/components/recording/transcript/modification-history-table";
@@ -26,8 +29,11 @@ import {
 } from "@/lib/recording/browser-fetch";
 import { formatHearingDate } from "@/lib/recording/hearing-date";
 import {
+  ALL_DAYS,
+  type DaySelection,
   hasTranscript,
   isInFlight,
+  shownDayIds,
   withJob,
   withNewDay,
   withoutDay,
@@ -249,10 +255,31 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
     []
   );
 
+  // Which days are expanded (DIAAT-429). Only a hearing of several days can
+  // collapse any: it alone has the selector.
+  const [daySelection, setDaySelection] = useState<DaySelection>(ALL_DAYS);
+  const shownDays = severalDays
+    ? shownDayIds(days, daySelection)
+    : new Set(days.map((day) => day.id));
+
+  const chooseDays = (selection: DaySelection) => {
+    setDaySelection(selection);
+    const day = days.find((d) => d.id === selection);
+    if (day && hasTranscript(day)) selectDay(day.id);
+  };
+
+  // A day put in the player while collapsed becomes the one day shown.
+  const showDay = (dayId: string) => {
+    if (shownDays.has(dayId)) return;
+    // Rendered now, so the segment can be scrolled to straight after.
+    flushSync(() => setDaySelection(dayId));
+  };
+
   // "Needs review" items live in a separate sidebar list — jumping to one
   // should also bring its actual transcript segment into view, not just
   // move the audio position.
   const seekAndScrollToSegment = (day: HearingDay, time: number) => {
+    showDay(day.id);
     selectDay(day.id, time);
     const segment = day.segments?.find(
       (s) => time >= s.startTime && time < s.startTime + s.duration
@@ -412,6 +439,7 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
       );
     }
     applyHearing(withoutDay(hearingRef.current, day.id));
+    setDaySelection((current) => (current === day.id ? ALL_DAYS : current));
   };
 
   const addDay = (job: TranscriptionJob) =>
@@ -713,6 +741,13 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
                 {segmentCount} segments
               </p>
             </div>
+            {severalDays && (
+              <DaySelector
+                days={days}
+                value={daySelection}
+                onChange={chooseDays}
+              />
+            )}
             {/* Reframe the highlighting as "review", not "error" (DIAAT-249):
                 a highlighted word had lower recognition confidence, not a
                 confirmed mistake. Only shown when the transcript actually
@@ -747,7 +782,12 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
                       day={day}
                       selected={day.id === activeDay.id}
                       onSelect={
-                        hasTranscript(day) ? () => selectDay(day.id) : undefined
+                        hasTranscript(day)
+                          ? () => {
+                              showDay(day.id);
+                              selectDay(day.id);
+                            }
+                          : undefined
                       }
                       onChangeDate={
                         multiDayHearings
@@ -759,16 +799,23 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
                       }
                     />
                   )}
-                  {hasTranscript(day) ? (
-                    <div
-                      data-day-id={day.id}
-                      className="divide-y divide-border"
-                    >
-                      {renderSegments(day)}
-                    </div>
-                  ) : (
-                    <DayWithoutTranscript day={day} />
-                  )}
+                  {/* Hidden rather than unmounted, so a collapsed day keeps
+                      its segments' state. */}
+                  <div
+                    id={dayTranscriptId(day)}
+                    hidden={!shownDays.has(day.id)}
+                  >
+                    {hasTranscript(day) ? (
+                      <div
+                        data-day-id={day.id}
+                        className="divide-y divide-border"
+                      >
+                        {renderSegments(day)}
+                      </div>
+                    ) : (
+                      <DayWithoutTranscript day={day} />
+                    )}
+                  </div>
                 </section>
               ))}
             </div>
