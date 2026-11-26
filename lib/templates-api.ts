@@ -226,6 +226,9 @@ export function uploadTemplate(
   });
 }
 
+/** Save a template. Its JSON goes as application/octet-stream, as uploads do: Front
+ * Door's WAF reads a JSON body and blocks the admin's text when it looks like code
+ * ("select the reason from", "--", <u>, {{Tag}}). */
 export function saveTemplate(
   code: string,
   id: string,
@@ -234,6 +237,7 @@ export function saveTemplate(
   return request(`${base(code)}/${encodeURIComponent(id)}`, {
     method: "PUT",
     body: JSON.stringify(body),
+    headers: { "Content-Type": UPLOAD_CONTENT_TYPE },
   });
 }
 
