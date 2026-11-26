@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  ALL_DAYS,
+  dayOptionLabel,
   hasTranscript,
   isInFlight,
+  NO_DAYS,
+  shownDayIds,
   withJob,
   withNewDay,
   withoutDay,
@@ -151,5 +155,33 @@ describe("withSummaryDates", () => {
         ])
       )
     ).toBeNull();
+  });
+});
+
+describe("dayOptionLabel", () => {
+  it("names the day as its heading does: number, date and file", () => {
+    expect(dayOptionLabel(day("b", 2, "2026-11-11"))).toBe(
+      "Day 2, 11 November 2026 (b.mp3)"
+    );
+  });
+});
+
+describe("shownDayIds", () => {
+  const days = [day("a", 1, "2026-11-10"), day("b", 2, "2026-11-11")];
+
+  it("shows every day for All", () => {
+    expect([...shownDayIds(days, ALL_DAYS)]).toEqual(["a", "b"]);
+  });
+
+  it("shows no day for None", () => {
+    expect(shownDayIds(days, NO_DAYS).size).toBe(0);
+  });
+
+  it("shows only the chosen day", () => {
+    expect([...shownDayIds(days, "b")]).toEqual(["b"]);
+  });
+
+  it("shows every day again once the chosen day has gone", () => {
+    expect([...shownDayIds(days, "deleted")]).toEqual(["a", "b"]);
   });
 });

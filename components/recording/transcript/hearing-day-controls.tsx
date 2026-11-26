@@ -17,6 +17,12 @@ import {
 } from "@/components/recording/ui/alert-dialog";
 import { Button } from "@/components/recording/ui/button";
 import { formatHearingDate, isHearingDate } from "@/lib/recording/hearing-date";
+import {
+  ALL_DAYS,
+  type DaySelection,
+  dayOptionLabel,
+  NO_DAYS,
+} from "@/lib/recording/hearing-days";
 import type { HearingDay } from "@/lib/recording/types";
 
 // The parts of a hearing's page about one of its days (DIAAT-428).
@@ -230,6 +236,39 @@ export function HearingDayHeader({
         {onDelete && <DeleteDayButton day={day} onDelete={onDelete} />}
       </span>
     </div>
+  );
+}
+
+export function dayTranscriptId(day: HearingDay): string {
+  return `day-${day.id}-transcript`;
+}
+
+interface DaySelectorProps {
+  days: HearingDay[];
+  value: DaySelection;
+  onChange: (selection: DaySelection) => void;
+}
+
+/** Which days' transcripts are expanded (DIAAT-429). */
+export function DaySelector({ days, value, onChange }: DaySelectorProps) {
+  return (
+    <label className="mb-3 flex items-center gap-2 text-sm">
+      <span className="font-medium">Show</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-controls={days.map(dayTranscriptId).join(" ")}
+        className="max-w-full truncate rounded-md border border-border bg-background px-2 py-1 focus:outline-none focus:ring-2 focus:ring-primary"
+      >
+        <option value={ALL_DAYS}>All</option>
+        <option value={NO_DAYS}>None</option>
+        {days.map((day) => (
+          <option key={day.id} value={day.id}>
+            {dayOptionLabel(day)}
+          </option>
+        ))}
+      </select>
+    </label>
   );
 }
 

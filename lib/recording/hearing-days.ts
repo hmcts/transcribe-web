@@ -1,4 +1,4 @@
-import { todayInLondon } from "./hearing-date";
+import { formatHearingDate, todayInLondon } from "./hearing-date";
 import type {
   Hearing,
   HearingDay,
@@ -97,4 +97,27 @@ export function withSummaryDates(
     });
   }
   return { ...hearing, status: summary.status, days };
+}
+
+// Which days of a hearing of several days are expanded (DIAAT-429): every
+// day, none, or the one with this id.
+export const ALL_DAYS = "all";
+export const NO_DAYS = "none";
+export type DaySelection = typeof ALL_DAYS | typeof NO_DAYS | (string & {});
+
+/** "Day 2, 11 November 2026 (day2.mp3)" */
+export function dayOptionLabel(day: HearingDay): string {
+  return `Day ${day.dayNumber}, ${formatHearingDate(day.hearingDate)} (${day.audioFileName})`;
+}
+
+/** The ids of the days expanded: every day once the one chosen has gone. */
+export function shownDayIds(
+  days: HearingDay[],
+  selection: DaySelection
+): Set<string> {
+  if (selection === NO_DAYS) return new Set();
+  if (selection !== ALL_DAYS && days.some((day) => day.id === selection)) {
+    return new Set([selection]);
+  }
+  return new Set(days.map((day) => day.id));
 }
