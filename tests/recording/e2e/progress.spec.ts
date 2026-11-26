@@ -6,21 +6,36 @@ import { expect, test } from "@playwright/test";
 // agree, plus the "Transcribing 2h 36m of audio" message and that the readouts
 // advance as the live clock ticks.
 //
-// The dashboard fetches its job list client-side from the app's own
-// /api/jobs route (which normally proxies the real backend). We
-// intercept that route in the browser and return a fixed PROCESSING job in
-// the frontend's TranscriptionJob shape, so the progress UI can be asserted
+// The dashboard fetches its list client-side from the app's own
+// /api/hearings route (which normally proxies the real backend). We
+// intercept that route in the browser and return a fixed one-day hearing
+// whose day is PROCESSING, in the frontend's HearingSummary shape, so the
+// progress UI can be asserted
 // deterministically without a live backend or a real Azure batch job.
 // Run with: yarn test:e2e (app must already be running).
 
 // Built fresh inside the test (not at module load) with `uploadedAt` relative
 // to the moment the test runs, so elapsed time is deterministic regardless of
 // how long the runner takes to start the browser.
-function makeProcessingJob(overrides: Record<string, unknown> = {}) {
+function makeProcessingHearing(overrides: Record<string, unknown> = {}) {
   return {
     id: "job-e2e-processing",
     caseReference: "PA/09999/2026",
     tribunal: "First-tier Tribunal — Immigration and Asylum Chamber",
+    status: "processing",
+    dayCount: 1,
+    daysComplete: 0,
+    daysFailed: 0,
+    days: [makeProcessingDay(overrides)],
+  };
+}
+
+function makeProcessingDay(overrides: Record<string, unknown> = {}) {
+  return {
+    jobId: "job-e2e-processing",
+    dayNumber: 1,
+    hearingDate: new Date().toISOString().slice(0, 10),
+    progressPercent: 60,
     audioFileName: "long_hearing.mp3",
     // Submitted 10 minutes before "now" so elapsed time is clearly non-zero.
     uploadedAt: new Date(Date.now() - 10 * 60 * 1000).toISOString(),
@@ -34,8 +49,8 @@ test.describe("Processing job progress display", () => {
   test("shows elapsed time, estimated remaining, and audio duration", async ({
     page,
   }) => {
-    const payload = makeProcessingJob();
-    await page.route("**/api/jobs", async (route) => {
+    const payload = makeProcessingHearing();
+    await page.route("**/api/hearings", async (route) => {
       if (route.request().method() !== "GET") {
         await route.continue();
         return;
@@ -43,7 +58,7 @@ test.describe("Processing job progress display", () => {
       await route.fulfill({
         status: 200,
         contentType: "application/json",
-        body: JSON.stringify({ jobs: [payload] }),
+        body: JSON.stringify({ hearings: [payload] }),
       });
     });
 

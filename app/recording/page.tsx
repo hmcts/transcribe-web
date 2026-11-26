@@ -5,8 +5,8 @@ import { toast } from "sonner";
 import { AudioUpload } from "@/components/recording/audio-upload/audio-upload";
 import { FilterableJobsSection } from "@/components/recording/jobs-table/filterable-jobs-section";
 import { apiPath } from "@/lib/recording/base-path";
-import { hearingRow } from "@/lib/recording/hearing-rows";
-import type { HearingSummary, TranscriptionJob } from "@/lib/recording/types";
+import { type HearingRow, hearingRow } from "@/lib/recording/hearing-rows";
+import type { HearingSummary } from "@/lib/recording/types";
 import { uploadRecording } from "@/lib/recording/upload-recording";
 import { recordingFetch } from "@/lib/recording/browser-fetch";
 import {
@@ -18,7 +18,7 @@ import { useMultiDayHearings } from "@/providers/runtime-flags";
 const POLL_INTERVAL_MS = 5000;
 
 // DIAAT-428: one row per hearing, whatever its number of days.
-async function fetchJobs(): Promise<TranscriptionJob[]> {
+async function fetchJobs(): Promise<HearingRow[]> {
   const response = await recordingFetch(apiPath("/api/hearings"), {
     cache: "no-store",
   });
@@ -33,13 +33,13 @@ async function fetchJobs(): Promise<TranscriptionJob[]> {
 
 export default function DashboardPage() {
   const multiDayHearings = useMultiDayHearings();
-  const [jobs, setJobs] = useState<TranscriptionJob[]>([]);
+  const [jobs, setJobs] = useState<HearingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   // Read inside the interval tick rather than as an effect dependency, so a
   // single interval lives for the component's lifetime instead of being
   // torn down and recreated on every job list update.
-  const jobsRef = useRef<TranscriptionJob[]>(jobs);
+  const jobsRef = useRef<HearingRow[]>(jobs);
   jobsRef.current = jobs;
 
   const refresh = useCallback(async () => {

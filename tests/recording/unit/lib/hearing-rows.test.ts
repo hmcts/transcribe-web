@@ -95,6 +95,38 @@ describe("hearingRow of a hearing of several days", () => {
     });
   });
 
+  it("takes its progress from a day being transcribed before one still being prepared", () => {
+    const pending = {
+      ...day({
+        jobId: "job-0",
+        hearingDate: "2026-11-01",
+        uploadedAt: "2026-11-12T09:00:00Z",
+      }),
+      status: "PENDING" as const,
+      progressPercent: 0,
+      audioDurationSeconds: 10,
+    };
+    const running = {
+      ...day2,
+      status: "PROCESSING" as const,
+      progressPercent: 60,
+      audioDurationSeconds: 3600,
+    };
+    const row = hearingRow(
+      hearing([pending, day(), running], { status: "processing" })
+    );
+    expect(row.status).toBe("PROCESSING");
+    expect(row.progressPercent).toBe(60);
+    // The list shows the latest upload; the progress counts from the running day's.
+    expect(row.uploadedAt).toBe("2026-11-12T09:00:00Z");
+    expect(row.inFlightDay).toMatchObject({
+      id: "job-2",
+      uploadedAt: "2026-11-11T09:00:00Z",
+      audioDurationSeconds: 3600,
+      status: "PROCESSING",
+    });
+  });
+
   it("is completed once every day is, uploaded when the latest day was", () => {
     const row = hearingRow(hearing([day(), day2]));
     expect(row.status).toBe("COMPLETED");

@@ -7,11 +7,20 @@ import type {
 
 // DIAAT-428: the recording lists show one row per hearing. A one-day hearing
 // is its recording, exactly as the lists showed it before hearings. A hearing
-// of several days has no one file, run or progress of its own, so its row
-// takes those from the day in progress, if any.
+// of several days has no one file, run or progress of its own: its progress is
+// that of the day in progress, if any (inFlightDay).
 
-function isInFlight(day: HearingDaySummary): boolean {
-  return day.status === "PENDING" || day.status === "PROCESSING";
+export interface HearingRow extends TranscriptionJob {
+  inFlightDay?: TranscriptionJob;
+}
+
+// The day the row's status is about: one being transcribed before one still
+// being prepared, as severalDaysStatus decides.
+function dayInFlight(days: HearingDaySummary[]): HearingDaySummary | undefined {
+  return (
+    days.find((day) => day.status === "PROCESSING") ??
+    days.find((day) => day.status === "PENDING")
+  );
 }
 
 function severalDaysStatus(hearing: HearingSummary): JobStatus {
@@ -34,7 +43,7 @@ function latestUpload(days: HearingDaySummary[]): string {
 }
 
 /** The row for a hearing with at least one day. */
-export function hearingRow(hearing: HearingSummary): TranscriptionJob {
+export function hearingRow(hearing: HearingSummary): HearingRow {
   const [first] = hearing.days;
   const identity = {
     id: hearing.id,
@@ -55,7 +64,7 @@ export function hearingRow(hearing: HearingSummary): TranscriptionJob {
       modelDisplayName: first.modelDisplayName,
     };
   }
-  const inFlight = hearing.days.find(isInFlight);
+  const inFlight = dayInFlight(hearing.days);
   return {
     ...identity,
     audioFileName: first.audioFileName,
@@ -63,5 +72,14 @@ export function hearingRow(hearing: HearingSummary): TranscriptionJob {
     status: severalDaysStatus(hearing),
     progressPercent: inFlight?.progressPercent ?? 100,
     audioDurationSeconds: inFlight?.audioDurationSeconds,
+    inFlightDay: inFlight && {
+      ...identity,
+      id: inFlight.jobId,
+      audioFileName: inFlight.audioFileName,
+      uploadedAt: inFlight.uploadedAt,
+      status: inFlight.status,
+      progressPercent: inFlight.progressPercent,
+      audioDurationSeconds: inFlight.audioDurationSeconds,
+    },
   };
 }

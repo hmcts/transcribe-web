@@ -469,3 +469,99 @@ describe("a hearing whose first day is still being transcribed", () => {
     );
   });
 });
+
+describe("review fixes", () => {
+  it("seeks to the latest place asked for while another day's audio loads", () => {
+    const { container } = render(
+      <HearingDetailView
+        initialHearing={hearingOf([
+          job("day-1"),
+          job("day-2", {
+            segments: [
+              ...(job("day-2").segments ?? []),
+              {
+                id: "day-2-s2",
+                speaker: "Judge",
+                speakerColor: "#000000",
+                text: "Later.",
+                startTime: 20,
+                duration: 5,
+              },
+            ],
+          }),
+        ])}
+      />
+    );
+    const day2 = daySection(2);
+    fireEvent.click(within(day2).getByRole("button", { name: "0:03" }));
+    fireEvent.click(within(day2).getByRole("button", { name: "0:20" }));
+
+    const audio = container.querySelector("audio") as HTMLAudioElement;
+    Object.defineProperty(audio, "duration", { value: 60, configurable: true });
+    fireEvent(audio, new Event("loadedmetadata"));
+    expect(audio.currentTime).toBe(20);
+  });
+
+  it("keeps playing the day it fell back to when the day it had selected finishes", async () => {
+    vi.useFakeTimers();
+    const hearing = hearingOf([
+      job("day-1", { status: "PROCESSING", segments: undefined }),
+      job("day-2", { status: "PROCESSING", segments: undefined }),
+    ]);
+    fetchMock.mockImplementation(async (url: string) =>
+      ok({ job: url.endsWith("day-2") ? job("day-2") : { ...hearing.days[0] } })
+    );
+    const { container } = render(
+      <HearingDetailView initialHearing={hearing} />
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(container.querySelector("audio")?.getAttribute("src")).toBe(
+      "/api/audio/day-2"
+    );
+
+    fetchMock.mockImplementation(async () => ok({ job: job("day-1") }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(container.querySelector("audio")?.getAttribute("src")).toBe(
+      "/api/audio/day-2"
+    );
+  });
+
+  it("keeps a day's segments mounted when the hearing gains a second day", async () => {
+    multiDay = true;
+    fetchMock.mockResolvedValue(
+      ok(
+        {
+          job: job("day-2", {
+            status: "PENDING",
+            segments: undefined,
+            hearingId: "day-1",
+            hearingDate: "2026-11-11",
+          }),
+        },
+        201
+      )
+    );
+    const user = userEvent.setup();
+    render(<HearingDetailView initialHearing={oneDayHearing(job("day-1"))} />);
+    const before = screen.getByText("Said on day-1.");
+
+    const panel = screen.getByRole("region", {
+      name: "Add audio to this hearing",
+    });
+    await user.upload(
+      within(panel).getByLabelText("Audio file input"),
+      new File(["bytes"], "day2.mp3", { type: "audio/mpeg" })
+    );
+    await user.click(
+      within(panel).getByRole("button", { name: "Add to this hearing" })
+    );
+
+    expect(await screen.findByRole("heading", { name: "Day 2" })).toBeDefined();
+    expect(screen.getByText("Said on day-1.")).toBe(before);
+  });
+});

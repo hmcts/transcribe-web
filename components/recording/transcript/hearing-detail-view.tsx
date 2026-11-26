@@ -95,6 +95,14 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
     days[0];
   const activeDayRef = useRef(activeDay.id);
   activeDayRef.current = activeDay.id;
+  const activeDayPlayable = hasTranscript(activeDay);
+  // A fallback that has become the day played is the selection from then on,
+  // so a selected day finishing later does not take the player back to it.
+  useEffect(() => {
+    if (activeDayPlayable && activeDay.id !== activeDayId) {
+      setActiveDayId(activeDay.id);
+    }
+  }, [activeDayPlayable, activeDay.id, activeDayId]);
 
   // An <audio> source cannot send the tab's jurisdiction as a header (DIAAT-334).
   const audioSrc = useMemo(
@@ -166,6 +174,7 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
     const onError = () => {
+      pendingSeekRef.current = null;
       setAudioFailedDayId(activeDayRef.current);
       // The element only says it failed: if the API refused because the tab's context is stale or
       // the account was deactivated, ask again with fetch so the stale-tab or account notice shows.
@@ -206,8 +215,13 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
   const seekTo = (time: number) => {
     const audio = audioElRef.current;
     if (!audio) return;
-    audio.currentTime = time;
     setPosition(time);
+    // The day's audio has not loaded yet: the latest seek waits for it.
+    if (pendingSeekRef.current !== null) {
+      pendingSeekRef.current = time;
+      return;
+    }
+    audio.currentTime = time;
   };
 
   // Puts the player (and the sidebar) on another day, at `time` once its
@@ -244,9 +258,12 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
       (s) => time >= s.startTime && time < s.startTime + s.duration
     );
     if (segment) {
-      document
-        .getElementById(segment.id)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      // Within the day's own list: segment ids are only unique within a job.
+      const list = document.querySelector(`[data-day-id="${day.id}"]`);
+      const element = Array.from(list?.querySelectorAll("[id]") ?? []).find(
+        (el) => el.id === segment.id
+      );
+      element?.scrollIntoView({ behavior: "smooth", block: "center" });
     }
   };
 
@@ -361,7 +378,11 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
     applyHearing(body.hearing as Hearing);
   };
 
-  const changeDate = async (day: HearingDay, hearingDate: string) => {
+  // Queued: each answer reorders every day, so they must apply in order.
+  const changeDate = (day: HearingDay, hearingDate: string) =>
+    enqueue(() => sendDate(day, hearingDate));
+
+  const sendDate = async (day: HearingDay, hearingDate: string) => {
     const response = await recordingFetch(
       apiPath(`/api/jobs/${day.id}/hearing-date`),
       patchJson({ hearingDate })
@@ -509,7 +530,6 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
   }
 
   const withTranscripts = days.filter(hasTranscript);
-  const playable = hasTranscript(activeDay);
   const totalDuration = (activeDay.segments ?? []).reduce(
     (max, s) => Math.max(max, s.startTime + s.duration),
     0
@@ -643,7 +663,7 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
 
   return (
     <main className="min-h-screen bg-background">
-      {playable && (
+      {activeDayPlayable && (
         <audio
           ref={attachAudioRef}
           src={audioSrc}
@@ -654,7 +674,7 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
         </audio>
       )}
 
-      {playable &&
+      {activeDayPlayable &&
         (audioAvailable ? (
           <AudioPlayerBar
             duration={audioDuration || totalDuration}
@@ -710,14 +730,19 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
                 {actionError}
               </p>
             )}
-            {severalDays ? (
-              <div className="space-y-4">
-                {days.map((day) => (
-                  <section
-                    key={day.id}
-                    aria-labelledby={`day-${day.id}-heading`}
-                    className="border border-border rounded-lg overflow-hidden"
-                  >
+            {/* One keyed list for one day or several, so adding or deleting a
+                day keeps the other days' segments (and any unsaved edits)
+                mounted; only the day headings come and go. */}
+            <div className="space-y-4">
+              {days.map((day) => (
+                <section
+                  key={day.id}
+                  aria-labelledby={
+                    severalDays ? `day-${day.id}-heading` : undefined
+                  }
+                  className="border border-border rounded-lg overflow-hidden"
+                >
+                  {severalDays && (
                     <HearingDayHeader
                       day={day}
                       selected={day.id === activeDay.id}
@@ -733,23 +758,20 @@ export function HearingDetailView({ initialHearing }: HearingDetailViewProps) {
                         multiDayHearings ? () => deleteDay(day) : undefined
                       }
                     />
-                    {hasTranscript(day) ? (
-                      <div className="divide-y divide-border">
-                        {renderSegments(day)}
-                      </div>
-                    ) : (
-                      <DayWithoutTranscript day={day} />
-                    )}
-                  </section>
-                ))}
-              </div>
-            ) : (
-              hasTranscript(onlyDay) && (
-                <div className="border border-border rounded-lg divide-y divide-border">
-                  {renderSegments(onlyDay)}
-                </div>
-              )
-            )}
+                  )}
+                  {hasTranscript(day) ? (
+                    <div
+                      data-day-id={day.id}
+                      className="divide-y divide-border"
+                    >
+                      {renderSegments(day)}
+                    </div>
+                  ) : (
+                    <DayWithoutTranscript day={day} />
+                  )}
+                </section>
+              ))}
+            </div>
           </div>
 
           {/* Sidebar (right) — the selected day's, omitted when the backend
