@@ -80,6 +80,11 @@ async function proxy(request: NextRequest, { params }: Context) {
   });
   const token = await bearerForSession(request.cookies.get(SESSION_COOKIE)?.value);
   if (token) headers.set("Authorization", `Bearer ${token}`);
+  // As Caddy does (@submission): the browser sends the submission's JSON as
+  // application/octet-stream for Front Door's WAF, and the API reads JSON.
+  if (request.method === "POST" && joined === "live-transcription/submission") {
+    headers.set("Content-Type", "application/json");
+  }
 
   const hasBody = !["GET", "HEAD"].includes(request.method);
   let upstream: Response;

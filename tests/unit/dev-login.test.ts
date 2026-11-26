@@ -294,6 +294,27 @@ describe("the dev proxy at /api/*", () => {
     expect(res.status).toBe(201);
   });
 
+  it("sets the submission's octet-stream back to application/json, as Caddy does", async () => {
+    await devSession();
+    api.mockResolvedValue(json({}));
+    const send = (path: string) =>
+      call("POST", path, {
+        cookies: { transcribe_session: "dev-sess" },
+        headers: { "Content-Type": "application/octet-stream" },
+        body: "{}",
+      });
+
+    await send("/api/live-transcription/submission");
+    await send("/api/upload");
+
+    const sent = (i: number) =>
+      new Headers((api.mock.calls[i][1] as RequestInit).headers).get(
+        "content-type"
+      );
+    expect(sent(0)).toBe("application/json");
+    expect(sent(1)).toBe("application/octet-stream");
+  });
+
   it("passes the API's refusals on with their status, such as 409 context_changed", async () => {
     await devSession();
     api.mockResolvedValue(json({ detail: { code: "context_changed" } }, 409));
