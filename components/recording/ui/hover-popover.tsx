@@ -25,6 +25,12 @@ interface HoverPopoverProps {
 const GAP_PX = 8;
 const VIEWPORT_MARGIN_PX = 8;
 const MIN_PANEL_HEIGHT_PX = 160;
+const TABBABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function tabbablesIn(root: ParentNode): HTMLElement[] {
+  return Array.from(root.querySelectorAll<HTMLElement>(TABBABLE));
+}
 
 /**
  * A lightweight info popover that opens on hover *or* click — plain React
@@ -86,6 +92,37 @@ export function HoverPopover({
     });
   }, []);
 
+  const close = () => {
+    setPinned(false);
+    setHovering(false);
+  };
+
+  // The panel sits at the end of the body, out of the tab order around its
+  // trigger, so keyboard focus is carried into and back out of it by hand.
+  const focusAfterTrigger = () => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const order = tabbablesIn(document).filter(
+      (el) => !panelRef.current?.contains(el)
+    );
+    order[order.indexOf(trigger) + 1]?.focus();
+  };
+
+  const onPanelKeyDown = (e: React.KeyboardEvent) => {
+    const items = panelRef.current ? tabbablesIn(panelRef.current) : [];
+    if (e.key === "Escape") {
+      close();
+      triggerRef.current?.focus();
+    } else if (e.key === "Tab" && e.shiftKey && e.target === items[0]) {
+      e.preventDefault();
+      triggerRef.current?.focus();
+    } else if (e.key === "Tab" && !e.shiftKey && e.target === items.at(-1)) {
+      e.preventDefault();
+      close();
+      focusAfterTrigger();
+    }
+  };
+
   useLayoutEffect(() => {
     if (!open) return;
     place();
@@ -123,8 +160,13 @@ export function HoverPopover({
         }}
         onKeyDown={(e) => {
           if (e.key === "Escape") {
-            setPinned(false);
-            setHovering(false);
+            close();
+          } else if (e.key === "Tab" && !e.shiftKey && open) {
+            const first = panelRef.current && tabbablesIn(panelRef.current)[0];
+            if (first) {
+              e.preventDefault();
+              first.focus();
+            }
           }
         }}
         onBlur={(e) => {
@@ -156,6 +198,16 @@ export function HoverPopover({
             style={panelStyle ?? { position: "fixed", visibility: "hidden" }}
             onMouseEnter={() => setHovering(true)}
             onMouseLeave={() => setHovering(false)}
+            onKeyDown={onPanelKeyDown}
+            onBlur={(e) => {
+              const next = e.relatedTarget as Node | null;
+              if (
+                !containerRef.current?.contains(next) &&
+                !panelRef.current?.contains(next)
+              ) {
+                close();
+              }
+            }}
             // React bubbles portal events through the component tree, so a
             // click in the panel would otherwise still reach the row.
             onClick={(e) => e.stopPropagation()}

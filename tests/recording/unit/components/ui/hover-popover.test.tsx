@@ -56,3 +56,57 @@ describe("HoverPopover", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
+
+describe("HoverPopover keyboard access", () => {
+  function renderWithLink() {
+    render(
+      <>
+        <HoverPopover ariaLabel="Details" trigger="file.mp3">
+          <a href="https://example.test/docs">About models</a>
+        </HoverPopover>
+        <a href="/next">Next link</a>
+      </>
+    );
+  }
+
+  it("tabs from the open trigger into the panel and back out after it", async () => {
+    const user = userEvent.setup();
+    renderWithLink();
+
+    await user.tab();
+    await user.keyboard("{Enter}");
+    await user.tab();
+
+    expect(document.activeElement).toBe(
+      screen.getByRole("link", { name: "About models" })
+    );
+    expect(screen.getByRole("dialog", { name: "Details" })).toBeDefined();
+
+    await user.tab();
+
+    expect(document.activeElement).toBe(
+      screen.getByRole("link", { name: "Next link" })
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("returns to the trigger on Shift+Tab or Escape from the panel", async () => {
+    const user = userEvent.setup();
+    renderWithLink();
+    const trigger = screen.getByRole("button", { name: "Details" });
+
+    await user.tab();
+    await user.keyboard("{Enter}");
+    await user.tab();
+    await user.tab({ shift: true });
+
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.getByRole("dialog", { name: "Details" })).toBeDefined();
+
+    await user.tab();
+    await user.keyboard("{Escape}");
+
+    expect(document.activeElement).toBe(trigger);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
