@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import BackupUploader from "@/components/audio/upload/backup-uploader";
 import { apiClient } from "@/lib/api-client";
-import { setTabJurisdiction } from "@/lib/jurisdiction-session";
+import { setTabContext } from "@/lib/jurisdiction-session";
 
 // DIAAT-334: retrying an upload from a backup names the tab's jurisdiction, as the
 // first upload does: the API checks its upload key against it.
@@ -69,11 +69,11 @@ async function retryWith(uploadUrl: string): Promise<FakeXhr> {
 describe("BackupUploader", () => {
   beforeEach(() => {
     vi.stubGlobal("XMLHttpRequest", FakeXhr);
-    setTabJurisdiction("ET");
+    setTabContext({ jurisdiction: "ET", role: "Judge" });
   });
   afterEach(() => {
     vi.unstubAllGlobals();
-    setTabJurisdiction(null);
+    setTabContext(null);
   });
 
   it("names the tab's jurisdiction on the API's upload route", async () => {
@@ -84,5 +84,12 @@ describe("BackupUploader", () => {
   it("sends no jurisdiction header straight to storage", async () => {
     const xhr = await retryWith("https://store.blob.core.windows.net/audio/k1?sig=x");
     expect(xhr.headers["X-Jurisdiction"]).toBeUndefined();
+  });
+
+  it("returns to the Decisions page it was opened from (DIAAT-400)", async () => {
+    const onClose = vi.fn();
+    render(<BackupUploader backup={backup} onClose={onClose} onUploadSuccess={vi.fn()} />);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Return to Decisions" }));
+    expect(onClose).toHaveBeenCalled();
   });
 });

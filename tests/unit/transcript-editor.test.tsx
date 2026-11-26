@@ -131,3 +131,78 @@ describe("TranscriptEditor in the general section (DIAAT-333)", () => {
     expect(screen.getByText("Recording to Background")).toBeTruthy();
   });
 });
+
+describe("TranscriptEditor with a template's sections (DIAAT-416)", () => {
+  const SECTIONS = [
+    { key: "background", label: "Background", color: "bg-blue-500" },
+    { key: "box:Findings", label: "Findings of fact", color: "bg-amber-500" },
+  ];
+
+  it("names each section as the template does, and edits within its own", () => {
+    const onTranscriptUpdate = vi.fn();
+    render(
+      <TranscriptEditor
+        sectionedTranscript={{
+          background: [
+            {
+              speaker: "Judge",
+              text: "Heard today.",
+              timestamp: "09:00",
+              timestampMs: 1000,
+            },
+          ],
+          "box:Findings": [
+            {
+              speaker: "Judge",
+              text: "I find it credible.",
+              timestamp: "09:01",
+              timestampMs: 2000,
+            },
+          ],
+        }}
+        sections={SECTIONS}
+        activeSection="box:Findings"
+        interimTargetSection={null}
+        interimText=""
+        isListening={false}
+        onTranscriptUpdate={onTranscriptUpdate}
+      />
+    );
+
+    expect(screen.getByText("Background")).toBeTruthy();
+    expect(screen.getByText("Findings of fact")).toBeTruthy();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Judge: I find it credible." })
+    );
+    fireEvent.change(screen.getByRole("textbox"), {
+      target: { value: "I find it wholly credible." },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox"), {
+      key: "Enter",
+      ctrlKey: true,
+    });
+
+    expect(onTranscriptUpdate).toHaveBeenLastCalledWith({
+      background: [expect.objectContaining({ text: "Heard today." })],
+      "box:Findings": [
+        expect.objectContaining({ text: "I find it wholly credible." }),
+      ],
+    });
+  });
+
+  it("names the section the speech in progress is going to", () => {
+    render(
+      <TranscriptEditor
+        sectionedTranscript={{}}
+        sections={SECTIONS}
+        activeSection="box:Findings"
+        interimTargetSection="box:Findings"
+        interimText="Judge: I find"
+        isListening
+        onTranscriptUpdate={vi.fn()}
+      />
+    );
+    expect(screen.getByText("Recording to Findings of fact")).toBeTruthy();
+  });
+});

@@ -1,7 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TranscriptPage from "@/app/recording/jobs/[jobId]/page";
-import { setTabJurisdiction } from "@/lib/jurisdiction-session";
+import { setTabContext } from "@/lib/jurisdiction-session";
 
 // The page loads its job in the browser, in the tab's jurisdiction (DIAAT-334).
 
@@ -79,7 +79,7 @@ describe("TranscriptPage", () => {
   });
 
   it("asks for the job in the tab's jurisdiction", async () => {
-    setTabJurisdiction("IAC");
+    setTabContext({ jurisdiction: "IAC", role: "Judge" });
     await renderPage();
     await screen.findByText("PA/05217/2025");
     expect(fetchMock.mock.calls[0][1].headers["X-Jurisdiction"]).toBe("IAC");

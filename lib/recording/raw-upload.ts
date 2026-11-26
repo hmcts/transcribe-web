@@ -1,7 +1,7 @@
 import "server-only";
 import { NextResponse } from "next/server";
 import { getAuthConfig } from "@/lib/auth/config";
-import { BackendApiError } from "./api-client";
+import { BackendApiError, UploadRefusedError } from "./api-client";
 import type { BackendAuthContext } from "./auth-utils";
 import type { UploadFile } from "./multipart";
 import {
@@ -11,6 +11,7 @@ import {
   UPLOAD_HEADERS,
   type UploadTypeAllowlist,
 } from "./upload-contract";
+import { identityRefusalResponse } from "@/lib/recording/identity-refusal";
 
 // Reading a file the browser sent as a raw request body, for the route
 // handlers that forward uploads to the API (app/api/upload and
@@ -42,11 +43,17 @@ export function unsupportedMediaType() {
   );
 }
 
-export function tooLarge() {
-  return NextResponse.json(
-    { error: "Uploaded file is too large or the request body was malformed." },
-    { status: 413 }
-  );
+const TOO_LARGE_ERROR =
+  "Uploaded file is too large or the request body was malformed.";
+
+/**
+ * The 413 for an upload over the size limit, or whose body did not match its
+ * declared size. `error` is the message for the user; the default fits any
+ * upload, a route whose files have a limit worth stating passes its own
+ * (audioTooLargeError, lib/recording/upload-limits.ts).
+ */
+export function tooLarge(error: string = TOO_LARGE_ERROR) {
+  return NextResponse.json({ error }, { status: 413 });
 }
 
 /**
@@ -54,9 +61,26 @@ export function tooLarge() {
  * refused the request) or a 503 (it, or a service behind it, is unavailable
  * for now) passes through; any other 5xx, or no answer at all, is a 502.
  * The browser gets only `error`, a fixed message, and the API's request_id to
- * find the failure in its logs by: never the API's own error detail.
+ * find the failure in its logs by: never the API's own error detail, except
+ * for an UploadRefusedError (the API's refusal of the audio file itself,
+ * whose detail is written for the user, DIAAT-408).
  */
 export function backendFailed(err: unknown, error: string): NextResponse {
+  // The one exception: the API refused the audio file itself (too big, too
+  // long, not decodable), and its message says what to do about it.
+  if (err instanceof UploadRefusedError) {
+    return NextResponse.json(
+      {
+        error: err.detail,
+        ...(err.requestId ? { request_id: err.requestId } : {}),
+      },
+      { status: err.status }
+    );
+  }
+  // A refusal about who the user is (another tab switched context, the account was deactivated)
+  // goes on with its status and code, so the browser shows the stale-tab or account notice.
+  const refusal = identityRefusalResponse(err);
+  if (refusal) return refusal;
   if (!(err instanceof BackendApiError)) {
     return NextResponse.json({ error }, { status: 502 });
   }
@@ -177,7 +201,16 @@ export type RawUpload =
  */
 export function readRawUpload(
   request: Request,
-  { maxBytes, types }: { maxBytes: number; types: UploadTypeAllowlist }
+  {
+    maxBytes,
+    types,
+    tooLargeError,
+  }: {
+    maxBytes: number;
+    types: UploadTypeAllowlist;
+    /** The 413's message for a declared size over `maxBytes` (see tooLarge). */
+    tooLargeError?: string;
+  }
 ): RawUpload {
   // Exactly, as Front Door's WAF rule matches it (lib/recording/upload-contract.ts).
   if (request.headers.get("content-type") !== UPLOAD_BODY_CONTENT_TYPE) {
@@ -214,7 +247,7 @@ export function readRawUpload(
     return { ok: false, response: badRequest("No file provided") };
   }
   if (size > maxBytes) {
-    return { ok: false, response: tooLarge() };
+    return { ok: false, response: tooLarge(tooLargeError) };
   }
 
   const { content, mismatched } = exactly(request.body, size);

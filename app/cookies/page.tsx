@@ -47,7 +47,7 @@ export default function CookiesPage() {
           Cookies are small files saved on your phone, tablet or computer when you visit a website.
         </p>
         <p className="text-muted-foreground">
-          We use cookies to make Bench Notes work and to collect information about how you use the service.
+          We use cookies to make BenchNotes work and to collect information about how you use the service.
         </p>
 
         <section className="space-y-3">
@@ -88,7 +88,7 @@ export default function CookiesPage() {
         <section className="space-y-3">
           <h2 className="text-xl font-semibold">Analytics (optional)</h2>
           <p className="text-sm text-muted-foreground">
-            If you allow analytics, we record which parts of Bench Notes are used, for example
+            If you allow analytics, we record which parts of BenchNotes are used, for example
             which pages are viewed and when minutes are generated or copied, so we can improve
             the service. These records are kept in HMCTS&apos;s own monitoring service. They do
             not include your name, email address, transcripts, notes or case details, and no

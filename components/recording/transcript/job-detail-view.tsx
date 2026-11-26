@@ -7,10 +7,12 @@ import { JobProgress } from "@/components/recording/job-status/job-progress";
 import { JobStatusBadge } from "@/components/recording/job-status/job-status-badge";
 import { AudioPlayerBar } from "@/components/recording/transcript/audio-player-bar";
 import { ModificationHistoryTable } from "@/components/recording/transcript/modification-history-table";
+import { RecordingHistory } from "@/components/recording/transcript/recording-history";
 import { NeedsReviewPanel } from "@/components/recording/transcript/needs-review-panel";
 import { TranscriptAccuracy } from "@/components/recording/transcript/transcript-accuracy";
 import { TranscriptSegment } from "@/components/recording/transcript/transcript-segment";
 import { useJurisdictionSwitchGuard } from "@/hooks/use-jurisdiction-switch-guard";
+import { probeForRefusal } from "@/lib/access/refusals";
 import { apiPath } from "@/lib/recording/base-path";
 import { RECORDING_HOME } from "@/lib/recording/routes";
 import type { TranscriptionJob } from "@/lib/recording/types";
@@ -98,7 +100,12 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
     const onLoadedMetadata = () => setAudioDuration(el.duration);
     const onPlay = () => setPlaying(true);
     const onPause = () => setPlaying(false);
-    const onError = () => setAudioAvailable(false);
+    const onError = () => {
+      setAudioAvailable(false);
+      // The element only says it failed: if the API refused because the tab's context is stale or
+      // the account was deactivated, ask again with fetch so the stale-tab or account notice shows.
+      void probeForRefusal(el.currentSrc || el.src);
+    };
 
     el.addEventListener("timeupdate", onTimeUpdate);
     el.addEventListener("loadedmetadata", onLoadedMetadata);
@@ -520,6 +527,11 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
               </div>
             )}
           </section>
+
+          {/* DIAAT-395: the recording's audit history (who did what to it, in
+              which role), for a context with recording.audit.read. Separate from
+              the per-segment history above, which it leaves alone. */}
+          <RecordingHistory jobId={jobId} />
         </div>
       </main>
     );
@@ -542,9 +554,11 @@ export function JobDetailView({ jobId, initialJob }: JobDetailViewProps) {
 
         {(job.status === "PENDING" || job.status === "PROCESSING") && (
           <div className="border border-border rounded-lg p-6 space-y-4">
+            {/* DIAAT-408: PENDING is a job whose recording is still being prepared (converted and, over 240 minutes, split) before it is sent for transcription: no audio to play yet, and no new status for it. */}
             <p className="text-muted-foreground">
-              Transcription is still in progress. This page updates
-              automatically — no need to refresh.
+              {job.status === "PENDING"
+                ? "Your recording is being prepared for transcription. A long recording can take a few minutes. This page updates automatically — no need to refresh."
+                : "Transcription is still in progress. This page updates automatically — no need to refresh."}
             </p>
             <JobProgress job={job} />
           </div>

@@ -7,6 +7,8 @@ const preset: Partial<Record<string, string>> = {
   NEXT_PUBLIC_PREPOPULATE_LOCAL_TRANSCRIPT:
     process.env.NEXT_PUBLIC_PREPOPULATE_LOCAL_TRANSCRIPT || "false",
   NEXT_PUBLIC_DICTATION_ENABLED: process.env.NEXT_PUBLIC_DICTATION_ENABLED,
+  // Local development only: sign in as a seeded persona (see isDevLoginMode).
+  NEXT_PUBLIC_DEV_LOGIN: process.env.NEXT_PUBLIC_DEV_LOGIN,
   // Live dictation health and autosave (DIAAT-297, DIAAT-296). Next.js inlines
   // only literal process.env.NEXT_PUBLIC_* references into browser code, so
   // without these a value set in .env would not reach the browser outside

@@ -46,8 +46,17 @@
 			reverse_proxy localhost:3001
 		}
 
+		# Routes that return the BenchNotes access token in their body. The browser
+		# never holds the token: it reaches these only through Next.js (/auth/session,
+		# /auth/context and /auth/jurisdictions/*), which keep the token in the
+		# server-side session and return only the user's permissions.
+		@token_routes path /api/auth/session /api/me/context /api/me/jurisdictions/*
+		handle @token_routes {
+			respond 404
+		}
+
 		# Everything else under /api/* goes to the backend, with the session's
-		# bearer token attached by forward_auth. A `route` block keeps these in
+		# BenchNotes token attached by forward_auth. A `route` block keeps these in
 		# the written order: in a plain `handle`, Caddy sorts directives and
 		# runs forward_auth BEFORE request_header, so the strip would remove the
 		# token forward_auth had just added.

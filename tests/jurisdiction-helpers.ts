@@ -22,7 +22,6 @@ export const IAC = iac as CurrentJurisdiction;
 export const ET: CurrentJurisdiction = {
   code: "ET",
   name: "Employment Tribunal",
-  role: "judge",
   template: null,
   features: { hearing_recordings: false },
   wording: {},
@@ -32,36 +31,24 @@ export const ET: CurrentJurisdiction = {
 export const DT: CurrentJurisdiction = {
   code: "DT",
   name: "Decision Tribunal",
-  role: "judge",
   template: "iac_decision",
   features: { hearing_recordings: false },
   wording: {},
 };
 
-const JURISDICTIONS = { IAC, ET, DT } as const;
+type Code = "IAC" | "ET" | "DT";
 
-type Code = keyof typeof JURISDICTIONS;
-
-/** `role`: the user's role in the jurisdiction, "judge" unless given (DIAAT-356). */
-export function mockJurisdictionModule(
-  code: Code | (() => Code),
-  role: () => CurrentJurisdiction["role"] = () => "judge"
-) {
+export function mockJurisdictionModule(code: Code | (() => Code)) {
   const current = typeof code === "function" ? code : () => code;
   const values = {
     IAC: jurisdictionContextValue(IAC, [IAC]),
     ET: jurisdictionContextValue(ET, [ET]),
     DT: jurisdictionContextValue(DT, [DT]),
   };
-  const valueFor = (c: Code) => {
-    if (role() === "judge") return values[c];
-    const own = { ...JURISDICTIONS[c], role: role() };
-    return jurisdictionContextValue(own, [own]);
-  };
   return {
     JurisdictionProvider: ({ children }: { children: React.ReactNode }) =>
       children,
-    useJurisdiction: () => valueFor(current()),
-    useWording: () => valueFor(current()).wording,
+    useJurisdiction: () => values[current()],
+    useWording: () => values[current()].wording,
   };
 }

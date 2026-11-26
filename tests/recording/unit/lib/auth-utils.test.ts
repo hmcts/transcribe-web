@@ -8,7 +8,11 @@ const SESSION_ID = "session-abc";
 
 async function seedSession(idToken = "id-token-for-user") {
   await writeSession(SESSION_ID, {
-    idToken,
+    // The Entra token is never what the API is sent (DIAAT-373): the BenchNotes
+    // token the API minted from it is.
+    idToken: "entra-id-token",
+    appToken: idToken,
+    appTokenExpiresAt: Date.now() + 5 * 60 * 1000,
     refreshToken: "refresh",
     idTokenExpiresAt: Date.now() + 60 * 60 * 1000, // well clear of the refresh window
     user: {

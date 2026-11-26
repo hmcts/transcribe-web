@@ -8,6 +8,10 @@ import {
   unauthenticated,
 } from "@/lib/recording/raw-upload";
 import {
+  audioTooLargeError,
+  maxUploadBytes,
+} from "@/lib/recording/upload-limits";
+import {
   AUDIO_UPLOAD_TYPES,
   UPLOAD_HEADERS,
 } from "@/lib/recording/upload-contract";
@@ -25,14 +29,20 @@ import {
 // proxy (the matcher in proxy.ts): when the proxy runs, Next.js buffers the
 // entire request body before the route handler sees any of it, and cuts it
 // off at experimental.proxyClientMaxBodySize (10 MB by default). Measured on
-// the standalone server in a 512 MiB container: one 200 MB upload through
-// the proxy (with that limit raised) peaked at ~840 MB RSS; outside it,
-// streamed, three concurrent 200 MB uploads peaked at ~160 MB, against ~65 MB
-// idle. So this route gates itself the way the proxy gates /api/* (401
-// without a session).
+// the standalone server in a 512 MiB container with 200 MB bodies (the limit
+// then): one upload through the proxy (with that limit raised) peaked at
+// ~840 MB RSS; outside it, streamed, three concurrent uploads peaked at
+// ~160 MB, against ~65 MB idle. Streaming keeps memory off the size of the
+// body, so a limit of 1 GiB should not change that, but it has not been
+// measured at 1 GiB. So this route gates itself the way the proxy gates /api/*
+// (401 without a session).
 
-// Same cap as the API's POST /api/v1/uploads (_MAX_UPLOAD_BYTES).
-const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+// A backstop on the size of the file, not the limit on how long a recording
+// may be: that is the API's (its effective recording limit, DIAAT-408), checked
+// once it has probed or decoded the upload, and its 422 reaches the browser
+// below. The size comes from the MAX_UPLOAD_BYTES environment variable
+// (1 GiB unless set; lib/recording/upload-limits.ts), read per request, and
+// must equal the API's MAX_UPLOAD_BYTES setting.
 
 // Number() (unlike parseFloat) rejects partially-numeric strings like
 // "123abc" as NaN, so only a fully-numeric, positive value is accepted;
@@ -42,14 +52,30 @@ function parseDuration(raw: string | null): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+// The size limit, for the recording page to refuse a file that is too large
+// before sending it: the browser keeps sending a body after this route has
+// answered 413, so a file over the limit was refused only once it had all been
+// uploaded (minutes for a gigabyte). The same exact path as POST, so Caddy's
+// @next_api matcher already routes it here.
+export async function GET(request: NextRequest) {
+  const denied = unauthenticated(await getBackendAuthContext(request));
+  if (denied) return denied;
+  return NextResponse.json(
+    { max_upload_bytes: maxUploadBytes() },
+    { headers: { "Cache-Control": "no-store" } }
+  );
+}
+
 export async function POST(request: NextRequest) {
   const auth = await getBackendAuthContext(request);
   const denied = unauthenticated(auth);
   if (denied) return denied;
 
+  const maxBytes = maxUploadBytes();
   const upload = readRawUpload(request, {
-    maxBytes: MAX_UPLOAD_BYTES,
+    maxBytes,
     types: AUDIO_UPLOAD_TYPES,
+    tooLargeError: audioTooLargeError(maxBytes),
   });
   if (!upload.ok) return upload.response;
 
@@ -68,6 +94,8 @@ export async function POST(request: NextRequest) {
       return tooLarge();
     }
     console.error("Failed to upload and submit job", err);
+    // The API's own 413 and 422 for the file (too big, too long, not
+    // decodable) carry a message for the user, which backendFailed passes on.
     return backendFailed(err, "Failed to submit audio for transcription");
   }
 }

@@ -7,7 +7,7 @@ import LicenseCheckFail from "@/components/onboarding/license-check-fail";
 export default function ComingSoonPage(): React.JSX.Element {
   // Set page title dynamically in client component
   useEffect(() => {
-    document.title = "Coming Soon - Bench Notes";
+    document.title = "Coming Soon - BenchNotes";
   }, []);
 
   return (
@@ -18,7 +18,7 @@ export default function ComingSoonPage(): React.JSX.Element {
     >
       <div className="mx-auto max-w-2xl">
         <h1 id="coming-soon-heading" className="sr-only">
-          Bench Notes Coming Soon
+          BenchNotes Coming Soon
         </h1>
         <LicenseCheckFail />
       </div>

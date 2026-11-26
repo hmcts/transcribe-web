@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { DT, ET } from "../jurisdiction-helpers";
 import {
   asksForLegalIssues,
   dictationFormSchema,
@@ -7,7 +6,6 @@ import {
   getFormFields,
   sanitizeFormValues,
 } from "@/components/audio/dictation/formData";
-import { canEditLegalWording } from "@/lib/jurisdiction-context";
 import {
   contentForJurisdiction,
   type DocumentContent,
@@ -261,17 +259,5 @@ describe("the form's legal issues field", () => {
     expect(sanitizeFormValues(values, withoutFrameworks).legalIssues).toEqual(
       []
     );
-  });
-});
-
-describe("canEditLegalWording", () => {
-  it("is for an admin of a jurisdiction that has the decision template", () => {
-    expect(canEditLegalWording({ ...DT, role: "admin" })).toBe(true);
-  });
-
-  it("is not for a judge, a jurisdiction without the template, or none", () => {
-    expect(canEditLegalWording({ ...DT, role: "judge" })).toBe(false);
-    expect(canEditLegalWording({ ...ET, role: "admin" })).toBe(false);
-    expect(canEditLegalWording(null)).toBe(false);
   });
 });

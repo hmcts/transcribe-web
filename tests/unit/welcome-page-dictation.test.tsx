@@ -3,6 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 let mockJurisdiction: "IAC" | "ET" = "IAC";
 
+// DIAAT-373: as a judge, the role whose permissions these screens are for.
+vi.mock("@/providers/access", async () =>
+  (await import("../access-helpers")).mockAccessModule(
+    (await import("../access-helpers")).ME.judge
+  )
+);
+
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule(
     () => mockJurisdiction
@@ -30,7 +37,10 @@ vi.mock("next/navigation", () => ({
 }));
 
 vi.mock("@/providers/transcripts", () => ({
-  useTranscripts: () => ({ isLoading: false, transcriptsMetadata: [] }),
+  useTranscripts: () => ({
+    isLoading: false,
+    transcriptsMetadata: [{ id: "t-1" }],
+  }),
 }));
 
 vi.mock("@/providers/user-settings", () => ({
@@ -46,11 +56,11 @@ vi.mock("@/lib/analytics", () => ({
 }));
 
 vi.mock("@/components/meetings-list", () => ({
-  default: () => null,
+  default: () => <div data-testid="meetings-list" />,
 }));
 
 vi.mock("@/components/audio/upload/backup-recovery", () => ({
-  default: () => null,
+  default: () => <div data-testid="backup-recovery" />,
 }));
 
 vi.mock("@/components/audio/upload/backup-uploader", () => ({
@@ -59,27 +69,36 @@ vi.mock("@/components/audio/upload/backup-uploader", () => ({
 
 import WelcomePage from "@/components/welcome-page";
 
-describe("WelcomePage Dictation button (DIAAT-366)", () => {
+describe("WelcomePage Decisions button (DIAAT-366, DIAAT-400)", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     mockJurisdiction = "IAC";
   });
 
-  it("offers Dictation when the flag is on", () => {
+  it("offers Decisions, which goes to the Decisions page, when the flag is on", () => {
     vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "true");
     render(<WelcomePage />);
-    expect(screen.getByRole("button", { name: "Dictation" })).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Decisions" }).getAttribute("href")
+    ).toBe("/decisions");
   });
 
-  it("hides Dictation but keeps hearing recordings when the flag is off", () => {
+  it("hides Decisions but keeps hearing recordings when the flag is off", () => {
     vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "false");
     render(<WelcomePage />);
-    expect(screen.queryByRole("button", { name: "Dictation" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Decisions" })).toBeNull();
     expect(
       screen
         .getByRole("link", { name: "Hearing recordings" })
         .getAttribute("href")
     ).toBe("/recording");
+  });
+
+  it("leaves the dictation list and backup re-upload to the Decisions page", () => {
+    vi.stubEnv("NEXT_PUBLIC_DICTATION_ENABLED", "true");
+    render(<WelcomePage />);
+    expect(screen.queryByTestId("meetings-list")).toBeNull();
+    expect(screen.queryByTestId("backup-recovery")).toBeNull();
   });
 
   it("leaves no empty button row when there is nothing to start", () => {

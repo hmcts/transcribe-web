@@ -89,6 +89,15 @@ function sessionFromTokens(tokens: TokenResponse, previous?: Session): Session {
       roles,
     },
     createdAt: previous?.createdAt ?? Date.now(),
+    // A refresh renews the Entra token only: what the session holds from BenchNotes (the
+    // working context it remembers, and its current token) stays, or the next re-mint
+    // would not name the context and a user with several roles would be sent back to the
+    // chooser.
+    ...(previous?.context !== undefined ? { context: previous.context } : {}),
+    ...(previous?.appToken !== undefined ? { appToken: previous.appToken } : {}),
+    ...(previous?.appTokenExpiresAt !== undefined
+      ? { appTokenExpiresAt: previous.appTokenExpiresAt }
+      : {}),
   };
 }
 

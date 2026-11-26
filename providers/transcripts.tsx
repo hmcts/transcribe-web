@@ -23,7 +23,10 @@ import {
   saveTranscription,
   saveTranscriptionJob,
 } from "../lib/database";
+import { DECISIONS_HREF } from "@/lib/navigation";
+import { useAccess } from "@/providers/access";
 import { useJurisdiction } from "@/providers/jurisdiction";
+import { useDictationEnabled } from "@/providers/runtime-flags";
 
 interface TranscriptsContextType {
   transcriptsMetadata: TranscriptionMetadata[];
@@ -97,7 +100,16 @@ function TranscriptsProviderContent({
   const transcriptId = searchParams?.get("id");
   // DIAAT-322: material is loaded only in a jurisdiction. Pages that hold none
   // (privacy, support...) render before, or without, one: nothing is fetched.
-  const hasJurisdiction = useJurisdiction().current !== null;
+  // DIAAT-373: and only for a context that may dictate (`dictation.use`): any
+  // other role has no dictations to load, and the API would refuse the call.
+  // And only while dictation is switched on (the runtime flag, DIAAT-392): with it
+  // off the API refuses these calls too (403 `dictation_disabled`).
+  const { can } = useAccess();
+  const dictationEnabled = useDictationEnabled();
+  const hasJurisdiction =
+    useJurisdiction().current !== null &&
+    can("dictation.use") &&
+    dictationEnabled;
 
   // Load transcription when ID in URL changes
   useEffect(() => {
@@ -141,9 +153,16 @@ function TranscriptsProviderContent({
         setIsLoading(false);
         return;
       }
-      const returnedMetadata = await getAllTranscriptionMetadata();
-      setTranscriptsMetadata(returnedMetadata);
-      setIsLoading(false);
+      try {
+        const returnedMetadata = await getAllTranscriptionMetadata();
+        setTranscriptsMetadata(returnedMetadata);
+      } catch (error) {
+        // A refusal (dictation switched off meanwhile, a role removed) is
+        // handled where it is seen (lib/access/refusals.ts); the list is empty.
+        console.error("Failed to load metadata:", error);
+      } finally {
+        setIsLoading(false);
+      }
     };
     loadMetadata();
   }, [hasJurisdiction]);
@@ -162,13 +181,13 @@ function TranscriptsProviderContent({
     };
   }, [refreshMetadata]);
 
-  // Auto-refresh whenever we land on the home page.
+  // Auto-refresh whenever we land on the Decisions page, which lists them.
   // This covers returning from the recorder, where transcriptId stays null
-  // across the navigation from /record back to /.
+  // across the navigation from /record back to /decisions.
   useEffect(() => {
-    const isHomePage = pathname === "/";
+    const isDecisionsPage = pathname === DECISIONS_HREF;
 
-    if (isHomePage && !transcriptId) {
+    if (isDecisionsPage && !transcriptId) {
       refreshMetadata();
       setPollingStartTime(Date.now());
     } else {
@@ -176,7 +195,7 @@ function TranscriptsProviderContent({
     }
   }, [pathname, transcriptId, refreshMetadata]);
 
-  // Poll for new recordings every 5 seconds for the first minute on home page
+  // Poll for new recordings every 5 seconds for the first minute on the Decisions page
   useEffect(() => {
     if (!pollingStartTime || transcriptId) {
       return;

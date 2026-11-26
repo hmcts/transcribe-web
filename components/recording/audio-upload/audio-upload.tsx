@@ -5,7 +5,11 @@ import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import { Button } from "@/components/recording/ui/button";
+import { describeRecordingLimit } from "@/lib/flags/runtime-flags";
+import { audioTooLargeError } from "@/lib/recording/upload-limits";
+import { useMaxUploadBytes } from "@/lib/recording/use-max-upload-bytes";
 import { cn } from "@/lib/recording/utils";
+import { useMaxRecordingSeconds } from "@/providers/runtime-flags";
 
 interface AudioUploadProps {
   onUpload: (file: File) => void;
@@ -22,10 +26,33 @@ const ACCEPTED_TYPES = {
 
 export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const maxRecording = describeRecordingLimit(useMaxRecordingSeconds());
+  const maxUploadBytes = useMaxUploadBytes();
 
-  const onDrop = useCallback((accepted: File[]) => {
-    if (accepted[0]) setSelectedFile(accepted[0]);
-  }, []);
+  // A file over the size limit is refused here, before any of it is sent: the
+  // browser keeps sending after the server has answered 413, so the user would
+  // otherwise wait for the whole upload (minutes for a gigabyte) to be told.
+  const tooLarge = useCallback(
+    (file: File) => {
+      if (maxUploadBytes === null || file.size <= maxUploadBytes) return false;
+      toast.error(audioTooLargeError(maxUploadBytes));
+      return true;
+    },
+    [maxUploadBytes]
+  );
+
+  const onDrop = useCallback(
+    (accepted: File[]) => {
+      const file = accepted[0];
+      if (!file) return;
+      if (tooLarge(file)) {
+        setSelectedFile(null);
+        return;
+      }
+      setSelectedFile(file);
+    },
+    [tooLarge]
+  );
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -39,6 +66,11 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
   const handleSubmit = () => {
     if (!selectedFile) {
       toast.error("Please select a file first.");
+      return;
+    }
+    // The limit may only have been read after the file was chosen.
+    if (tooLarge(selectedFile)) {
+      setSelectedFile(null);
       return;
     }
     onUpload(selectedFile);
@@ -66,6 +98,11 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
         <p className="text-xs text-muted-foreground mt-1">
           MP3, WAV, MP4, M4A, OGG, FLAC supported
         </p>
+        {/* DIAAT-408: the longest recording is the API's, read from GET /api/flags (4 hours until it says otherwise). */}
+        <p className="text-xs text-muted-foreground mt-1">
+          Recordings up to {maxRecording}. For long recordings, MP3 or M4A files
+          are much smaller than WAV.
+        </p>
         {selectedFile && (
           <p className="text-sm text-primary mt-3 font-medium">
             Selected: {selectedFile.name}
@@ -78,7 +115,7 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
         disabled={!selectedFile || uploading}
         className="w-full"
       >
-        {uploading ? "Uploading…" : "Upload for transcription"}
+        {uploading ? "Uploading…" : "Transcribe a recording"}
       </Button>
     </div>
   );

@@ -3,6 +3,8 @@ import { bearerForSession, SESSION_COOKIE } from "@/lib/auth/session";
 import {
   JURISDICTION_HEADER,
   JURISDICTION_QUERY,
+  ROLE_HEADER,
+  ROLE_QUERY,
 } from "@/lib/jurisdiction-session";
 
 /**
@@ -17,10 +19,12 @@ import {
  */
 export interface BackendAuthContext {
   bearerToken: string | null;
-  /** DIAAT-334: the jurisdiction the browser tab works in, passed on to the API
-   * (which checks the user belongs to it). Absent from a server component, which
-   * has no tab: the API then uses the user's remembered jurisdiction. */
+  /** DIAAT-334: the jurisdiction the browser tab works in, `-` for none, passed
+   * on to the API (DIAAT-373: it answers 409 `context_changed` if it is not the
+   * session's). Absent from a server component, which has no tab. */
   jurisdiction?: string | null;
+  /** DIAAT-373: the role the tab works as, passed on with the jurisdiction. */
+  role?: string | null;
 }
 
 /** Read our session cookie from a Cookie header. */
@@ -42,11 +46,13 @@ export async function getBackendAuthContext(
   request: Pick<Request, "headers">
 ): Promise<BackendAuthContext> {
   const jurisdiction = request.headers.get(JURISDICTION_HEADER)?.trim();
+  const role = request.headers.get(ROLE_HEADER)?.trim();
   return {
     bearerToken: await bearerForSession(
       sessionIdFrom(request.headers.get("cookie"))
     ),
     ...(jurisdiction && { jurisdiction }),
+    ...(role && { role }),
   };
 }
 
@@ -70,6 +76,15 @@ export async function getServerComponentAuthContext(): Promise<BackendAuthContex
 export function jurisdictionFromAudioUrl(url: string): string | null {
   try {
     return new URL(url).searchParams.get(JURISDICTION_QUERY)?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/** The role an <audio> source names in its query (DIAAT-373), as above. */
+export function roleFromAudioUrl(url: string): string | null {
+  try {
+    return new URL(url).searchParams.get(ROLE_QUERY)?.trim() || null;
   } catch {
     return null;
   }

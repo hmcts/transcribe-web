@@ -49,9 +49,12 @@ vi.mock("@/providers/user-settings", () => ({
   useUserSettings: () => ({ user: { email: "a@example.test" } }),
 }));
 vi.mock("@/components/theme-toggle", () => ({ ThemeToggle: () => null }));
-vi.mock("@/lib/admin-access", () => ({
-  getAdminAccessStatus: vi.fn().mockResolvedValue("unauthorised"),
-}));
+// DIAAT-373: as a judge, the role whose permissions these screens are for.
+vi.mock("@/providers/access", async () =>
+  (await import("../access-helpers")).mockAccessModule(
+    (await import("../access-helpers")).ME.judge
+  )
+);
 vi.mock("@/hooks/use-media-query", () => ({ default: () => false }));
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 vi.mock("@/components/ui/start-new-recording-button", () => ({
@@ -163,10 +166,14 @@ describe("as an ET judge (DIAAT-330)", () => {
     mockCode = "ET";
     render(<Header />);
     expect(
-      screen.getAllByRole("link", { name: /go to dictation/i }).length
+      screen.getAllByRole("link", { name: /go to decisions/i }).length
     ).toBeGreaterThan(0);
     expect(screen.queryByRole("link", { name: /recordings/i })).toBeNull();
-    expect(document.body.textContent).not.toMatch(IAC_WORDS);
+    // The switcher names the jurisdiction the judge works in ("Employment
+    // Tribunal"), so the check is for IAC wording other than that.
+    expect(document.body.textContent).not.toMatch(
+      /hearing|immigration|asylum|appeal/i
+    );
   });
 
   it("the home page has no IAC wording and no hearing recordings button", () => {
@@ -188,7 +195,7 @@ describe("as an ET judge (DIAAT-330)", () => {
     mockCode = "ET";
     render(<HelpPage />);
     // The page heading, and the subtitle in the neutral wording.
-    expect(screen.getAllByText("Getting started with Bench Notes")).toHaveLength(2);
+    expect(screen.getAllByText("Getting started with BenchNotes")).toHaveLength(2);
     expect(screen.queryByText("Hearing Details Form")).toBeNull();
     expect(document.body.textContent).not.toMatch(
       /immigration|asylum|appellant|tribunal/i

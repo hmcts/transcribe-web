@@ -29,6 +29,13 @@ function isEnabled(value: string | undefined): boolean {
  * DIAAT-366: Dictation is switched off in prod (charts/transcribe-web/values.yaml).
  * Read at runtime, not build time, because CNP builds one image for every
  * environment. Anything but "false" leaves it on, so local dev and tests keep it.
+ *
+ * DIAAT-392: this is now the DEFAULT, not the decision. What decides is the
+ * system feature flag the API serves at `GET /api/flags` (changed in Admin >
+ * Feature flags, no redeploy), read by the UI (providers/runtime-flags.tsx) and by
+ * proxy.ts (lib/flags/proxy-flags.ts). This value is used until the flag has
+ * loaded and whenever it cannot be read, so the deployment's setting still
+ * applies if the API is unreachable.
  */
 export function isDictationEnabled(): boolean {
   return getEnv("NEXT_PUBLIC_DICTATION_ENABLED")?.toLowerCase() !== "false";

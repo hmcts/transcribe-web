@@ -23,10 +23,16 @@ import {
   getDictationFormSchema,
 } from "@/components/audio/dictation/formData";
 import {
-  SECTION_CONFIG,
+  type DictationSection,
+  fitTranscript,
+  IAC_SECTIONS,
+  SECTION_COLORS,
   type SectionedTranscript,
+  SINGLE_SECTION,
   type SpeechSessionReport,
+  sectionEntries,
   type TranscriptSection,
+  transcriptSize,
 } from "@/components/audio/dictation/types";
 import SimpleEditor from "@/components/editor/tiptap-editor";
 import submitHearingToast from "@/components/notifications/submitting-hearing";
@@ -64,7 +70,17 @@ import {
   trackDictationPage,
 } from "@/lib/dictation-session";
 import { liveDraftTelemetry } from "@/lib/live-draft-telemetry";
+import {
+  type DraftTemplate,
+  draftFormData,
+  fitToTemplate,
+  fromDraftFormData,
+  hasTranscript,
+  hasWork,
+  type RecordDraftWork,
+} from "@/lib/record-draft";
 import { fetchUserDocumentContent } from "@/lib/document-content-api";
+import { DECISIONS_HREF } from "@/lib/navigation";
 import {
   contentForJurisdiction,
   type DocumentContent,
@@ -82,24 +98,37 @@ import {
   SPEECH_FAILED_EARLIER_ALERT,
   SPEECH_NO_CONTENT_EARLIER_ALERT,
 } from "@/lib/speech-alerts";
-import cn from "@/lib/utils";
+import cn, { getJudgeNameFromEmail } from "@/lib/utils";
 import { useLeaveGuard } from "@/hooks/use-leave-guard";
 import { TemplateForm } from "@/components/audio/dictation/template-form";
 import {
   type AvailableTemplate,
   fetchAvailableTemplates,
+  fetchTemplateRevision,
   hasAnswers,
   missingValues,
+  ownValue,
   TemplateRefusedError,
   type TemplateValues,
   valuesToSend,
+  withPrefills,
 } from "@/lib/templates-api";
 
 const TEMPLATES_FAILED_TOAST = "templates-failed";
-const LEAVE_WITH_ANSWERS =
-  "Leave this page? Your hearing details answers will be lost: they are only kept when you submit the hearing.";
+const RESTORED_TEMPLATE_GONE_TOAST = "restored-template-gone";
+const STARTED_TEMPLATE_TOAST = "started-template";
+/** How soon after the judge stops typing their hearing details or notes the
+ * draft is saved (DIAAT-414); while recording, the 3-second interval saves. */
+const EDIT_SAVE_DELAY_MS = 1_000;
+const LEAVE_BEFORE_RESTORE =
+  "Leave this page? What you have entered is not saved until you restore or discard the unsaved work found from earlier.";
+/** Whether the page may save its work over the draft on the server (DIAAT-414):
+ * not while the lookup for an earlier draft is unanswered, nor while that draft
+ * is offered for restore. */
+type DraftLookup = "pending" | "offered" | "settled";
 import { useJurisdiction } from "@/providers/jurisdiction";
 import { useTranscripts } from "@/providers/transcripts";
+import { useUserSettings } from "@/providers/user-settings";
 
 function formatDraftDate(isoString: string): string {
   const savedDate = new Date(isoString);
@@ -187,16 +216,102 @@ export default function RecordPage() {
   const [templates, setTemplates] = useState<AvailableTemplate[]>([]);
   const [templateId, setTemplateId] = useState("");
   const [templateValues, setTemplateValues] = useState<TemplateValues>({});
+  // DIAAT-340: fields that start with the judge's name, as the IAC's form does.
+  const { user } = useUserSettings();
+  const judgeName = user?.email ? getJudgeNameFromEmail(user.email) : "";
+  const [templatesLoaded, setTemplatesLoaded] = useState(false);
+  // DIAAT-414: a restored template's answers, as saved, until the templates have
+  // loaded and they are fitted to it; or, if it is no longer offered, until the
+  // judge answers another. Meanwhile the draft keeps them as they were.
+  const [restoredTemplate, setRestoredTemplate] =
+    useState<DraftTemplate | null>(null);
+  // DIAAT-339: a restored draft's template as it was started with, once it has
+  // changed or been switched off: offered in its place (or as well) for this draft
+  // alone, until the judge chooses another.
+  const [startedTemplate, setStartedTemplate] =
+    useState<AvailableTemplate | null>(null);
+  // While that version loads, or after it could not be loaded: the form waits for
+  // it, so nothing is answered or submitted with another version meanwhile.
+  const [startedPending, setStartedPending] = useState<
+    "loading" | "failed" | null
+  >(null);
   const [templateErrors, setTemplateErrors] = useState<Record<string, string>>(
     {}
   );
+  const choosableTemplates = useMemo(() => {
+    if (!startedTemplate) return templates;
+    return templates.some((t) => t.id === startedTemplate.id)
+      ? templates.map((t) =>
+          t.id === startedTemplate.id ? startedTemplate : t
+        )
+      : [startedTemplate, ...templates];
+  }, [templates, startedTemplate]);
   const chosenTemplate =
-    templates.find((t) => t.id === templateId) ?? templates[0] ?? null;
-  const hasTemplateForm = !hasDecisionTemplate && chosenTemplate !== null;
+    choosableTemplates.find((t) => t.id === templateId) ??
+    choosableTemplates[0] ??
+    null;
+  // DIAAT-339: also while a restored draft's template loads, which may be one no
+  // longer offered: its status shows where Hearing details goes.
+  const hasTemplateForm =
+    !hasDecisionTemplate &&
+    (chosenTemplate !== null || startedPending !== null);
   // A form to fill and a hearing to submit, rather than text to copy out.
   const hasHearingForm = hasDecisionTemplate || hasTemplateForm;
+  // DIAAT-416: the sections the judge dictates into: the IAC decision's, or an
+  // uploaded template's dictated boxes when it has several, each by its box (so it
+  // keeps its dictation if the admin reorders them); else one, as before. What is
+  // dictated before the templates load joins the first (fitTranscript).
+  const templateSections = hasTemplateForm
+    ? chosenTemplate?.sections
+    : undefined;
+  const [restoredTranscript, setRestoredTranscript] = useState<
+    SectionedTranscript | undefined
+  >();
+  const dictationSections = useMemo<DictationSection[]>(() => {
+    if (hasDecisionTemplate) return IAC_SECTIONS;
+    // DIAAT-339: while the draft's template version loads (or could not be
+    // loaded), the sections its dictation was kept in, so nothing is moved out of
+    // them meanwhile. Named by their boxes until the template has loaded.
+    const kept = startedPending
+      ? Object.keys(restoredTranscript ?? {}).filter((key) =>
+          key.startsWith("box:")
+        )
+      : [];
+    if (kept.length > 0) {
+      return kept.map((key, index) => ({
+        key,
+        label: key.slice("box:".length),
+        color: SECTION_COLORS[index % SECTION_COLORS.length],
+      }));
+    }
+    if (!templateSections || templateSections.length < 2) return SINGLE_SECTION;
+    return templateSections.map((section, index) => ({
+      key: `box:${section.tag}`,
+      label: section.label,
+      color: SECTION_COLORS[index % SECTION_COLORS.length],
+    }));
+  }, [
+    hasDecisionTemplate,
+    templateSections,
+    startedPending,
+    restoredTranscript,
+  ]);
+  const hasSectionChoice = dictationSections.length > 1;
   const [sectionedTranscript, setSectionedTranscript] =
     useState<SectionedTranscript>(EMPTY_SECTIONED_TRANSCRIPT);
+  // What was dictated in the page's sections, for copying out and submitting:
+  // anything kept under another section (a draft from before the template
+  // changed, say) joins the first rather than being left out.
+  const fittedTranscript = useMemo(
+    () => fitTranscript(sectionedTranscript, dictationSections),
+    [sectionedTranscript, dictationSections]
+  );
+  // The section dictated into is one of the page's: its first when they change.
+  useEffect(() => {
+    if (!dictationSections.some((section) => section.key === activeSection)) {
+      setActiveSection(dictationSections[0].key);
+    }
+  }, [dictationSections, activeSection]);
   const [speechDemoKey, setSpeechDemoKey] = useState(0);
   const [notesEditorKey, setNotesEditorKey] = useState(0);
   // Reported up from the dictation component, which owns the Speech SDK
@@ -209,7 +324,6 @@ export default function RecordPage() {
   const [sessionHadNoContent, setSessionHadNoContent] = useState(false);
   const [postSessionNoticeDismissed, setPostSessionNoticeDismissed] =
     useState(false);
-  const [restoredTranscript, setRestoredTranscript] = useState<SectionedTranscript | undefined>();
   // DIAAT-296: a restore lookup that failed is not the same fact as "you have
   // no draft", and the two must never look alike on screen again.
   const [restoreFailureAlert, setRestoreFailureAlert] =
@@ -224,9 +338,53 @@ export default function RecordPage() {
   const [editorContent, setEditorContent] = useState(defaultNotes);
   const formScrollContainerRef = useRef<HTMLDivElement | null>(null);
   const restoreToastIdRef = useRef<string | number | undefined>(undefined);
+  // State for what the page shows and does, the ref for the save and switch
+  // handlers; set together.
+  const [draftLookup, setDraftLookupState] = useState<DraftLookup>("pending");
+  const draftLookupRef = useRef<DraftLookup>("pending");
+  const setDraftLookup = useCallback((next: DraftLookup) => {
+    draftLookupRef.current = next;
+    setDraftLookupState(next);
+  }, []);
+  const draftSettled = draftLookup === "settled";
   const hadDraftContentRef = useRef(false);
-  const sectionedTranscriptRef = useRef(sectionedTranscript);
-  const formDataRef = useRef(formData);
+  // DIAAT-414: everything of the judge's the draft keeps. The template answers
+  // are the restored ones while those are not yet fitted to their template.
+  const chosenTemplateId = chosenTemplate?.id ?? null;
+  const chosenTemplateRevision = chosenTemplate?.revision;
+  const work = useMemo<RecordDraftWork>(() => {
+    const template: DraftTemplate | null = hasDecisionTemplate
+      ? null
+      : (restoredTemplate ??
+        (chosenTemplateId === null
+          ? null
+          : {
+              id: chosenTemplateId,
+              values: templateValues,
+              revision: chosenTemplateRevision,
+            }));
+    return {
+      transcript: sectionedTranscript,
+      formData,
+      notes: editorContent,
+      defaultNotes,
+      templateId: template?.id ?? null,
+      templateValues: template?.values ?? {},
+      templateRevision: template?.revision,
+    };
+  }, [
+    sectionedTranscript,
+    formData,
+    editorContent,
+    defaultNotes,
+    hasDecisionTemplate,
+    restoredTemplate,
+    chosenTemplateId,
+    chosenTemplateRevision,
+    templateValues,
+  ]);
+  const pageHasWork = hasWork(work);
+  const workRef = useRef(work);
   const prevIsRecordingRef = useRef(false);
   const isDirtyRef = useRef(false);
   // True for 2s after recording stops — lets us catch transcript content
@@ -237,19 +395,17 @@ export default function RecordPage() {
   /**
    * The current draft, or null when there is nothing worth saving.
    *
-   * Returning null preserves the existing content gating: the page only writes
-   * once a transcript section is non-empty. That behaviour is deliberate and
-   * was confirmed in scope for DIAAT-297, so it is kept exactly as it was —
-   * only the handling of the *result* of a write changes in DIAAT-296.
+   * DIAAT-414: the draft holds all of the judge's work: the transcript, the
+   * hearing details, the notes and a template's answers, so none is lost when
+   * they leave the page or switch jurisdiction. An earlier draft is not written
+   * over until the lookup for it has answered and, if one was found, the judge
+   * restores or discards it (or starts recording, which leaves it behind, as
+   * before).
    */
   const getAutosavePayload = useCallback(() => {
-    const transcript = sectionedTranscriptRef.current;
-    const hasContent =
-      transcript.background.length > 0 ||
-      transcript.evidence.length > 0 ||
-      transcript.facts.length > 0;
-    if (!hasContent) return null;
-    return { transcript, formData: formDataRef.current };
+    const current = workRef.current;
+    if (draftLookupRef.current !== "settled" || !hasWork(current)) return null;
+    return { transcript: current.transcript, formData: draftFormData(current) };
   }, []);
 
   const {
@@ -267,33 +423,20 @@ export default function RecordPage() {
   useEffect(() => {
     isSubmittingRef.current = isSubmitting;
   }, [isSubmitting]);
-  // The draft holds the dictation, and the hearing form with it. Notes, and a form
-  // filled in before anything is dictated, are not saved, so they stop the switch
-  // rather than being lost with the tab.
-  const hasNotesRef = useRef(false);
-  useEffect(() => {
-    hasNotesRef.current =
-      normalizeOptionalEditorText(editorContent) !==
-      normalizeOptionalEditorText(defaultNotes);
-  }, [editorContent, defaultNotes]);
-  // DIAAT-344: a template's answers are not in the draft either.
-  const hasTemplateAnswersRef = useRef(false);
-  useEffect(() => {
-    hasTemplateAnswersRef.current = hasAnswers(templateValues);
-  }, [templateValues]);
+  // DIAAT-414: the draft holds all of the judge's work, so the switch saves it
+  // and goes ahead. Only work typed before an earlier draft is answered for is
+  // not saved (it would write over that draft): the switch waits for the lookup,
+  // and for the judge to restore or discard a draft it found.
   useEffect(
     () =>
       onBeforeJurisdictionSwitch(async () => {
         const checkNothingIsLost = () => {
           if (isSubmittingRef.current) throw new JurisdictionSwitchError("busy");
-          // The judge's name is filled in from their sign-in, here and again after
-          // the reload: only the hearing details are the judge's own work.
-          const { judgeName: _filledIn, ...entered } = formDataRef.current;
-          const { judgeName: _blank, ...blank } = defaultFormValues;
-          const unsavedForm =
-            getAutosavePayload() === null && JSON.stringify(entered) !== JSON.stringify(blank);
-          if (hasNotesRef.current || unsavedForm || hasTemplateAnswersRef.current) {
-            throw new JurisdictionSwitchError("unsaved");
+          const lookup = draftLookupRef.current;
+          if (lookup !== "settled" && hasWork(workRef.current)) {
+            throw new JurisdictionSwitchError(
+              lookup === "offered" ? "restore_pending" : "busy"
+            );
           }
         };
         // The page stays editable while the draft is saved: anything typed during
@@ -369,11 +512,15 @@ export default function RecordPage() {
       setTemplateId((id) =>
         list.some((t) => t.id === id) ? id : (list[0]?.id ?? "")
       );
+      setTemplatesLoaded(true);
     } catch (error) {
       if (request !== templatesRequest.current) return;
       // An API from before DIAAT-344 has no templates: the page works as before,
       // dictate and copy the text out.
-      if (error instanceof TemplateRefusedError && error.status === 404) return;
+      if (error instanceof TemplateRefusedError && error.status === 404) {
+        setTemplatesLoaded(true);
+        return;
+      }
       // Anything else is not "no templates": say so, with a way to try again. The
       // page still lets the judge dictate and copy the text out meanwhile.
       console.error("Failed to load templates", error);
@@ -436,13 +583,16 @@ export default function RecordPage() {
     return () => setIsRecording(false);
   }, [isRecordingActive, setIsRecording]);
 
-  // When the user starts a new recording, the restore offer is no longer relevant.
+  // When the user starts a new recording, the restore offer is no longer relevant:
+  // the recording is saved over the earlier draft, as before DIAAT-414.
   useEffect(() => {
-    if (isRecordingActive && restoreToastIdRef.current !== undefined) {
+    if (!isRecordingActive) return;
+    if (restoreToastIdRef.current !== undefined) {
       toast.dismiss(restoreToastIdRef.current);
       restoreToastIdRef.current = undefined;
     }
-  }, [isRecordingActive]);
+    setDraftLookup("settled");
+  }, [isRecordingActive, setDraftLookup]);
 
   // OBS-4: one dictation-session journey per visit; ends when the page is left.
   useEffect(() => trackDictationPage(), []);
@@ -456,32 +606,59 @@ export default function RecordPage() {
         console.debug("[live-draft] GET /api/live-draft");
         const draft = await getLiveDraft();
         console.debug("[live-draft] GET result:", draft ? `found (saved_at: ${draft.saved_at})` : "not found");
-        if (cancelled || !draft) return;
+        if (cancelled) return;
+        // None, or a recording started meanwhile and is saved over it.
+        if (!draft || draftLookupRef.current === "settled") {
+          setDraftLookup("settled");
+          return;
+        }
         // The backend hard-deletes a draft 24h after its last save, on read.
         // A judge who cannot get back in within a day loses the work
         // permanently, so say so while it can still be acted on (DIAAT-296).
         setDraftExpiryAlert(
           describeDraftExpiryAlert({ savedAt: draft.saved_at, now: Date.now() })
         );
+        const found = hasTranscript(draft.transcript) ? "Unsaved transcript" : "Unsaved work";
+        /** The offer is answered: closed, and the page's own work saved from now. */
+        const closeOffer = () => {
+          if (restoreToastIdRef.current !== undefined) toast.dismiss(restoreToastIdRef.current);
+          restoreToastIdRef.current = undefined;
+          setDraftLookup("settled");
+        };
+        setDraftLookup("offered");
         restoreToastIdRef.current = toast(
-          `Unsaved transcript found from ${formatDraftDate(draft.saved_at)}`,
+          `${found} found from ${formatDraftDate(draft.saved_at)}`,
           {
             action: {
               label: "Restore",
               onClick: () => {
-                const restoredFormData = { ...defaultFormValues, ...draft.form_data };
+                closeOffer();
+                const restored = fromDraftFormData(draft.form_data);
                 setSectionedTranscript(draft.transcript);
-                setFormData(restoredFormData);
+                setFormData(restored.formData);
                 setRestoredTranscript(draft.transcript);
                 setSpeechDemoKey(k => k + 1);
+                if (restored.notes !== null) {
+                  setEditorContent(restored.notes);
+                  setNotesEditorKey(k => k + 1);
+                }
+                // Fitted to its template once the templates have loaded (below).
+                if (restored.template) setRestoredTemplate(restored.template);
                 // Only now has a draft been restored (not when one was found).
                 liveDraftTelemetry.restoreSucceeded();
               },
             },
             cancel: {
               label: "Discard",
-              onClick: () => { void deleteDraft().catch(console.warn); },
+              onClick: () => {
+                // What was typed while the draft was offered is saved once it
+                // is deleted: saves wait for the delete.
+                closeOffer();
+                void deleteDraft().catch(console.warn);
+              },
             },
+            // Swiped away: no longer offered, so the page's own work is saved.
+            onDismiss: closeOffer,
             duration: Infinity,
           },
         );
@@ -498,6 +675,9 @@ export default function RecordPage() {
           status: error instanceof LiveDraftError ? error.status : undefined,
         });
         setRestoreFailureAlert(describeDraftRestoreAlert({ kind }));
+        // Whether there is an earlier draft is not known: the judge's work is
+        // saved rather than held back with nothing to answer.
+        setDraftLookup("settled");
       }
     })();
 
@@ -510,37 +690,139 @@ export default function RecordPage() {
         restoreToastIdRef.current = undefined;
       }
     };
-  }, [deleteDraft]);
+  }, [deleteDraft, setDraftLookup]);
 
-  // Delete the server draft immediately when all transcript sections are cleared,
-  // so stale drafts don't reappear on the next visit.
+  // DIAAT-414: restored answers are fitted to their template, once the templates
+  // have loaded: only answers its form can show and the API takes. DIAAT-339: the
+  // template as the draft started with it, even if it has changed or been switched
+  // off since; else (a draft from before then, or a version the API no longer
+  // gives) as it is now.
   useEffect(() => {
-    const hasContent =
-      sectionedTranscript.background.length > 0 ||
-      sectionedTranscript.evidence.length > 0 ||
-      sectionedTranscript.facts.length > 0;
+    if (!restoredTemplate || !templatesLoaded) return;
+    const restored = restoredTemplate;
+    const listed = templates.find((t) => t.id === restored.id);
+    const answerWith = (template: AvailableTemplate) => {
+      setTemplateId(template.id);
+      setTemplateValues(fitToTemplate(template, restored.values));
+      setRestoredTemplate(null);
+    };
+    const asItIsNow = () => {
+      if (!listed && !hasAnswers(restored.values)) {
+        // Only its dictation was kept: that is in the first section now.
+        setRestoredTemplate(null);
+        return;
+      }
+      if (!listed) {
+        toast.info(
+          "The template your saved answers were for is no longer offered. They stay saved until you answer another template.",
+          { id: RESTORED_TEMPLATE_GONE_TOAST }
+        );
+        return;
+      }
+      answerWith(listed);
+    };
+    // The listed one is the version it started with; or an API with no versions.
+    if (
+      !restored.revision ||
+      (listed && (!listed.revision || listed.revision === restored.revision))
+    ) {
+      asItIsNow();
+      return;
+    }
+    const revision = restored.revision;
+    let cancelled = false;
+    setStartedPending("loading");
+    fetchTemplateRevision(restored.id, revision).then(
+      (fetched) => {
+        if (cancelled) return;
+        const started = { ...fetched, revision: fetched.revision ?? revision };
+        setStartedPending(null);
+        setStartedTemplate(started);
+        answerWith(started);
+        toast.info(
+          listed
+            ? `${started.name} has changed since you started this draft. It keeps the version you started with.`
+            : `${started.name} is no longer offered for new documents. You can still finish this draft with it.`,
+          { id: STARTED_TEMPLATE_TOAST }
+        );
+      },
+      (error) => {
+        if (cancelled) return;
+        if (error instanceof TemplateRefusedError && error.status === 404) {
+          setStartedPending(null);
+          // Not a version the judge may use (or an API with none): as it is now.
+          asItIsNow();
+          return;
+        }
+        // Not known: the draft keeps its version and answers until it loads.
+        setStartedPending("failed");
+        console.error("The draft's template version could not be loaded", error);
+        toast.error(
+          "The template this draft was started with could not be loaded, so Hearing details is not shown.",
+          {
+            id: STARTED_TEMPLATE_TOAST,
+            duration: Number.POSITIVE_INFINITY,
+            action: {
+              label: "Try again",
+              onClick: () => setRestoredTemplate({ ...restored }),
+            },
+          }
+        );
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [restoredTemplate, templatesLoaded, templates]);
 
-    if (!hasContent) {
+  // Delete the server draft as soon as the page holds nothing of the judge's
+  // (the transcript cleared, the hearing details reset), so stale drafts don't
+  // reappear on the next visit.
+  useEffect(() => {
+    if (!pageHasWork) {
       if (hadDraftContentRef.current) {
         void deleteDraft().catch(err => console.warn("Failed to delete draft:", err));
       }
       hadDraftContentRef.current = false;
       return;
     }
+    // Not before an earlier draft is answered for: this page's work is not saved
+    // over it until then.
+    if (draftSettled) hadDraftContentRef.current = true;
+  }, [pageHasWork, draftSettled, deleteDraft]);
 
-    hadDraftContentRef.current = true;
-  }, [sectionedTranscript, deleteDraft]);
+  // Keep the ref in sync so interval/pause handlers always read latest values
+  // without restarting the interval on every change.
+  useEffect(() => {
+    workRef.current = work;
+    isDirtyRef.current = true;
+  }, [work]);
 
-  // Keep refs in sync so interval/pause handlers always read latest values
-  // without restarting the interval on every transcript/formData change.
+  // DIAAT-414: the page's work is saved shortly after it last changed (typed,
+  // or a transcript edited while paused), as the transcript is while recording.
+  const editSavePendingRef = useRef(false);
   useEffect(() => {
-    sectionedTranscriptRef.current = sectionedTranscript;
-    isDirtyRef.current = true;
-  }, [sectionedTranscript]);
-  useEffect(() => {
-    formDataRef.current = formData;
-    isDirtyRef.current = true;
-  }, [formData]);
+    editSavePendingRef.current = false;
+    // While recording the interval below saves; until an earlier draft is
+    // answered for, nothing is saved over it.
+    if (isRecordingActive || !draftSettled) return;
+    if (!isDirtyRef.current || !hasWork(work)) return;
+    editSavePendingRef.current = true;
+    const timer = setTimeout(() => {
+      editSavePendingRef.current = false;
+      if (!isDirtyRef.current || getAutosavePayload() === null) return;
+      isDirtyRef.current = false;
+      saveDraftNow("interval");
+    }, EDIT_SAVE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [work, isRecordingActive, draftSettled, getAutosavePayload, saveDraftNow]);
+  // The page left (in the app) before that moment had passed: saved as it closes.
+  useEffect(
+    () => () => {
+      if (editSavePendingRef.current) saveDraftNow("interval");
+    },
+    [saveDraftNow]
+  );
 
   // Save immediately when recording transitions from active → paused/stopped.
   useEffect(() => {
@@ -551,11 +833,7 @@ export default function RecordPage() {
     if (!prevIsRecordingRef.current) return;
     prevIsRecordingRef.current = false;
 
-    const hasContent =
-      sectionedTranscriptRef.current.background.length > 0 ||
-      sectionedTranscriptRef.current.evidence.length > 0 ||
-      sectionedTranscriptRef.current.facts.length > 0;
-    if (hasContent) {
+    if (getAutosavePayload() !== null) {
       isDirtyRef.current = false;
       saveDraftNow("pause");
     } else {
@@ -568,17 +846,13 @@ export default function RecordPage() {
     lateFinalisationWindowRef.current = true;
     const t = setTimeout(() => { lateFinalisationWindowRef.current = false; }, 2000);
     return () => clearTimeout(t);
-  }, [isRecordingActive, saveDraftNow]);
+  }, [isRecordingActive, getAutosavePayload, saveDraftNow]);
 
   // Catch transcript content that arrives after recording stopped (Azure SDK
   // finalises the last utterance asynchronously after stopTranscribingAsync).
   useEffect(() => {
     if (!lateFinalisationWindowRef.current) return;
-    const hasContent =
-      sectionedTranscript.background.length > 0 ||
-      sectionedTranscript.evidence.length > 0 ||
-      sectionedTranscript.facts.length > 0;
-    if (!hasContent) return;
+    if (transcriptSize(sectionedTranscript) === 0) return;
     lateFinalisationWindowRef.current = false;
     isDirtyRef.current = false;
     saveDraftNow("late-finalisation");
@@ -590,27 +864,18 @@ export default function RecordPage() {
     if (!isRecordingActive) return;
 
     const timer = setInterval(() => {
-      if (!isDirtyRef.current) return;
-      const hasContent =
-        sectionedTranscriptRef.current.background.length > 0 ||
-        sectionedTranscriptRef.current.evidence.length > 0 ||
-        sectionedTranscriptRef.current.facts.length > 0;
-      if (hasContent) {
-        isDirtyRef.current = false;
-        saveDraftNow("interval");
-      }
+      if (!isDirtyRef.current || getAutosavePayload() === null) return;
+      isDirtyRef.current = false;
+      saveDraftNow("interval");
     }, 3_000);
     return () => clearInterval(timer);
-  }, [isRecordingActive, saveDraftNow]);
+  }, [isRecordingActive, getAutosavePayload, saveDraftNow]);
 
+  // Closing the tab could cut off a save still to be made, so the browser asks.
+  // Leaving the page in the app needs no asking: the draft is saved as it goes,
+  // and once more as the page closes (DIAAT-414).
   useEffect(() => {
-    const hasContent =
-      sectionedTranscript.background.length > 0 ||
-      sectionedTranscript.evidence.length > 0 ||
-      sectionedTranscript.facts.length > 0 ||
-      // DIAAT-344: a template's answers are not in the draft, so nothing restores them.
-      hasAnswers(templateValues);
-    if (!hasContent) return;
+    if (!pageHasWork) return;
     const handler = (e: BeforeUnloadEvent) => {
       // Switching jurisdiction (DIAAT-332) saved the draft first: nothing is lost.
       if (isLeavingForJurisdictionSwitch()) return;
@@ -619,11 +884,14 @@ export default function RecordPage() {
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [sectionedTranscript, templateValues]);
+  }, [pageHasWork]);
 
-  // DIAAT-344: nothing restores a template's answers, so leaving the page in the
-  // app (a link, Back or Forward) asks first, as closing the tab does (above).
-  useLeaveGuard(hasAnswers(templateValues), LEAVE_WITH_ANSWERS);
+  // Until an earlier draft is restored or discarded, what is typed is not saved
+  // (it would be saved over that draft): a link in the app asks first. Not Back:
+  // its guard entry would outlive this short wait, and the recording's own.
+  useLeaveGuard(!draftSettled && pageHasWork, LEAVE_BEFORE_RESTORE, {
+    history: false,
+  });
 
   const handleCitationClick = useCallback((citationIndex: number) => {
     void citationIndex;
@@ -662,14 +930,14 @@ export default function RecordPage() {
       toast.info("Pause recording before you clear the dictation.");
       return;
     }
-    if (dictationText(sectionedTranscript, editorContent) !== copiedTextRef.current) {
+    if (dictationText(fittedTranscript, editorContent) !== copiedTextRef.current) {
       toast.info(
         "You have added to the dictation since you copied it. Copy it again before you clear it."
       );
       return;
     }
-    // The draft of this page's dictation, if it had any. Notes alone are never
-    // saved, so an earlier draft offered for restore is left for the judge.
+    // The draft of this page's dictation, if it had any. An earlier draft still
+    // offered for restore is left for the judge.
     const hadDraft = hadDraftContentRef.current;
     // Deleted once, here, so a failure can be told: not by the emptied-transcript
     // effect as well.
@@ -694,7 +962,7 @@ export default function RecordPage() {
     }
   }, [
     isRecordingActive,
-    sectionedTranscript,
+    fittedTranscript,
     editorContent,
     deleteDraft,
     defaultNotes,
@@ -709,7 +977,7 @@ export default function RecordPage() {
 
   /** DIAAT-333: the text, to paste into the judge's own document. */
   const handleCopyText = useCallback(async () => {
-    const text = dictationText(sectionedTranscript, editorContent);
+    const text = dictationText(fittedTranscript, editorContent);
     if (!text) {
       toast.info("There is nothing to copy yet.");
       return;
@@ -717,7 +985,7 @@ export default function RecordPage() {
     try {
       await copyToClipboard(
         text,
-        dictationHtml(sectionedTranscript, editorContent)
+        dictationHtml(fittedTranscript, editorContent)
       );
       copiedTextRef.current = text;
       toast.success("Copied. Paste it into your document.", {
@@ -730,14 +998,22 @@ export default function RecordPage() {
     } catch {
       toast.error("Could not copy. Select the text and copy it instead.");
     }
-  }, [sectionedTranscript, editorContent]);
+  }, [fittedTranscript, editorContent]);
 
   const handleSubmitHearing = useCallback(async () => {
     let buildBody: () => string;
     if (!hasDecisionTemplate) {
-      // DIAAT-344: the chosen template, filled with the judge's values.
+      // DIAAT-344: the chosen template, filled with the judge's values. Not while
+      // a restored draft's answers wait for their template (DIAAT-339).
+      if (startedPending) {
+        toast.error(
+          "Hearing details are not ready yet: wait for the draft's template to load, then submit again."
+        );
+        return;
+      }
       if (!chosenTemplate) return;
-      const missing = missingValues(chosenTemplate, templateValues);
+      const answers = withPrefills(chosenTemplate, templateValues, judgeName);
+      const missing = missingValues(chosenTemplate, answers);
       setTemplateErrors(missing);
       if (Object.keys(missing).length > 0) {
         toast.error(
@@ -745,11 +1021,31 @@ export default function RecordPage() {
         );
         return;
       }
+      // DIAAT-416: with several sections, each one's dictation by its box, so it
+      // goes in that box alone; and all of it, in order, as before.
+      const sectionsByBox =
+        hasSectionChoice && templateSections
+          ? Object.fromEntries(
+              templateSections.map((section, index) => [
+                section.tag,
+                sectionEntries(fittedTranscript, dictationSections[index].key),
+              ])
+            )
+          : undefined;
       buildBody = () =>
         JSON.stringify({
           template_id: chosenTemplate.id,
-          values: valuesToSend(chosenTemplate, templateValues),
-          messages: sectionedTranscript,
+          // DIAAT-339: the version the work was started with makes the document.
+          ...(chosenTemplate.revision && {
+            template_revision: chosenTemplate.revision,
+          }),
+          values: valuesToSend(chosenTemplate, answers),
+          messages: {
+            background: dictationSections.flatMap((section) =>
+              sectionEntries(fittedTranscript, section.key)
+            ),
+          },
+          ...(sectionsByBox && { sections: sectionsByBox }),
           notes: normalizeOptionalEditorText(editorContent),
         });
     } else {
@@ -794,7 +1090,7 @@ export default function RecordPage() {
             form_data: asksLegalIssues
               ? formValues
               : { ...formValues, legalIssues: [] },
-            messages: sectionedTranscript,
+            messages: fittedTranscript,
             notes: normalizeOptionalEditorText(editorContent),
           })
         );
@@ -876,7 +1172,7 @@ export default function RecordPage() {
         // draft, to be offered for restore on the next visit.
         await stopDraftSaves();
         await deleteLiveDraft().catch(console.warn);
-        router.push("/");
+        router.push(DECISIONS_HREF);
         return data;
       } catch (error) {
         // Not after a reported success (clean-up after it failed instead).
@@ -899,7 +1195,10 @@ export default function RecordPage() {
     submitHearingToast(submissionPromise);
   }, [
     formData,
-    sectionedTranscript,
+    fittedTranscript,
+    dictationSections,
+    hasSectionChoice,
+    templateSections,
     router,
     editorContent,
     mode,
@@ -912,6 +1211,8 @@ export default function RecordPage() {
     hasDecisionTemplate,
     chosenTemplate,
     templateValues,
+    judgeName,
+    startedPending,
   ]);
 
   // Only "healthy" counts as recording. `isRecordingActive` is intent; a
@@ -938,10 +1239,7 @@ export default function RecordPage() {
     setSessionHadNoContent(false);
     setPostSessionNoticeDismissed(false);
   }, [isRecordingActive]);
-  const transcriptIsEmpty =
-    sectionedTranscript.background.length === 0 &&
-    sectionedTranscript.evidence.length === 0 &&
-    sectionedTranscript.facts.length === 0;
+  const transcriptIsEmpty = transcriptSize(sectionedTranscript) === 0;
   const showPostSessionNotice = !isRecordingActive && !postSessionNoticeDismissed;
 
   // One banner for the whole page. DIAAT-296 adds its autosave alerts to this
@@ -1037,10 +1335,9 @@ export default function RecordPage() {
     <div
       role="group"
       aria-label="Transcript section"
-      className="inline-flex h-10 overflow-hidden rounded-md border border-border bg-muted p-1"
+      className="inline-flex h-10 max-w-full overflow-x-auto rounded-md border border-border bg-muted p-1"
     >
-      {(Object.keys(SECTION_CONFIG) as TranscriptSection[]).map((section) => {
-        const config = SECTION_CONFIG[section];
+      {dictationSections.map(({ key: section, ...config }) => {
         return (
           <button
             key={section}
@@ -1068,10 +1365,7 @@ export default function RecordPage() {
     </div>
   );
 
-  const hasTranscriptContent =
-    sectionedTranscript.background.length > 0 ||
-    sectionedTranscript.evidence.length > 0 ||
-    sectionedTranscript.facts.length > 0;
+  const hasTranscriptContent = transcriptSize(sectionedTranscript) > 0;
 
   const saveStatus = describeSaveStatus({
     state: autosaveState,
@@ -1119,25 +1413,55 @@ export default function RecordPage() {
       documentContent={documentContent}
       legalIssuesFallback={legalIssuesFallback}
     />
+  ) : startedPending ? (
+    // DIAAT-339: the draft's answers are for the version it started with.
+    <p role="status" className="text-sm text-muted-foreground">
+      {startedPending === "loading"
+        ? "Loading the template this draft was started with"
+        : "The template this draft was started with could not be loaded."}
+    </p>
   ) : chosenTemplate ? (
     <TemplateForm
-      templates={templates}
+      templates={choosableTemplates}
       templateId={chosenTemplate.id}
       onTemplateChange={(id) => {
-        // Another template's fields differ: its answers start empty.
+        // Another template's fields differ: its answers start empty. So do
+        // answers kept for a template no longer offered (DIAAT-414).
+        const keptAnswers =
+          restoredTemplate !== null && hasAnswers(restoredTemplate.values);
         if (
-          hasAnswers(templateValues) &&
+          (hasAnswers(templateValues) || keptAnswers) &&
           !window.confirm(
-            "Choose another template? Your answers to this one will be cleared."
+            keptAnswers
+              ? "Choose another template? Your saved answers for a template no longer offered will be cleared."
+              : "Choose another template? Your answers to this one will be cleared."
           )
         )
           return;
         setTemplateId(id);
         setTemplateValues({});
         setTemplateErrors({});
+        setRestoredTemplate(null);
+        // Another template: the draft's earlier version is no longer offered.
+        setStartedTemplate(null);
+        toast.dismiss(STARTED_TEMPLATE_TOAST);
       }}
       values={templateValues}
-      onValuesChange={setTemplateValues}
+      judgeName={judgeName}
+      onValuesChange={(values) => {
+        // Answering this template: answers kept for one no longer offered go.
+        setRestoredTemplate(null);
+        // A field the judge changed is no longer what the last submit said of it
+        // (DIAAT-340: a date corrected); a typed date is checked as they move on.
+        setTemplateErrors((errors) =>
+          Object.fromEntries(
+            Object.entries(errors).filter(
+              ([tag]) => ownValue(values, tag) === ownValue(templateValues, tag)
+            )
+          )
+        );
+        setTemplateValues(values);
+      }}
       errors={templateErrors}
       onClear={() => {
         setTemplateValues({});
@@ -1221,8 +1545,8 @@ export default function RecordPage() {
             <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
               {recordingControl}
 
-              {layoutMode !== "mobile" && hasDecisionTemplate && (
-                <div className="shrink-0">{sectionTabs}</div>
+              {layoutMode !== "mobile" && hasSectionChoice && (
+                <div className="max-w-full shrink-0">{sectionTabs}</div>
               )}
 
               {layoutMode === "mobile" && (
@@ -1258,8 +1582,8 @@ export default function RecordPage() {
 
               {layoutMode === "mobile" &&
                 activeView === "transcript" &&
-                hasDecisionTemplate && (
-                  <div className="shrink-0">{sectionTabs}</div>
+                hasSectionChoice && (
+                  <div className="max-w-full shrink-0">{sectionTabs}</div>
                 )}
             </div>
 
@@ -1356,7 +1680,7 @@ export default function RecordPage() {
                       >
                         <div className="flex h-full min-h-0 flex-col overflow-hidden px-4 pb-6 sm:px-6">
                           <p className="mb-2 text-xs text-muted-foreground">
-                            Your transcript is automatically saved as you dictate and can be restored within 24 hours if you leave this page.
+                            Your transcript, hearing details and notes are saved automatically and can be restored within 24 hours if you leave this page.
                           </p>
                           <div className="flex h-full min-h-0 flex-col overflow-hidden">
                             <SpeechDemo
@@ -1372,7 +1696,8 @@ export default function RecordPage() {
                               onSpeechSessionChange={setSpeechReport}
                               showRecordingControls={false}
                               showSectionTabs={false}
-                              showSectionNames={hasDecisionTemplate}
+                              showSectionNames={hasSectionChoice}
+                              sections={dictationSections}
                               embedded
                               className="min-h-0 flex-1"
                             />
@@ -1424,7 +1749,7 @@ export default function RecordPage() {
                   >
                     <div className="flex h-full min-h-0 flex-col overflow-hidden px-4 py-6">
                       <p className="mb-2 text-xs text-muted-foreground">
-                        Your transcript is automatically saved as you dictate and can be restored within 24 hours if you leave this page.
+                        Your transcript, hearing details and notes are saved automatically and can be restored within 24 hours if you leave this page.
                       </p>
                       <SpeechDemo
                         key={speechDemoKey}
@@ -1439,7 +1764,8 @@ export default function RecordPage() {
                         onSpeechSessionChange={setSpeechReport}
                         showRecordingControls={false}
                         showSectionTabs={false}
-                        showSectionNames={hasDecisionTemplate}
+                        showSectionNames={hasSectionChoice}
+                        sections={dictationSections}
                         embedded
                         className="min-h-0 flex-1"
                       />

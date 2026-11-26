@@ -55,6 +55,25 @@ describe("apiClient.request — success", () => {
     expect(result.error).toBeUndefined();
   });
 
+  it("returns a file as a Blob, not parsed as JSON, with as: blob (DIAAT-346)", async () => {
+    const file = new Blob(["docx bytes"]);
+    const response = {
+      ...jsonResponse(null),
+      blob: vi.fn().mockResolvedValue(file),
+    };
+    mockFetch.mockResolvedValueOnce(response);
+
+    const result = await apiClient.request<Blob>(
+      "/admin/jurisdictions/ET/templates/t1/preview",
+      { method: "POST", body: "{}" },
+      { as: "blob" }
+    );
+
+    expect(result.data).toBe(file);
+    expect(response.blob).toHaveBeenCalled();
+    expect(response.json).not.toHaveBeenCalled();
+  });
+
   it("constructs the correct URL from base + endpoint", async () => {
     mockFetch.mockResolvedValueOnce(jsonResponse({}));
 
@@ -115,6 +134,58 @@ describe("apiClient.request — HTTP errors", () => {
     const result = await apiClient.request("/protected");
 
     expect(result.error).toContain("Authentication failed");
+  });
+
+  it("keeps the code of a 401 in the API's {code, message} shape, with the web's own words", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockResolvedValue({
+        detail: { code: "invalid_token", message: "The token is not valid." },
+      }),
+    });
+
+    const result = await apiClient.request("/protected");
+
+    expect(result).toMatchObject({ status: 401, code: "invalid_token" });
+    expect(result.error).toContain("Authentication failed");
+  });
+
+  it("still answers a 401 whose body is not JSON", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 401,
+      statusText: "Unauthorized",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockRejectedValue(new SyntaxError("not json")),
+    });
+
+    const result = await apiClient.request("/protected");
+
+    expect(result.status).toBe(401);
+    expect(result.code).toBeUndefined();
+  });
+
+  it("reads the message of a 409 edit_conflict in the {code, message} shape, never [object Object]", async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      statusText: "Conflict",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockResolvedValue({
+        detail: { code: "edit_conflict", message: "Someone else changed this: reload and try again." },
+      }),
+    });
+
+    const result = await apiClient.request("/admin/jurisdictions/IAC", { method: "PUT" });
+
+    expect(result).toMatchObject({
+      error: "Someone else changed this: reload and try again.",
+      status: 409,
+      code: "edit_conflict",
+    });
   });
 
   it("returns an error object for a 405 response", async () => {
@@ -205,6 +276,39 @@ describe("apiClient.request — HTTP errors", () => {
       code: "template_not_ready",
       problems: ["The box “Costs” (Costs) has no field linked to it."],
     });
+  });
+
+  it("reads a refusal as JSON even when asked for a file (DIAAT-346)", async () => {
+    const blob = vi.fn();
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      headers: { get: vi.fn().mockReturnValue(null) },
+      json: vi.fn().mockResolvedValue({
+        detail: {
+          code: "template_values_invalid",
+          message: "The hearing details do not fit the template.",
+          problems: ["Hearing date must be a date."],
+        },
+      }),
+      blob,
+    });
+
+    const result = await apiClient.request(
+      "/admin/jurisdictions/ET/templates/t1/preview",
+      { method: "POST", body: "{}" },
+      { as: "blob" }
+    );
+
+    expect(result).toMatchObject({
+      error: "The hearing details do not fit the template.",
+      status: 400,
+      code: "template_values_invalid",
+      problems: ["Hearing date must be a date."],
+    });
+    expect(result.data).toBeUndefined();
+    expect(blob).not.toHaveBeenCalled();
   });
 
   it("has no code for a refusal that gives none", async () => {

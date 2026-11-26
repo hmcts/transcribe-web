@@ -11,6 +11,7 @@ import {
   unauthenticated,
 } from "@/lib/recording/raw-upload";
 import { BASELINE_UPLOAD_TYPES } from "@/lib/recording/upload-contract";
+import { identityRefusalResponse } from "@/lib/recording/identity-refusal";
 
 // The transcript page sends the baseline transcript as the raw request body,
 // as exactly application/octet-stream, with its name, size and type in
@@ -44,6 +45,8 @@ export async function POST(request: NextRequest, { params }: RouteContext) {
     const job = await uploadBaselineTranscript(jobId, upload.file, auth);
     return NextResponse.json({ job });
   } catch (err) {
+    const refusal = identityRefusalResponse(err);
+    if (refusal) return refusal;
     if (upload.sizeMismatch()) {
       console.error(
         `Rejected baseline body that does not match its declared size of ${upload.file.size} bytes`

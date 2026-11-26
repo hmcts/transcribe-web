@@ -1,10 +1,10 @@
 "use client";
 
 import { RefreshCcwIcon } from "lucide-react";
-import { useId } from "react";
+import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { DatePicker } from "@/components/ui/date-picker";
+import { DateInput } from "@/components/ui/date-input";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -17,12 +17,15 @@ import {
 } from "@/components/ui/select";
 import {
   type AvailableTemplate,
+  dateFormatMessage,
   hasAnswers,
   ownValue,
   type TemplateFormField,
   type TemplateValue,
   type TemplateValues,
+  withPrefills,
 } from "@/lib/templates-api";
+import { DATE_FORMAT_HINT, isIsoDate } from "@/lib/typed-date";
 
 /**
  * The Hearing Details form of an uploaded template (DIAAT-344): the judge chooses one
@@ -55,6 +58,8 @@ export function TemplateForm({
   onValuesChange,
   errors,
   onClear,
+  headingLevel = 2,
+  judgeName = "",
 }: {
   templates: AvailableTemplate[];
   templateId: string;
@@ -64,15 +69,23 @@ export function TemplateForm({
   errors: Record<string, string>;
   /** Discard every answer (a dropdown or yes/no cannot be unanswered otherwise). */
   onClear: () => void;
+  /** Its heading's level: 5 inside the admin area's preview (DIAAT-346). */
+  headingLevel?: 2 | 5;
+  /** The signed-in judge's name, for the fields that start with it (DIAAT-340). */
+  judgeName?: string;
 }) {
   const template = templates.find((t) => t.id === templateId) ?? templates[0];
+  const Heading = headingLevel === 5 ? "h5" : "h2";
   const set = (tag: string, value: TemplateValue | undefined) =>
     onValuesChange({ ...values, [tag]: value });
+  // The judge's own answers, and the name in each field that starts with it until
+  // they change it: it is not an answer of theirs until then.
+  const shownValues = withPrefills(template, values, judgeName);
 
   return (
     <form className="space-y-6" noValidate onSubmit={(e) => e.preventDefault()}>
       <div className="flex items-center justify-between gap-2">
-        <h2 className="text-lg font-semibold">Hearing details</h2>
+        <Heading className="text-lg font-semibold">Hearing details</Heading>
         {hasAnswers(values) && (
           <Button type="button" variant="ghost" size="sm" onClick={onClear}>
             <RefreshCcwIcon className="mr-1 h-4 w-4" aria-hidden />
@@ -106,7 +119,7 @@ export function TemplateForm({
         <TemplateFieldInput
           key={`${template.id}:${field.tag}`}
           field={field}
-          value={ownValue(values, field.tag)}
+          value={ownValue(shownValues, field.tag)}
           error={ownValue(errors, field.tag)}
           onChange={(value) => set(field.tag, value)}
         />
@@ -118,7 +131,7 @@ export function TemplateForm({
 function TemplateFieldInput({
   field,
   value,
-  error,
+  error: givenError,
   onChange,
 }: {
   field: TemplateFormField;
@@ -128,6 +141,17 @@ function TemplateFieldInput({
 }) {
   // Not from the tag, which can hold spaces (an ID reference list would split it).
   const id = useId();
+  // DIAAT-340: a typed date that is not one, once the judge moves on from it.
+  const [leftDate, setLeftDate] = useState(false);
+  const error =
+    givenError ??
+    (leftDate &&
+    field.type === "date" &&
+    typeof value === "string" &&
+    value.trim() !== "" &&
+    !isIsoDate(value)
+      ? dateFormatMessage(field.label)
+      : undefined);
   const errorId = `${id}-error`;
   const labelId = `${id}-label`;
   const a11y = {
@@ -220,13 +244,25 @@ function TemplateFieldInput({
     <div className="space-y-2">
       {label}
       {field.type === "date" ? (
-        <DatePicker
-          id={id}
-          label={field.label}
-          value={typeof value === "string" ? value : ""}
-          onChange={(v) => onChange(v || undefined)}
-          {...a11y}
-        />
+        <>
+          <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+            {DATE_FORMAT_HINT}
+          </p>
+          <DateInput
+            id={id}
+            label={field.label}
+            value={typeof value === "string" ? value : undefined}
+            onChange={(v) => {
+              setLeftDate(false);
+              onChange(v);
+            }}
+            onBlur={() => setLeftDate(true)}
+            hintId={`${id}-hint`}
+            errorId={error ? errorId : undefined}
+            aria-invalid={a11y["aria-invalid"]}
+            aria-required={a11y["aria-required"]}
+          />
+        </>
       ) : field.type === "dropdown" ? (
         <Select
           value={typeof value === "string" ? value : ""}

@@ -28,6 +28,31 @@ vi.mock("openid-client", () => oidc);
 
 const APP = "https://transcribe.example";
 
+/**
+ * The API's `POST /api/auth/session` (DIAAT-373): turns the Entra ID token it
+ * is sent into a BenchNotes token, here "app-for-<ID token>", so a test can tell
+ * which one a call carried.
+ */
+const mint = vi.hoisted(() => vi.fn());
+function mintFor(authorization: string | null) {
+  const idToken = authorization?.replace(/^Bearer /, "") ?? "none";
+  return new Response(
+    JSON.stringify({
+      token: `app-for-${idToken}`,
+      expires_at: new Date(Date.now() + 300_000).toISOString(),
+      me: {
+        user: { id: "u-1", email: "a@localhost.test", name: "A" },
+        status: "ready",
+        assignments: [],
+        active: null,
+        permissions: [],
+        pending_requests: [],
+      },
+    }),
+    { status: 200, headers: { "Content-Type": "application/json" } }
+  );
+}
+
 function tokens(
   idToken: string,
   expSecondsFromNow = 3600,
@@ -57,6 +82,12 @@ function req(path: string, cookies: Record<string, string> = {}) {
 }
 
 beforeEach(async () => {
+  mint.mockReset();
+  mint.mockImplementation(async (_url: string, init?: RequestInit) =>
+    mintFor(new Headers(init?.headers).get("authorization"))
+  );
+  vi.stubGlobal("fetch", mint);
+  vi.stubEnv("BACKEND_INTERNAL_URL", "http://api.internal");
   vi.stubEnv("AUTH_ENABLED", "true");
   vi.stubEnv("APP_URL", APP);
   vi.stubEnv("AZURE_AD_TENANT_ID", "tenant-1");
@@ -69,6 +100,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
   vi.clearAllMocks();
 });
 
@@ -155,7 +187,11 @@ describe("GET /auth/callback", () => {
       expectedNonce: "nonce-1",
     });
     const { bearerForSession } = await import("@/lib/auth/session");
-    await expect(bearerForSession(sessionId)).resolves.toBe("id-token-1");
+    // The API is sent the Entra ID token once, to mint; the session then holds
+    // the BenchNotes token, which is what every call carries.
+    expect(mint).toHaveBeenCalledTimes(1);
+    expect(mint.mock.calls[0][0]).toBe("http://api.internal/api/auth/session");
+    await expect(bearerForSession(sessionId)).resolves.toBe("app-for-id-token-1");
   });
 
   it("rejects a callback whose state is not bound to this browser (login CSRF)", async () => {
@@ -234,7 +270,7 @@ describe("GET /auth/forward (Caddy forward_auth)", () => {
       req("/auth/forward", { transcribe_session: "sess-1" })
     );
     expect(res.status).toBe(200);
-    expect(res.headers.get("authorization")).toBe("Bearer id-token-1");
+    expect(res.headers.get("authorization")).toBe("Bearer app-for-id-token-1");
     expect(res.headers.get("cache-control")).toBe("no-store");
   });
 
@@ -254,7 +290,7 @@ describe("GET /auth/forward (Caddy forward_auth)", () => {
     const res = await GET(
       req("/auth/forward", { transcribe_session: "sess-1" })
     );
-    expect(res.headers.get("authorization")).toBe("Bearer new-token");
+    expect(res.headers.get("authorization")).toBe("Bearer app-for-new-token");
     expect(oidc.refreshTokenGrant.mock.calls[0][1]).toBe("refresh-1");
   });
 
@@ -280,7 +316,7 @@ describe("GET /auth/forward (Caddy forward_auth)", () => {
 });
 
 describe("app access roles (AUTH_ACCESS_ROLES)", () => {
-  const ROLES = "Judge,LegalTextManager,SystemAdministrator,Normal";
+  const ROLES = "Judge,LegalTextManager,SystemAdministrator";
 
   async function startLogin() {
     const { GET } = await import("@/app/auth/login/route");
@@ -335,7 +371,7 @@ describe("app access roles (AUTH_ACCESS_ROLES)", () => {
 
   it("ignores roles outside the list and blank entries", async () => {
     vi.stubEnv("AUTH_ACCESS_ROLES", " Judge, ,LegalTextManager ");
-    const res = await callback(["Normal", "SomethingElse"]);
+    const res = await callback(["Viewer", "SomethingElse"]);
     expect(res.status).toBe(403);
   });
 
@@ -376,7 +412,7 @@ describe("app access roles (AUTH_ACCESS_ROLES)", () => {
 
     const res = await forward();
 
-    expect(res.headers.get("authorization")).toBe("Bearer id-token-1");
+    expect(res.headers.get("authorization")).toBe("Bearer app-for-id-token-1");
   });
 });
 

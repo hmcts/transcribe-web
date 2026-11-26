@@ -23,9 +23,9 @@ describe("proxy login gate", () => {
   afterEach(() => vi.unstubAllEnvs());
 
   describe("when login is enabled (AUTH_ENABLED=true)", () => {
-    it("sends a page request without a session to /auth/login, keeping where it was going", () => {
+    it("sends a page request without a session to /auth/login, keeping where it was going", async () => {
       vi.stubEnv("AUTH_ENABLED", "true");
-      const res = proxy(request("/recording/jobs/abc?tab=2"));
+      const res = await proxy(request("/recording/jobs/abc?tab=2"));
       const location = new URL(res.headers.get("location") ?? "");
       expect(location.pathname).toBe("/auth/login");
       expect(location.searchParams.get("returnTo")).toBe(
@@ -33,14 +33,16 @@ describe("proxy login gate", () => {
       );
     });
 
-    it("lets a request with a session through", () => {
+    it("lets a request with a session through", async () => {
       vi.stubEnv("AUTH_ENABLED", "true");
       expect(
-        proxy(request("/recording", { session: true })).headers.get("location")
+        (await proxy(request("/recording", { session: true }))).headers.get(
+          "location"
+        )
       ).toBeNull();
     });
 
-    it("gates every page, including the dictation home and information pages", () => {
+    it("gates every page, including the dictation home and information pages", async () => {
       vi.stubEnv("AUTH_ENABLED", "true");
       for (const path of [
         "/",
@@ -50,28 +52,29 @@ describe("proxy login gate", () => {
         "/privacy",
         "/help",
       ]) {
-        expect(proxy(request(path)).headers.get("location"), path).toContain(
-          "/auth/login"
-        );
+        expect(
+          (await proxy(request(path))).headers.get("location"),
+          path
+        ).toContain("/auth/login");
       }
     });
 
-    it("answers the recording area's own /api/* routes with 401, not a redirect", () => {
+    it("answers the recording area's own /api/* routes with 401, not a redirect", async () => {
       vi.stubEnv("AUTH_ENABLED", "true");
-      const res = proxy(request("/api/jobs"));
+      const res = await proxy(request("/api/jobs"));
       expect(res.status).toBe(401);
       expect(res.headers.get("location")).toBeNull();
     });
 
-    it("does not accept an old Easy Auth cookie as a session", () => {
+    it("does not accept an old Easy Auth cookie as a session", async () => {
       vi.stubEnv("AUTH_ENABLED", "true");
-      const res = proxy(
+      const res = await proxy(
         request("/recording", { cookie: ["AppServiceAuthSession", "x"] })
       );
       expect(res.headers.get("location")).toContain("/auth/login");
     });
 
-    it("leaves the login routes, health and static assets open", () => {
+    it("leaves the login routes, health and static assets open", async () => {
       vi.stubEnv("AUTH_ENABLED", "true");
       for (const path of [
         "/auth/login",
@@ -83,16 +86,22 @@ describe("proxy login gate", () => {
         "/env-config.js",
         "/images/crest.png",
       ]) {
-        expect(proxy(request(path)).headers.get("location"), path).toBeNull();
+        expect(
+          (await proxy(request(path))).headers.get("location"),
+          path
+        ).toBeNull();
       }
     });
   });
 
   describe("when login is disabled (local development, preview)", () => {
-    it("gates nothing", () => {
+    it("gates nothing", async () => {
       vi.stubEnv("AUTH_ENABLED", "false");
       for (const path of ["/", "/recording/jobs/abc", "/admin"]) {
-        expect(proxy(request(path)).headers.get("location"), path).toBeNull();
+        expect(
+          (await proxy(request(path))).headers.get("location"),
+          path
+        ).toBeNull();
       }
     });
   });
@@ -102,5 +111,53 @@ describe("proxy login gate", () => {
       expect(isPublicPath("/author")).toBe(false);
       expect(isPublicPath("/admin/auth-settings")).toBe(false);
     });
+  });
+});
+
+describe("the proxy matcher", () => {
+  it("skips the two upload routes, which stream large bodies and must not be buffered by Next.js", async () => {
+    const { config } = await import("@/proxy");
+    const [{ source }] = config.matcher as { source: string }[];
+    const runsOn = (path: string) => new RegExp(`^${source}$`).test(path);
+
+    expect(runsOn("/api/upload")).toBe(false);
+    expect(runsOn("/api/upload-audio")).toBe(false);
+    // Anything else, including a path that only starts like them, still goes through the proxy.
+    expect(runsOn("/api/upload-audio/extra")).toBe(true);
+    expect(runsOn("/api/uploads")).toBe(true);
+    expect(runsOn("/api/jobs")).toBe(true);
+    expect(runsOn("/admin")).toBe(true);
+  });
+});
+
+describe("the proxy redirects on the public origin", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  // Behind Caddy the request arrives on the internal 127.0.0.1:3001; the browser must not be sent there.
+  const internal = (path: string) => new NextRequest(`http://127.0.0.1:3001${path}`);
+
+  it.each([
+    ["login on", { AUTH_ENABLED: "true" }, "/auth/login"],
+    ["a preview", { AUTH_ENABLED: "false", PREVIEW_USER_SIGN_IN: "true" }, "/auth/preview-login"],
+  ])("sends %s to its sign-in on APP_URL", async (_name, env, path) => {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value);
+    vi.stubEnv("APP_URL", "https://transcribe.example");
+
+    const res = await proxy(internal("/recording"));
+
+    const location = new URL(res.headers.get("location") ?? "");
+    expect(location.origin).toBe("https://transcribe.example");
+    expect(location.pathname).toBe(path);
+    expect(location.searchParams.get("returnTo")).toBe("/recording");
+  });
+
+  it("without APP_URL (local development) keeps the request's own origin", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    vi.stubEnv("APP_URL", "");
+
+    const req = internal("/recording");
+    const res = await proxy(req);
+
+    expect(new URL(res.headers.get("location") ?? "").origin).toBe(new URL(req.url).origin);
   });
 });

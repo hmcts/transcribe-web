@@ -1,4 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
+import {
+  BackendError,
+  backendErrorCode,
+  mintAppToken,
+  withToken,
+} from "@/lib/auth/app-token";
 import { getAuthConfig } from "@/lib/auth/config";
 import { completeLogin } from "@/lib/auth/oidc";
 import {
@@ -83,6 +89,34 @@ export async function GET(request: NextRequest) {
       "You do not have access to BenchNotes. Ask your BenchNotes administrator to add you."
     );
   }
+
+  // The API turns the Entra ID token into the BenchNotes token every other call
+  // carries (DIAAT-373). Without one there is no session worth keeping.
+  try {
+    session = withToken(session, await mintAppToken({ idToken: session.idToken }));
+  } catch (err) {
+    if (err instanceof BackendError && (err.status === 401 || err.status === 403)) {
+      if (backendErrorCode(err) === "user_deactivated") {
+        return failed(
+          403,
+          `the API refused to start a session: user ${session.user.oid} is deactivated`,
+          "Your BenchNotes account has been deactivated. Ask your BenchNotes administrator to reactivate it."
+        );
+      }
+      return failed(
+        403,
+        `the API refused to start a session for user ${session.user.oid}: ${err.message}`,
+        "You cannot sign in to BenchNotes. Ask your BenchNotes administrator for help."
+      );
+    }
+    console.warn("[auth] could not mint the BenchNotes token", err);
+    return failed(
+      502,
+      "the API could not start a session",
+      "BenchNotes is not available right now. Please try again in a few minutes."
+    );
+  }
+
   const sessionId = newSessionId();
   await writeSession(sessionId, session);
 

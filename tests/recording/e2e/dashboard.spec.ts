@@ -29,7 +29,7 @@ test.describe("Dashboard", () => {
 
   test("upload button is initially disabled", async ({ page }) => {
     const btn = page.getByRole("button", {
-      name: /upload for transcription/i,
+      name: /transcribe a recording/i,
     });
     await expect(btn).toBeDisabled();
   });
@@ -170,7 +170,7 @@ test.describe("Real transcription pipeline", () => {
     await expect(page.getByText(`Selected: ${fileName}`)).toBeVisible();
 
     const submitBtn = page.getByRole("button", {
-      name: /upload for transcription/i,
+      name: /transcribe a recording/i,
     });
     await expect(submitBtn).toBeEnabled();
     await submitBtn.click();

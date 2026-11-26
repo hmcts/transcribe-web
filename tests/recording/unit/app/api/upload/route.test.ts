@@ -11,7 +11,8 @@ import { bytesOf, consumeBody, sentMultipart } from "../../../multipart";
 // fetch mock reads a streamed body as a real fetch would.
 
 const BACKEND = "http://localhost:8001";
-const MAX_UPLOAD_BYTES = 200 * 1024 * 1024;
+// The API's MAX_UPLOAD_BYTES setting (DIAAT-408): 1 GiB unless MAX_UPLOAD_BYTES says otherwise.
+const MAX_UPLOAD_BYTES = 1024 * 1024 * 1024;
 
 const BACKEND_JOB = {
   job_id: "11111111-1111-1111-1111-111111111111",
@@ -115,7 +116,11 @@ function uploadRequest(
 async function seedSession(id: string, idToken: string) {
   const { writeSession } = await import("@/lib/auth/session-store");
   await writeSession(id, {
-    idToken,
+    // The Entra token is never what the API is sent (DIAAT-373): the BenchNotes
+    // token the API minted from it is.
+    idToken: "entra-id-token",
+    appToken: idToken,
+    appTokenExpiresAt: Date.now() + 5 * 60 * 1000,
     idTokenExpiresAt: Date.now() + 60 * 60 * 1000,
     user: {
       oid: "oid-1",
@@ -432,6 +437,84 @@ describe("POST /api/upload", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
+    it("says what the limit is and to save long recordings as MP3 or M4A", async () => {
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(MAX_UPLOAD_BYTES + 1) })
+      );
+
+      const { error } = await response.json();
+      expect(error).toContain("1 GB");
+      expect(error).toContain("MP3 or M4A");
+    });
+
+    it("the limit is 1 GiB: a declared size of exactly that goes on to the API", async () => {
+      // Declaring the size does not make the body that long (a 1 GiB body is
+      // not worth building here), so the stream's own check then refuses
+      // AUDIO as short. What shows the size was accepted is that the API
+      // was reached, which one byte more never is (above).
+      const { POST } = await import("@/app/api/upload/route");
+
+      await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(MAX_UPLOAD_BYTES) })
+      );
+
+      expect(uploadsCall()).toBeDefined();
+    });
+
+    // DIAAT-408: the limit is the MAX_UPLOAD_BYTES environment variable, read when the upload is handled.
+    it("the limit follows MAX_UPLOAD_BYTES, and the message names it", async () => {
+      vi.stubEnv("MAX_UPLOAD_BYTES", String(4 * 1024 * 1024 * 1024));
+      const { POST } = await import("@/app/api/upload/route");
+
+      // Over 1 GiB but under the configured 4 GiB: the API is reached.
+      await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(MAX_UPLOAD_BYTES + 1) })
+      );
+      expect(uploadsCall()).toBeDefined();
+
+      fetchMock.mockClear();
+      const over = await POST(
+        uploadRequest(AUDIO, {
+          "x-upload-size": String(4 * 1024 * 1024 * 1024 + 1),
+        })
+      );
+      expect(over.status).toBe(413);
+      expect((await over.json()).error).toContain("the limit is 4 GB");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("a lower MAX_UPLOAD_BYTES refuses what 1 GiB would allow", async () => {
+      vi.stubEnv("MAX_UPLOAD_BYTES", String(512 * 1024 * 1024));
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(
+        uploadRequest(AUDIO, { "x-upload-size": String(600 * 1024 * 1024) })
+      );
+
+      expect(response.status).toBe(413);
+      expect((await response.json()).error).toContain("the limit is 512 MB");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("a MAX_UPLOAD_BYTES that is not a positive whole number means 1 GiB", async () => {
+      for (const bad of ["", "abc", "0", "-5", "1.5", "10GB"]) {
+        vi.stubEnv("MAX_UPLOAD_BYTES", bad);
+        fetchMock.mockClear();
+        const { POST } = await import("@/app/api/upload/route");
+
+        const response = await POST(
+          uploadRequest(AUDIO, {
+            "x-upload-size": String(MAX_UPLOAD_BYTES + 1),
+          })
+        );
+
+        expect(response.status, bad).toBe(413);
+        expect((await response.json()).error).toContain("the limit is 1 GB");
+      }
+    });
+
     // The body is streamed to the API as it arrives, so a size mismatch is
     // only found while it is being sent. The upload is then aborted (its
     // body stream errors, so fetch fails) and no job is submitted.
@@ -589,6 +672,100 @@ describe("POST /api/upload", () => {
       });
     });
 
+    // DIAAT-408: the API measures the decoded audio and refuses one over 4
+    // hours. Its message says how long the recording is and what the limit is,
+    // and is written for the user: it reaches the browser as `error`, with
+    // the API's status.
+    it("a recording over the duration limit (422) with the API's message", async () => {
+      const detail =
+        "The recording is 4 hours 12 minutes long. Recordings can be at most 4 hours.";
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse({ detail, request_id: "req-long" }, 422))
+      );
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: detail,
+        request_id: "req-long",
+      });
+      expect(jobsCall()).toBeUndefined();
+    });
+
+    it("an audio file over the API's size limit (413) with the API's message", async () => {
+      const detail =
+        "The audio file is too large (the limit is 1 GB). Uncompressed audio such as WAV is much larger for the same length: save long recordings as MP3 or M4A.";
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse({ detail, request_id: "req-big" }, 413))
+      );
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({
+        error: detail,
+        request_id: "req-big",
+      });
+      expect(jobsCall()).toBeUndefined();
+    });
+
+    it("an undecodable audio file (422) with the API's message", async () => {
+      const detail =
+        "The audio file could not be decoded. It may be corrupt or in an unsupported format.";
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(jsonResponse({ detail, request_id: "req-bad" }, 422))
+      );
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(422);
+      expect((await response.json()).error).toBe(detail);
+    });
+
+    it("a 422 from the upload that is a validation error keeps the fixed message", async () => {
+      fetchMock.mockImplementation(() =>
+        Promise.resolve(
+          jsonResponse(
+            {
+              detail: [{ loc: ["body", "file"], msg: "internal detail" }],
+              request_id: "req-val",
+            },
+            422
+          )
+        )
+      );
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: "Failed to submit audio for transcription",
+        request_id: "req-val",
+      });
+    });
+
+    it("a 422 from submitting the job keeps the fixed message, whatever its detail", async () => {
+      // Only the upload step's refusals are written for the user.
+      jobsFail(422, {
+        detail: "blob_name does not belong to this user",
+        request_id: "req-job",
+      });
+      const { POST } = await import("@/app/api/upload/route");
+
+      const response = await POST(uploadRequest(AUDIO));
+
+      expect(response.status).toBe(422);
+      expect(await response.json()).toEqual({
+        error: "Failed to submit audio for transcription",
+        request_id: "req-job",
+      });
+    });
+
     it("a failure without a request_id, without one", async () => {
       jobsFail(500, "<html>Internal Server Error</html>");
       const { POST } = await import("@/app/api/upload/route");
@@ -612,5 +789,81 @@ describe("POST /api/upload", () => {
         error: "Failed to submit audio for transcription",
       });
     });
+  });
+});
+
+// The recording page asks for the size limit so that it can refuse a file that is
+// too large before sending it (the browser keeps sending a body after the server
+// has answered 413, so a file over the limit was refused only after all of it had
+// been uploaded).
+describe("GET /api/upload", () => {
+  const getRequest = (headers: Record<string, string> = {}) =>
+    new Request("http://localhost/api/upload", {
+      method: "GET",
+      headers,
+    }) as unknown as NextRequest;
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    backendOk();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("answers the size limit, 1 GiB unless MAX_UPLOAD_BYTES says otherwise", async () => {
+    const { GET } = await import("@/app/api/upload/route");
+
+    const response = await GET(getRequest());
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      max_upload_bytes: MAX_UPLOAD_BYTES,
+    });
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("follows MAX_UPLOAD_BYTES, the number the POST refuses by", async () => {
+    vi.stubEnv("MAX_UPLOAD_BYTES", String(512 * 1024 * 1024));
+    const { GET } = await import("@/app/api/upload/route");
+
+    expect(await (await GET(getRequest())).json()).toEqual({
+      max_upload_bytes: 512 * 1024 * 1024,
+    });
+  });
+
+  it("answers 1 GiB for a MAX_UPLOAD_BYTES that is not a positive whole number", async () => {
+    const { GET } = await import("@/app/api/upload/route");
+    for (const bad of ["", "abc", "0", "-5", "1.5", "12abc"]) {
+      vi.stubEnv("MAX_UPLOAD_BYTES", bad);
+      expect(await (await GET(getRequest())).json()).toEqual({
+        max_upload_bytes: MAX_UPLOAD_BYTES,
+      });
+    }
+  });
+
+  it("answers 401 without a session when login is enabled", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    const { GET } = await import("@/app/api/upload/route");
+
+    const response = await GET(getRequest());
+
+    expect(response.status).toBe(401);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("answers with a session when login is enabled", async () => {
+    vi.stubEnv("AUTH_ENABLED", "true");
+    await seedSession("sess-limit", "user-id-token");
+    const { GET } = await import("@/app/api/upload/route");
+
+    const response = await GET(
+      getRequest({ cookie: "transcribe_session=sess-limit" })
+    );
+
+    expect(response.status).toBe(200);
   });
 });

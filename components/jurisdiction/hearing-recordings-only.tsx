@@ -16,7 +16,7 @@ export function HearingRecordingsOnly({ children }: { children: React.ReactNode 
     <div className="mx-auto flex max-w-2xl flex-col gap-4 px-4 py-24 sm:px-6">
       <h1 className="text-3xl font-bold">This is not available in your jurisdiction</h1>
       <p className="text-muted-foreground">
-        Hearing recordings are not part of Bench Notes for your jurisdiction.
+        Hearing recordings are not part of BenchNotes for your jurisdiction.
       </p>
       <div>
         <Button asChild variant="outline">

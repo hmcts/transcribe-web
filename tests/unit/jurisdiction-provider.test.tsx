@@ -1,32 +1,36 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { MeResponse } from "@/lib/access/types";
+import { ME } from "../access-helpers";
 import { ET, IAC } from "../jurisdiction-helpers";
 
-// DIAAT-330: the tab's jurisdiction is loaded before any material, and decides
-// what the user sees.
+// DIAAT-330: the material of the jurisdiction the user works in is loaded before
+// any page that is about material, and decides what the user sees. DIAAT-373:
+// which jurisdiction that is comes from the access provider.
 
 let pathname = "/";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
-vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
+vi.mock("@/lib/access/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/access/api")>()),
+  fetchCurrentJurisdiction: vi.fn(),
+}));
 
-import { apiClient } from "@/lib/api-client";
-import type { MyJurisdictions } from "@/lib/jurisdiction-api";
-import {
-  getTabJurisdiction,
-  setTabJurisdiction,
-} from "@/lib/jurisdiction-session";
+let mockPersona: MeResponse = ME.judge;
+vi.mock("@/providers/access", async () =>
+  (await import("../access-helpers")).mockAccessModule(() => mockPersona)
+);
+
+import { AccessApiError, fetchCurrentJurisdiction } from "@/lib/access/api";
 import {
   JurisdictionProvider,
   useJurisdiction,
   useWording,
 } from "@/providers/jurisdiction";
 
-function respond(body: MyJurisdictions) {
-  vi.mocked(apiClient.request).mockResolvedValue({ data: body });
-}
+const fetchCurrent = vi.mocked(fetchCurrentJurisdiction);
 
 function Probe() {
-  const { current, hasDecisionTemplate, hasHearingRecordings, resolved } =
+  const { current, hasDecisionTemplate, hasHearingRecordings, resolved, jurisdictions } =
     useJurisdiction();
   const wording = useWording();
   return (
@@ -36,6 +40,7 @@ function Probe() {
       <p>template: {String(hasDecisionTemplate)}</p>
       <p>recordings: {String(hasHearingRecordings)}</p>
       <p>resolved: {String(resolved)}</p>
+      <p>jurisdictions: {jurisdictions.map((j) => j.code).join(",")}</p>
     </div>
   );
 }
@@ -48,16 +53,21 @@ function renderProvider() {
   );
 }
 
+const inIac = (): MeResponse => ({
+  ...ME.judge,
+  assignments: [{ jurisdiction: { code: "IAC", name: IAC.name }, role: "Judge" }],
+  active: { jurisdiction: { code: "IAC", name: IAC.name }, role: "Judge" },
+});
+
 describe("JurisdictionProvider", () => {
   beforeEach(() => {
     pathname = "/";
-    window.sessionStorage.clear();
-    vi.mocked(apiClient.request).mockReset();
+    mockPersona = ME.judge;
+    fetchCurrent.mockReset();
   });
-  afterEach(() => window.sessionStorage.clear());
 
   it("shows nothing of the material until the jurisdiction is known", () => {
-    vi.mocked(apiClient.request).mockReturnValue(
+    fetchCurrent.mockReturnValue(
       new Promise(() => {
         /* never resolves */
       })
@@ -69,8 +79,18 @@ describe("JurisdictionProvider", () => {
 
   it("tells the admin area when the jurisdiction has settled, even if there is none (DIAAT-342)", async () => {
     pathname = "/admin"; // opens without a jurisdiction
-    let answer: (value: { data: MyJurisdictions }) => void = () => undefined;
-    vi.mocked(apiClient.request).mockReturnValue(
+    mockPersona = ME.jurisdictionSuperAdministrator; // a global role: no jurisdiction
+    renderProvider();
+
+    expect(await screen.findByText("resolved: true")).toBeTruthy();
+    expect(screen.getByText("material for")).toBeTruthy();
+    expect(fetchCurrent).not.toHaveBeenCalled();
+  });
+
+  it("waits for the jurisdiction in the admin area, which opens before it", async () => {
+    pathname = "/admin";
+    let answer: (value: typeof ET) => void = () => undefined;
+    fetchCurrent.mockReturnValue(
       new Promise((resolve) => {
         answer = resolve;
       })
@@ -78,32 +98,33 @@ describe("JurisdictionProvider", () => {
     renderProvider();
     expect(screen.getByText("resolved: false")).toBeTruthy();
 
-    answer({ data: { status: "no_jurisdiction", current: null, jurisdictions: [] } });
+    answer(ET);
     expect(await screen.findByText("resolved: true")).toBeTruthy();
-    expect(screen.getByText("material for")).toBeTruthy();
+    expect(screen.getByText("material for ET")).toBeTruthy();
   });
 
   it("tells the admin area when the jurisdiction could not be loaded", async () => {
     pathname = "/admin";
-    vi.mocked(apiClient.request).mockResolvedValue({ error: "down" });
+    fetchCurrent.mockRejectedValue(new AccessApiError("down", 500));
     renderProvider();
 
     expect(await screen.findByText("resolved: true")).toBeTruthy();
   });
 
   it("gives the material the jurisdiction's wording and what it uses", async () => {
-    respond({ status: "ready", current: IAC, jurisdictions: [IAC] });
+    mockPersona = inIac();
+    fetchCurrent.mockResolvedValue(IAC);
     renderProvider();
 
     expect(await screen.findByText("material for IAC")).toBeTruthy();
     expect(screen.getByText("Hearing")).toBeTruthy();
     expect(screen.getByText("template: true")).toBeTruthy();
     expect(screen.getByText("recordings: true")).toBeTruthy();
-    expect(apiClient.request).toHaveBeenCalledWith("/jurisdictions/me");
+    expect(screen.getByText("jurisdictions: IAC")).toBeTruthy();
   });
 
   it("uses neutral wording for anything a jurisdiction does not set", async () => {
-    respond({ status: "ready", current: ET, jurisdictions: [ET] });
+    fetchCurrent.mockResolvedValue(ET);
     renderProvider();
 
     expect(await screen.findByText("material for ET")).toBeTruthy();
@@ -113,91 +134,21 @@ describe("JurisdictionProvider", () => {
     expect(screen.getByText("recordings: false")).toBeTruthy();
   });
 
-  it("pins the tab to the jurisdiction it works in", async () => {
-    respond({ status: "ready", current: ET, jurisdictions: [ET, IAC] });
-    renderProvider();
-    await screen.findByText("material for ET");
-    expect(getTabJurisdiction()).toBe("ET");
-  });
-
-  it("shows a user with no jurisdiction how to ask for access, and nothing else", async () => {
-    setTabJurisdiction("IAC");
-    respond({ status: "no_jurisdiction", current: null, jurisdictions: [] });
+  it("works with neutral material when the API has no material for this context", async () => {
+    fetchCurrent.mockRejectedValue(new AccessApiError("Not found", 404));
     renderProvider();
 
-    expect(
-      await screen.findByRole("heading", {
-        name: "You do not have access to Bench Notes yet",
-      })
-    ).toBeTruthy();
-    const email = screen.getByRole("link", {
-      name: /Email JudicialTranscribe@justice.gov.uk/,
-    });
-    expect(email.getAttribute("href")).toContain(
-      "mailto:JudicialTranscribe@justice.gov.uk"
-    );
-    expect(screen.queryByText(/material for/)).toBeNull();
-    expect(getTabJurisdiction()).toBeNull();
-  });
-
-  it("asks a judge in several jurisdictions to choose, then works in their choice (DIAAT-332)", async () => {
-    vi.mocked(apiClient.request).mockImplementation(async (endpoint, options) => {
-      if (endpoint === "/jurisdictions/active") {
-        expect(options?.method).toBe("PUT");
-        expect(JSON.parse(String(options?.body))).toEqual({ code: "ET" });
-        return { data: { status: "ready", current: ET, jurisdictions: [ET, IAC] } };
-      }
-      // Before the choice, then after it (the tab now names the ET).
-      return getTabJurisdiction() === "ET"
-        ? { data: { status: "ready", current: ET, jurisdictions: [ET, IAC] } }
-        : {
-            data: {
-              status: "choose",
-              current: null,
-              jurisdictions: [
-                { code: "ET", name: "Employment Tribunal", role: "judge" },
-                { code: "IAC", name: "Immigration and Asylum Chamber", role: "judge" },
-              ],
-            },
-          };
-    });
-    renderProvider();
-
-    expect(await screen.findByRole("heading", { name: "Choose your jurisdiction" })).toBeTruthy();
-    expect(screen.queryByText(/material for/)).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Employment Tribunal" }));
-
-    expect(await screen.findByText("material for ET")).toBeTruthy();
-    expect(getTabJurisdiction()).toBe("ET");
-  });
-
-  it("says so, and lets them choose again, when a choice fails", async () => {
-    vi.mocked(apiClient.request).mockImplementation(async (endpoint) => {
-      if (endpoint === "/jurisdictions/active") throw new Error("network");
-      return {
-        data: {
-          status: "choose",
-          current: null,
-          jurisdictions: [{ code: "ET", name: "Employment Tribunal", role: "judge" }],
-        },
-      };
-    });
-    renderProvider();
-
-    fireEvent.click(await screen.findByRole("button", { name: "Employment Tribunal" }));
-
-    expect(await screen.findByRole("alert")).toBeTruthy();
-    expect(
-      (screen.getByRole("button", { name: "Employment Tribunal" }) as HTMLButtonElement).disabled
-    ).toBe(false);
+    expect(await screen.findByText("resolved: true")).toBeTruthy();
+    expect(screen.getByText("template: false")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Try again" })).toBeNull();
   });
 
   it("offers to try again when the jurisdiction cannot be loaded", async () => {
-    vi.mocked(apiClient.request).mockRejectedValueOnce(new Error("network"));
+    fetchCurrent.mockRejectedValueOnce(new AccessApiError("network"));
     renderProvider();
 
     const retry = await screen.findByRole("button", { name: "Try again" });
-    respond({ status: "ready", current: IAC, jurisdictions: [IAC] });
+    fetchCurrent.mockResolvedValue(IAC);
     fireEvent.click(retry);
     await waitFor(() =>
       expect(screen.getByText("material for IAC")).toBeTruthy()
@@ -209,7 +160,7 @@ describe("JurisdictionProvider", () => {
     "/admin",
   ])("renders %s, which holds no one's material, without a jurisdiction", (page) => {
     pathname = page;
-    vi.mocked(apiClient.request).mockReturnValue(
+    fetchCurrent.mockReturnValue(
       new Promise(() => {
         /* never resolves */
       })

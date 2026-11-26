@@ -7,7 +7,7 @@ export default function Step2BasicTutorial() {
       <div className="space-y-2 text-center">
         <h2 className="text-3xl font-semibold sm:text-4xl">Basic Tutorial</h2>
         <p className="text-lg text-gray-600">
-          Using Bench Notes is simple
+          Using BenchNotes is simple
         </p>
       </div>
 

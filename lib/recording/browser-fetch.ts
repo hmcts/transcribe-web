@@ -1,7 +1,9 @@
 import {
-  getTabJurisdiction,
+  getTabContext,
   JURISDICTION_QUERY,
   jurisdictionHeaders,
+  NO_JURISDICTION,
+  ROLE_QUERY,
 } from "@/lib/jurisdiction-session";
 
 /**
@@ -26,9 +28,13 @@ export function recordingFetch(
 }
 
 /** A recordings URL loaded by the browser itself (an <audio> source), which
- * cannot send a header: the tab's jurisdiction goes in the query instead. */
+ * cannot send a header: the tab's context goes in the query instead. */
 export function withTabJurisdiction(url: string): string {
-  const code = getTabJurisdiction();
-  if (!code) return url;
-  return `${url}${url.includes("?") ? "&" : "?"}${JURISDICTION_QUERY}=${encodeURIComponent(code)}`;
+  const context = getTabContext();
+  if (!context) return url;
+  const params = new URLSearchParams({
+    [JURISDICTION_QUERY]: context.jurisdiction ?? NO_JURISDICTION,
+    [ROLE_QUERY]: context.role,
+  });
+  return `${url}${url.includes("?") ? "&" : "?"}${params}`;
 }

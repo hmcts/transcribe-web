@@ -11,18 +11,24 @@ import { useEffect, useRef } from "react";
  *   live recording, so the first Back stays on the page and asks;
  * - with ``beforeUnload``, closing or reloading the tab (the browser's own prompt).
  *
+ * With ``history: false`` Back and Forward are not guarded, so no entry is added: for
+ * a guard that is only briefly needed, whose entry would outlive it (DIAAT-414).
+ *
  * Switching jurisdiction is guarded separately (useJurisdictionSwitchGuard).
  */
 export function useLeaveGuard(
   active: boolean,
   message: string,
-  { beforeUnload = false }: { beforeUnload?: boolean } = {}
+  {
+    beforeUnload = false,
+    history = true,
+  }: { beforeUnload?: boolean; history?: boolean } = {}
 ): void {
   const historyGuard = useRef(false);
 
   useEffect(() => {
     if (!active) return;
-    if (!historyGuard.current) {
+    if (history && !historyGuard.current) {
       window.history.pushState(null, "", window.location.href);
       historyGuard.current = true;
     }
@@ -73,12 +79,12 @@ export function useLeaveGuard(
       event.returnValue = "";
     };
     document.addEventListener("click", onLinkClick, true);
-    window.addEventListener("popstate", onPopState);
+    if (history) window.addEventListener("popstate", onPopState);
     if (beforeUnload) window.addEventListener("beforeunload", onBeforeUnload);
     return () => {
       document.removeEventListener("click", onLinkClick, true);
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [active, message, beforeUnload]);
+  }, [active, message, beforeUnload, history]);
 }

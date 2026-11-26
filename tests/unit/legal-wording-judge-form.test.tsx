@@ -8,6 +8,7 @@ import {
 import { Toaster, toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import RecordPage from "@/app/record/page";
+import { waitForToastsToGo } from "../toast-helpers";
 
 // DIAAT-342: the judge's hearing form follows the legal wording of the
 // jurisdiction the tab works in: its own, none at all, or (until it loads, for
@@ -19,6 +20,9 @@ const mockGetLiveDraft = vi.hoisted(() => vi.fn());
 const mockRouterPush = vi.hoisted(() => vi.fn());
 
 let mockJurisdiction: "IAC" | "ET" | "DT" = "DT";
+
+waitForToastsToGo();
+
 vi.mock("@/providers/jurisdiction", async () =>
   (await import("../jurisdiction-helpers")).mockJurisdictionModule(
     () => mockJurisdiction
@@ -50,9 +54,6 @@ vi.mock("@/components/audio/dictation/dictation-form", () => ({
 }));
 vi.mock("@/lib/document-content-api", () => ({
   fetchUserDocumentContent: mockFetchContent,
-}));
-vi.mock("@/lib/admin-access", () => ({
-  getAdminAccessStatus: vi.fn().mockResolvedValue("unauthorised"),
 }));
 vi.mock("@/lib/auth-utils", () => ({
   getAuthToken: vi.fn().mockResolvedValue(null),

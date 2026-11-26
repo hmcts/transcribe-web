@@ -443,6 +443,173 @@ describe("useRealtimeTranscription session health", () => {
     expect(result.current.session.health).not.toBe("healthy");
   });
 
+  it("dates a final result and its words from when the audio began, to split it by section (DIAAT-417)", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    try {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      now.mockReturnValue(1_003_000);
+      await act(async () => {
+        latest().transcribed?.(null, {
+          result: {
+            reason: 3,
+            speakerId: "Guest-1",
+            text: "Hello there.",
+            offset: 10_000_000,
+            duration: 12_000_000,
+            json: JSON.stringify({
+              NBest: [
+                {
+                  Words: [
+                    { Word: "hello", Offset: 10_000_000, Duration: 5_000_000 },
+                    { Word: "there", Offset: 16_000_000, Duration: 6_000_000 },
+                  ],
+                },
+              ],
+            }),
+          },
+        });
+      });
+      expect(result.current.segments.at(-1)?.timing).toEqual({
+        startMs: 1_001_000,
+        endMs: 1_002_200,
+        words: [
+          { word: "hello", startMs: 1_001_000, endMs: 1_001_500 },
+          { word: "there", startMs: 1_001_600, endMs: 1_002_200 },
+        ],
+      });
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("dates speech from when capture began, not from results that arrive late, unless the audio stalls (DIAAT-417)", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const partial = (offsetMs: number, durationMs: number) => ({
+      result: {
+        reason: 2,
+        speakerId: "Guest-1",
+        text: "words",
+        offset: offsetMs * 10_000,
+        duration: durationMs * 10_000,
+      },
+    });
+    const wordAt = (offsetMs: number) => ({
+      result: {
+        reason: 3,
+        speakerId: "Guest-1",
+        text: "Words.",
+        offset: offsetMs * 10_000,
+        duration: 3_000_000,
+        json: JSON.stringify({
+          NBest: [
+            {
+              Words: [
+                {
+                  Word: "words",
+                  Offset: offsetMs * 10_000,
+                  Duration: 3_000_000,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    });
+    try {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      // Audio up to 3 s, received 500 ms after it was said.
+      now.mockReturnValue(1_003_500);
+      await act(async () => {
+        latest().transcribing?.(null, partial(0, 3000));
+      });
+      expect(result.current.segments.at(-1)?.heardUntilMs).toBe(1_003_000);
+      await act(async () => {
+        latest().transcribed?.(null, wordAt(1800));
+      });
+      // Said 1.8 s in: dated then, not 500 ms later.
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_001_800
+      );
+
+      // The audio stalls: at 10 s, only 5 s of it has been heard.
+      now.mockReturnValue(1_010_000);
+      await act(async () => {
+        latest().transcribing?.(null, partial(4000, 1000));
+      });
+      await act(async () => {
+        latest().transcribed?.(null, wordAt(4500));
+      });
+      // Dated no earlier than the stall allows (beyond any recognition delay).
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_010_000 - 5000 - 1500 + 4500
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
+  it("notices a stall between the last partial and a final, but not the pause a final follows (DIAAT-417)", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+    const finalAt = (offsetMs: number) => ({
+      result: {
+        reason: 3,
+        speakerId: "Guest-1",
+        text: "Words.",
+        offset: offsetMs * 10_000,
+        duration: 3_000_000,
+        json: JSON.stringify({
+          NBest: [
+            {
+              Words: [
+                {
+                  Word: "words",
+                  Offset: offsetMs * 10_000,
+                  Duration: 3_000_000,
+                },
+              ],
+            },
+          ],
+        }),
+      },
+    });
+    try {
+      const { result } = renderHook(() => useRealtimeTranscription());
+      await startRecording(result.current.connect);
+      now.mockReturnValue(1_003_500);
+      await act(async () => {
+        latest().transcribing?.(null, {
+          result: {
+            reason: 2,
+            speakerId: "Guest-1",
+            text: "words",
+            offset: 0,
+            duration: 30_000_000,
+          },
+        });
+      });
+      // An ordinary final: sent after the judge's pause, 2.3 s after its audio ended.
+      now.mockReturnValue(1_000_000 + 1800 + 300 + 2300);
+      await act(async () => {
+        latest().transcribed?.(null, finalAt(1800));
+      });
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_001_800
+      );
+      // A stall since: at 12 s, the next final covers audio only to 4.8 s.
+      now.mockReturnValue(1_012_000);
+      await act(async () => {
+        latest().transcribed?.(null, finalAt(4500));
+      });
+      expect(result.current.segments.at(-1)?.timing?.words[0].startMs).toBe(
+        1_012_000 - 4800 - 1500 - 1800 + 4500
+      );
+    } finally {
+      now.mockRestore();
+    }
+  });
+
   describe("pausing mid-utterance (PR #14 review)", () => {
     /** Holds the stop open, as the SDK does while it flushes the last result. */
     function holdStop(transcriber: FakeTranscriber) {

@@ -36,7 +36,27 @@ export const useToc = ({
 }) => {
   const [headings, setHeadings] = useState<Heading[]>([]);
   const [activeId, setActiveId] = useState("");
+  // Bumped when the content's elements change (a section shown or hidden, such as the dictation
+  // help when the runtime flag changes), so the headings are read again.
+  const [revision, setRevision] = useState(0);
 
+  useEffect(() => {
+    const content = document.getElementById(contentId);
+    if (!content || !("MutationObserver" in window)) return;
+    let frame = 0;
+    const observer = new MutationObserver(() => {
+      window.clearTimeout(frame);
+      // One re-read for a burst of changes.
+      frame = window.setTimeout(() => setRevision((value) => value + 1), 0);
+    });
+    observer.observe(content, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(frame);
+    };
+  }, [contentId]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `revision` is not read here, it only says the content changed and the headings must be read again
   useEffect(() => {
     if (!("IntersectionObserver" in window)) {
       console.warn("IntersectionObserver is not supported by your browser.");
@@ -124,7 +144,7 @@ export const useToc = ({
     return () => {
       allElements.forEach((element) => observer.unobserve(element));
     };
-  }, [contentId, containerId, targetSelectors, ignoreIds]);
+  }, [contentId, containerId, targetSelectors, ignoreIds, revision]);
 
   useEffect(() => {
     if (window.location.hash) {

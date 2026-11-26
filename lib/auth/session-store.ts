@@ -1,5 +1,6 @@
 import "server-only";
 import { createClient } from "redis";
+import type { SessionContext } from "@/lib/access/types";
 import { getAuthConfig } from "@/lib/auth/config";
 
 /** What the server keeps for a signed-in user. Never sent to the browser. */
@@ -10,6 +11,27 @@ export interface Session {
   idTokenExpiresAt: number;
   user: { oid: string; name: string; email: string; roles: string[] };
   createdAt: number;
+  /**
+   * The BenchNotes access token minted by the API from the ID token (DIAAT-373).
+   * This, not the ID token, is what every API call carries. Short-lived and
+   * re-minted from the session, so a change to the user's access reaches them
+   * within its lifetime.
+   */
+  appToken?: string;
+  /** Epoch milliseconds. */
+  appTokenExpiresAt?: number;
+  /**
+   * The (jurisdiction, role) the user is working as, remembered for the whole
+   * session: sent as `X-Requested-Context` at every re-mint. Always what the API
+   * last said was active; null until they choose.
+   */
+  context?: SessionContext | null;
+  /** Local development only (AUTH_ENABLED=false, never in production): the
+   * persona this session was started as, instead of an Entra sign-in. */
+  devPersona?: string;
+  /** PR previews only (PREVIEW_USER_SIGN_IN, never with AUTH_ENABLED=true): signed in
+   * as the API's fixed preview user, with no Entra token. */
+  previewUser?: boolean;
 }
 
 /** State held between sending the user to Entra and their return. */

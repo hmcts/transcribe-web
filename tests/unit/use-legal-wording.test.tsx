@@ -104,7 +104,7 @@ describe("useLegalWording", () => {
     request.mockResolvedValue({
       error: "no",
       status: 403,
-      code: "jurisdiction_admin_required",
+      code: "permission_denied",
     });
     const { result } = renderHook(() => useLegalWording("ET"));
 
@@ -112,6 +112,6 @@ describe("useLegalWording", () => {
     const { state } = result.current;
     expect(
       state.status === "error" && (state.error as { code?: string }).code
-    ).toBe("jurisdiction_admin_required");
+    ).toBe("permission_denied");
   });
 });

@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   jurisdictionHeaders,
-  setTabJurisdiction,
+  setTabContext,
 } from "@/lib/jurisdiction-session";
 import {
   inSentence,
@@ -22,9 +22,12 @@ describe("the tab's jurisdiction header", () => {
 
   it("is sent once the tab's jurisdiction is known", () => {
     expect(jurisdictionHeaders()).toEqual({});
-    setTabJurisdiction("ET");
-    expect(jurisdictionHeaders()).toEqual({ "X-Jurisdiction": "ET" });
-    setTabJurisdiction(null);
+    setTabContext({ jurisdiction: "ET", role: "Judge" });
+    expect(jurisdictionHeaders()).toEqual({
+      "X-Jurisdiction": "ET",
+      "X-Role": "Judge",
+    });
+    setTabContext(null);
     expect(jurisdictionHeaders()).toEqual({});
   });
 
@@ -33,12 +36,13 @@ describe("the tab's jurisdiction header", () => {
       .fn()
       .mockResolvedValue(new Response("{}", { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
-    setTabJurisdiction("ET");
+    setTabContext({ jurisdiction: "ET", role: "Judge" });
     const { apiClient } = await import("@/lib/api-client");
 
     await apiClient.request("/transcriptions-metadata");
 
     expect(fetchMock.mock.calls[0][1].headers["X-Jurisdiction"]).toBe("ET");
+    expect(fetchMock.mock.calls[0][1].headers["X-Role"]).toBe("Judge");
   });
 
   it("is added to live-draft requests: each jurisdiction has its own draft", async () => {
@@ -46,12 +50,13 @@ describe("the tab's jurisdiction header", () => {
       .fn()
       .mockResolvedValue(new Response(null, { status: 404 }));
     vi.stubGlobal("fetch", fetchMock);
-    setTabJurisdiction("ET");
+    setTabContext({ jurisdiction: "ET", role: "Judge" });
     const { getLiveDraft } = await import("@/lib/live-draft-api");
 
     expect(await getLiveDraft()).toBeNull();
 
     expect(fetchMock.mock.calls[0][1].headers["X-Jurisdiction"]).toBe("ET");
+    expect(fetchMock.mock.calls[0][1].headers["X-Role"]).toBe("Judge");
   });
 
   it("is added to document downloads", async () => {
@@ -59,7 +64,7 @@ describe("the tab's jurisdiction header", () => {
       .fn()
       .mockResolvedValue(new Response("not found", { status: 404 }));
     vi.stubGlobal("fetch", fetchMock);
-    setTabJurisdiction("IAC");
+    setTabContext({ jurisdiction: "IAC", role: "Judge" });
     const { downloadTranscriptDocument } = await import("@/lib/download");
 
     await expect(downloadTranscriptDocument("t-1")).rejects.toThrow(
@@ -67,6 +72,7 @@ describe("the tab's jurisdiction header", () => {
     );
 
     expect(fetchMock.mock.calls[0][1].headers["X-Jurisdiction"]).toBe("IAC");
+    expect(fetchMock.mock.calls[0][1].headers["X-Role"]).toBe("Judge");
   });
 });
 
@@ -86,21 +92,27 @@ describe("the tab's jurisdiction without session storage", () => {
       throw new Error("blocked");
     });
 
-    session.setTabJurisdiction("ET");
+    session.setTabContext({ jurisdiction: "ET", role: "Judge" });
 
-    expect(session.jurisdictionHeaders()).toEqual({ "X-Jurisdiction": "ET" });
+    expect(session.jurisdictionHeaders()).toEqual({
+      "X-Jurisdiction": "ET",
+      "X-Role": "Judge",
+    });
   });
 
   it("is kept in memory when writes fail but reads still work", async () => {
     vi.resetModules();
     window.sessionStorage.clear();
-    window.sessionStorage.setItem("benchnotes-jurisdiction", "IAC");
+    window.sessionStorage.setItem(
+      "benchnotes-context",
+      JSON.stringify({ jurisdiction: "IAC", role: "Judge" })
+    );
     const session = await import("@/lib/jurisdiction-session");
     vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
       throw new Error("quota exceeded");
     });
 
-    session.setTabJurisdiction("ET");
+    session.setTabContext({ jurisdiction: "ET", role: "Judge" });
 
     // Not the stale IAC still readable from storage.
     expect(session.getTabJurisdiction()).toBe("ET");

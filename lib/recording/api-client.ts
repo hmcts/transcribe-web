@@ -12,7 +12,8 @@ import type {
   Word,
   WordCorrection,
 } from "./types";
-import { JURISDICTION_HEADER } from "@/lib/jurisdiction-session";
+import { refusalCodeIn } from "@/lib/access/refusals";
+import { JURISDICTION_HEADER, ROLE_HEADER } from "@/lib/jurisdiction-session";
 
 // Server-only client for the transcription_svc backend. Never import this
 // from a "use client" component — it reads the backend API key, which must
@@ -121,10 +122,33 @@ export class BackendApiError extends Error {
     message: string,
     public status: number,
     // The id the API logged the failure under, from its error body.
-    public requestId?: string
+    public requestId?: string,
+    // The refusal's machine-readable code (`context_changed`, `user_deactivated`, ...),
+    // from `{detail: {code}}`, so a route can pass on the ones the browser must see.
+    public code?: string,
+    // The API's `detail` when it is a string (see detailOf). Not for the
+    // browser as it is: a route passes on only the ones it knows are written
+    // for the user (UploadRefusedError).
+    public detail?: string
   ) {
     super(message);
     this.name = "BackendApiError";
+  }
+}
+
+/**
+ * POST /api/v1/uploads refused the audio file because of the file itself
+ * (DIAAT-408): 413 for a file over the API's size limit, 422 for one that is
+ * not a supported or decodable audio file or is longer than the API allows
+ * ("The recording is 4 hours 12 minutes long. Recordings can be at most 4
+ * hours."). The API writes each `detail` for the user to read, so the upload
+ * route (backendFailed) passes it on. Only the upload step throws this: the
+ * same statuses from any other API call keep the route's fixed message.
+ */
+export class UploadRefusedError extends BackendApiError {
+  constructor(cause: BackendApiError, detail: string) {
+    super(cause.message, cause.status, cause.requestId, cause.code, detail);
+    this.name = "UploadRefusedError";
   }
 }
 
@@ -143,6 +167,32 @@ function requestIdOf(body: string): string | undefined {
     // Not JSON: a proxy's error page, say.
   }
   return undefined;
+}
+
+// The API's own message for why it refused a request, when `detail` is a
+// string: the ones the upload route writes for the user to read. A
+// validation error's `detail` is a list of internal field errors, never one.
+function detailOf(body: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && "detail" in parsed) {
+      const { detail } = parsed;
+      return typeof detail === "string" && detail.trim() !== ""
+        ? detail
+        : undefined;
+    }
+  } catch {
+    // Not JSON: a proxy's error page, say.
+  }
+  return undefined;
+}
+
+function refusalCodeOf(body: string): string | undefined {
+  try {
+    return refusalCodeIn(JSON.parse(body));
+  } catch {
+    return undefined;
+  }
 }
 
 function backendUrl(): string {
@@ -180,6 +230,9 @@ async function rawBackendFetch(
   if (auth?.jurisdiction) {
     headers[JURISDICTION_HEADER] = auth.jurisdiction;
   }
+  if (auth?.role) {
+    headers[ROLE_HEADER] = auth.role;
+  }
   return fetch(`${backendUrl()}${path}`, {
     ...init,
     headers,
@@ -199,7 +252,9 @@ async function backendFetch(
     throw new BackendApiError(
       `Backend request to ${path} failed: ${response.status} ${body}`,
       response.status,
-      requestIdOf(body)
+      requestIdOf(body),
+      refusalCodeOf(body),
+      detailOf(body)
     );
   }
 
@@ -449,6 +504,49 @@ export async function deleteJob(
   await backendFetch(`/api/v1/jobs/${jobId}`, { method: "DELETE" }, auth);
 }
 
+/**
+ * One entry of a recording's audit history (DIAAT-395): who did what, in which
+ * role, and how it ended. The API sends no transcript text.
+ */
+export interface JobHistoryEntry {
+  id: string;
+  timestamp: string;
+  action: string;
+  actor_label: string;
+  actor_role: string | null;
+  outcome: string;
+}
+
+export interface JobHistoryPage {
+  items: JobHistoryEntry[];
+  total: number;
+}
+
+/**
+ * `GET /api/v1/jobs/{id}/history` (recording.audit.read, the recording's owner
+ * only; anyone else gets the answer for a recording they cannot see, a 404).
+ * Passed through as the API sent it.
+ */
+export async function getJobHistory(
+  jobId: string,
+  params: { page?: number; pageSize?: number } | undefined,
+  auth: BackendAuthContext | null
+): Promise<JobHistoryPage> {
+  const query = new URLSearchParams();
+  if (params?.page !== undefined) query.set("page", String(params.page));
+  if (params?.pageSize !== undefined) {
+    query.set("page_size", String(params.pageSize));
+  }
+  const qs = query.toString();
+  const response = await backendFetch(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/history${qs ? `?${qs}` : ""}`,
+    undefined,
+    auth
+  );
+  const body: JobHistoryPage = await response.json();
+  return { items: body.items ?? [], total: body.total ?? 0 };
+}
+
 // Returns the backend's raw Response — including non-2xx ones (404 if the
 // job/blob doesn't exist, 416 for an unsatisfiable range, etc.) — so the
 // route handler can forward the real status, headers, and body straight to
@@ -498,8 +596,19 @@ export async function uploadAudio(
   file: UploadFile,
   auth: BackendAuthContext | null
 ): Promise<BackendUpload> {
-  const response = await postFile("/api/v1/uploads", file, auth);
-  return response.json();
+  try {
+    const response = await postFile("/api/v1/uploads", file, auth);
+    return await response.json();
+  } catch (err) {
+    if (
+      err instanceof BackendApiError &&
+      (err.status === 413 || err.status === 422) &&
+      err.detail !== undefined
+    ) {
+      throw new UploadRefusedError(err, err.detail);
+    }
+    throw err;
+  }
 }
 
 export interface SubmitJobMetadata {

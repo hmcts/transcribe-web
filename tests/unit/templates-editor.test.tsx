@@ -1,4 +1,5 @@
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -10,12 +11,18 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { TemplatesEditor } from "@/components/admin/templates-editor";
 import { apiClient } from "@/lib/api-client";
-import type { AdminTemplate, TemplateField } from "@/lib/templates-api";
+import type {
+  AdminTemplate,
+  AvailableTemplate,
+  TemplateField,
+} from "@/lib/templates-api";
 
 // DIAAT-344: a SystemAdministrator uploads a jurisdiction's Word template, gets a
 // field for each of its fill-in boxes, and sets their labels, types, whether they are
 // required and their options. Fields cannot be added; saving with a box unlinked says
 // which box.
+// DIAAT-346: before any judge sees it, they preview it with sample details and get the
+// document a judge would; a failed preview says what went wrong in plain words.
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 vi.mock("@/lib/api-client", () => ({ apiClient: { request: vi.fn() } }));
@@ -60,7 +67,8 @@ const UPLOADED: AdminTemplate = {
   name: "ET judgment",
   service: null,
   file_name: "ET judgment.docx",
-  enabled: false,
+  stage: "draft",
+  sign_off: null,
   boxes: [
     {
       key: "Reference",
@@ -100,8 +108,35 @@ const UPLOADED: AdminTemplate = {
   version: "v1",
 };
 
-/** A small fake of the API's template routes. */
-function serve(templates: AdminTemplate[] = [], refuse?: string[]) {
+/** The Hearing Details form the API gives for a template's preview: the fields a
+ * judge fills, as saved. */
+const formOf = (template: AdminTemplate): AvailableTemplate => ({
+  id: template.id,
+  name: template.name,
+  service: template.service,
+  fields: template.fields.flatMap((f) =>
+    f.type === "dictated" || f.type === "benchnotes"
+      ? []
+      : [
+          {
+            tag: f.tag,
+            label: f.label,
+            type: f.type,
+            required: f.required,
+            options: f.options.map((o) => ({ value: o, label: o })),
+          },
+        ]
+  ),
+});
+
+/** A small fake of the API's template routes. ``preview``, ``form``: the answers of
+ * the preview and of its form. */
+function serve(
+  templates: AdminTemplate[] = [],
+  refuse?: string[],
+  preview: Record<string, unknown> = { data: new Blob(["docx"]), status: 200 },
+  form?: Record<string, unknown>
+) {
   let list = [...templates];
   request.mockImplementation(
     async (endpoint: string, options?: RequestInit) => {
@@ -110,11 +145,22 @@ function serve(templates: AdminTemplate[] = [], refuse?: string[]) {
         return { data: list };
       if (
         endpoint.startsWith("/admin/jurisdictions/ET/templates") &&
+        !endpoint.endsWith("/preview") &&
         method === "POST"
       ) {
         list = [UPLOADED];
         return { data: UPLOADED, status: 201 };
       }
+      const part = endpoint.match(
+        /^\/admin\/jurisdictions\/ET\/templates\/(\w+)\/(form|preview)$/
+      );
+      if (part?.[2] === "form" && method === "GET")
+        return (
+          form ?? {
+            data: formOf(list.find((t) => t.id === part[1]) ?? UPLOADED),
+          }
+        );
+      if (part?.[2] === "preview" && method === "POST") return preview;
       const one = endpoint.match(
         /^\/admin\/jurisdictions\/ET\/templates\/(\w+)$/
       );
@@ -128,11 +174,22 @@ function serve(templates: AdminTemplate[] = [], refuse?: string[]) {
         const body = JSON.parse(String(options?.body));
         const existing = list.find((t) => t.id === one[1]);
         if (!existing) return { error: "Not found", status: 404 };
+        const { sign_off, ...fields } = body;
+        // As the API: live with the sign-off sent, kept while it stays live.
         const saved = {
           ...existing,
-          ...body,
+          ...fields,
+          sign_off:
+            body.stage !== "live"
+              ? null
+              : existing.stage === "live"
+                ? existing.sign_off
+                : {
+                    service_lead: sign_off.service_lead,
+                    signed_off_at: "2026-11-12T10:00:00",
+                  },
           problems: [],
-          version: "v2",
+          version: `v${Number(existing.version.slice(1)) + 1}`,
         };
         list = list.map((t) => (t.id === saved.id ? saved : t));
         return { data: saved };
@@ -196,7 +253,7 @@ describe("TemplatesEditor", () => {
     ).toBe("Reference");
     expect(within(fields).getByText("Box Reference, 2 places")).toBeTruthy();
     expect(
-      within(fields).getByText("The judge's dictated judgment")
+      within(fields).getByText(/A section the judge dictates/)
     ).toBeTruthy();
     expect(
       (
@@ -205,14 +262,14 @@ describe("TemplatesEditor", () => {
         ) as HTMLTextAreaElement
       ).value
     ).toBe("Claimant\nRespondent");
-    expect(screen.getByText("Off")).toBeTruthy();
+    expect(screen.getByText("Draft")).toBeTruthy();
     // Only the template's boxes: there is no way to add a field.
     expect(
       screen.queryByRole("button", { name: /add (a )?field/i })
     ).toBeNull();
   });
 
-  it("saves relabelled, retyped and reordered fields and makes it available to judges", async () => {
+  it("saves relabelled, retyped and reordered fields and puts it in the test group", async () => {
     serve([UPLOADED]);
     const user = userEvent.setup();
     const fields = await open(user);
@@ -232,19 +289,33 @@ describe("TemplatesEditor", () => {
     await user.click(
       within(fields).getByRole("button", { name: "Move Case number down" })
     );
-    await user.click(within(fields).getByLabelText("Available to judges"));
+    await user.click(within(fields).getByLabelText("Who can choose it"));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Test: its test group and administrators can choose it",
+      })
+    );
+    // Only going live needs the service lead's sign-off.
+    expect(
+      within(fields).queryByRole("group", { name: "Service lead's sign-off" })
+    ).toBeNull();
     await user.click(within(fields).getByRole("button", { name: "Save" }));
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith("Saved ET judgment")
     );
     const [saved] = puts();
+    // As the upload is, so Front Door's WAF does not read the admin's text.
+    expect(
+      request.mock.calls.find(([, o]) => o?.method === "PUT")?.[1]?.headers
+    ).toEqual({ "Content-Type": "application/octet-stream" });
     expect(saved).toMatchObject({
       name: "ET judgment",
       service: null,
-      enabled: true,
+      stage: "test",
       version: "v1",
     });
+    expect(saved.sign_off).toBeUndefined();
     expect(saved.fields.map((f: TemplateField) => f.tag)).toEqual([
       "Party1Title",
       "Reference",
@@ -341,6 +412,365 @@ describe("TemplatesEditor", () => {
       type: "benchnotes",
       source: "year",
     });
+  });
+
+  it("maps the legal framework text into a box, with what to print when none is chosen (DIAAT-415)", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", { name: "Type of Reference" })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Filled by BenchNotes" })
+    );
+    expect(
+      within(fields).queryByLabelText("When no legal framework is chosen, print")
+    ).toBeNull();
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "What BenchNotes fills Reference with",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Legal framework text (of the legal issues chosen)",
+      })
+    );
+    await user.click(
+      within(fields).getByLabelText("When no legal framework is chosen, print")
+    );
+    await user.paste("No legal framework applies.");
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).toMatchObject({
+      type: "benchnotes",
+      source: "legal_framework",
+      empty_text: "No legal framework applies.",
+    });
+  });
+
+  it("starts a text field with the judge's name, and sends it only for a text field (DIAAT-340)", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("checkbox", {
+        name: "Fill in the judge's name in Reference",
+      })
+    );
+    within(fields).getByText(
+      "The form starts with the signed-in judge's name. They can change it."
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).toMatchObject({ prefill: "judge_name" });
+    // Not a choice for a list, nor sent for one.
+    expect(puts()[0].fields[1]).not.toHaveProperty("prefill");
+    expect(
+      within(fields).queryByRole("checkbox", {
+        name: "Fill in the judge's name in Party1Title",
+      })
+    ).toBeNull();
+  });
+
+  it("sends no judge's name for a field that is no longer text", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", { prefill: "judge_name" }),
+          ...UPLOADED.fields.slice(1),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    const name = within(fields).getByRole("checkbox", {
+      name: "Fill in the judge's name in Reference",
+    });
+    expect(name.getAttribute("aria-checked")).toBe("true");
+    await user.click(
+      within(fields).getByRole("combobox", { name: "Type of Reference" })
+    );
+    await user.click(await screen.findByRole("option", { name: "Number" }));
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).not.toHaveProperty("prefill");
+  });
+
+  it("prints text depending on an answer, by rules in order (DIAAT-411)", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", { name: "Type of Reference" })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Filled by BenchNotes" })
+    );
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "What BenchNotes fills Reference with",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Text depending on an answer" })
+    );
+    // A first rule to fill in; its answers are its question's.
+    const answer = within(fields).getByRole("combobox", {
+      name: "Answer of rule 1 of Reference",
+    });
+    expect(answer.hasAttribute("disabled")).toBe(true);
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Question of rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Party1Title" })
+    );
+    await user.click(answer);
+    await user.click(await screen.findByRole("option", { name: "Respondent" }));
+    await user.click(
+      within(fields).getByLabelText("Text of rule 1 of Reference")
+    );
+    await user.paste("The respondent did not attend. [REASONS]");
+    // A second rule, then removed.
+    await user.click(
+      within(fields).getByRole("button", { name: "Add a rule" })
+    );
+    await user.click(
+      within(fields).getByRole("button", { name: "Remove rule 2 of Reference" })
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0]).toMatchObject({
+      type: "benchnotes",
+      source: "answer_text",
+      rules: [
+        {
+          field: "Party1Title",
+          answer: "Respondent",
+          text: "The respondent did not attend. [REASONS]",
+        },
+      ],
+    });
+    // Other fields are saved with no rules.
+    expect(puts()[0].fields[1]).not.toHaveProperty("rules");
+  });
+
+  it("shows a rule's answer as unchosen once its question changes, and a removed rule's choices go with it (DIAAT-411)", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: "One." },
+              { field: "", answer: "", text: "" },
+            ],
+          }),
+          ...UPLOADED.fields.slice(1),
+          field("Agreed", { type: "yes_no" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const answerOf = (n: number) =>
+      within(fields).getByRole("combobox", {
+        name: `Answer of rule ${n} of Reference`,
+      });
+    const questionOf = (n: number) =>
+      within(fields).getByRole("combobox", {
+        name: `Question of rule ${n} of Reference`,
+      });
+    expect(answerOf(1).textContent).toBe("Respondent");
+
+    await user.click(questionOf(1));
+    await user.click(await screen.findByRole("option", { name: "Agreed" }));
+    expect(answerOf(1).textContent).toBe("has the answer");
+
+    // Rule 1 removed: the blank rule takes its place, blank.
+    await user.click(
+      within(fields).getByRole("button", { name: "Remove rule 1 of Reference" })
+    );
+    expect(questionOf(1).textContent).toBe("When the question");
+    expect(answerOf(1).textContent).toBe("has the answer");
+  });
+
+  it("inserts a question's answer into a rule's text where the cursor is (DIAAT-412)", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: ", Counsel" },
+            ],
+          }),
+          field("Party1Title", {
+            label: "First party",
+            type: "dropdown",
+            options: ["Claimant", "Respondent"],
+          }),
+          UPLOADED.fields[2],
+          field("RepName", { label: "Representative's name" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const text = within(fields).getByLabelText(
+      "Text of rule 1 of Reference"
+    ) as HTMLTextAreaElement;
+    text.setSelectionRange(0, 0);
+
+    const add = within(fields).getByRole("combobox", {
+      name: "Add a judge's answer to rule 1 of Reference",
+    });
+    // What it is for, read with it.
+    expect(
+      document
+        .getElementById(add.getAttribute("aria-describedby") ?? "")
+        ?.textContent?.replace(/\s+/g, " ")
+    ).toBe(
+      "Puts the judge's answer to another question into this text where your cursor is, for example their name or the hearing date. It shows here as {{tag}} and the answer replaces it in the document."
+    );
+    await user.click(add);
+    // Only the questions the judge answers: not the dictated text, nor itself.
+    expect(
+      (await screen.findAllByRole("option")).map((o) => o.textContent)
+    ).toEqual(["First party", "Representative's name"]);
+    await user.click(
+      screen.getByRole("option", { name: "Representative's name" })
+    );
+    expect(text.value).toBe("{{RepName}}, Counsel");
+    // The next answer goes after it, not at the end.
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Add a judge's answer to rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "First party" })
+    );
+    expect(text.value).toBe("{{RepName}}{{Party1Title}}, Counsel");
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].fields[0].rules[0].text).toBe(
+      "{{RepName}}{{Party1Title}}, Counsel"
+    );
+  });
+
+  it("inserts an answer at the end of a saved rule's text the admin has not clicked into (DIAAT-412)", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: "Counsel: " },
+            ],
+          }),
+          ...UPLOADED.fields.slice(1),
+          field("RepName", { label: "Representative's name" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Add a judge's answer to rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Representative's name" })
+    );
+    expect(
+      (
+        within(fields).getByLabelText(
+          "Text of rule 1 of Reference"
+        ) as HTMLTextAreaElement
+      ).value
+    ).toBe("Counsel: {{RepName}}");
+  });
+
+  it.each([
+    // "{{RepName}}" is 11 characters; the limit is 10,000.
+    ["reaches the limit exactly", "x".repeat(9989), null, true],
+    ["would pass the limit", "x".repeat(9990), null, false],
+    [
+      "replaces a selection, within the limit",
+      "x".repeat(10000),
+      [0, 11],
+      true,
+    ],
+    ["replaces a selection, past the limit", "x".repeat(10000), [0, 10], false],
+  ] as const)("keeps a rule's text within its limit when an answer is inserted: %s (DIAAT-412)", async (_, saved, selection, inserted) => {
+    vi.mocked(toast.error).mockClear();
+    serve([
+      {
+        ...UPLOADED,
+        fields: [
+          field("Reference", {
+            type: "benchnotes",
+            required: false,
+            source: "answer_text",
+            rules: [
+              { field: "Party1Title", answer: "Respondent", text: saved },
+            ],
+          }),
+          ...UPLOADED.fields.slice(1),
+          field("RepName", { label: "Representative's name" }),
+        ],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const text = within(fields).getByLabelText(
+      "Text of rule 1 of Reference"
+    ) as HTMLTextAreaElement;
+    if (selection) text.setSelectionRange(selection[0], selection[1]);
+
+    await user.click(
+      within(fields).getByRole("combobox", {
+        name: "Add a judge's answer to rule 1 of Reference",
+      })
+    );
+    await user.click(
+      await screen.findByRole("option", { name: "Representative's name" })
+    );
+
+    if (inserted) {
+      expect(text.value.length).toBeLessThanOrEqual(10000);
+      expect(text.value).toContain("{{RepName}}");
+      expect(toast.error).not.toHaveBeenCalled();
+    } else {
+      expect(text.value).toBe(saved);
+      expect(toast.error).toHaveBeenCalledWith(
+        "The rule's text is too long to add another answer."
+      );
+    }
   });
 
   it("edits the options of a box tagged like one of Object's own properties", async () => {
@@ -602,17 +1032,28 @@ describe("TemplatesEditor", () => {
         within(fields).getByRole("button", { name: "Upload a new file" })
       );
       expect(pick).toHaveBeenCalledTimes(2);
+
+      fireEvent.change(
+        document.getElementById("template-replace-t1") as HTMLInputElement,
+        { target: { files: [new File(["x"], "v2.docx")] } }
+      );
+      await waitFor(() =>
+        expect(request).toHaveBeenCalledWith(
+          expect.stringContaining("replace=t1"),
+          expect.anything()
+        )
+      );
+      expect(confirm).toHaveBeenCalledTimes(2); // not asked again for the chosen file
     } finally {
       confirm.mockRestore();
       pick.mockRestore();
     }
   });
 
-  it("tells the jurisdictions panel about unsaved edits, and warns before the tab closes", async () => {
+  it("warns before the tab closes with unsaved edits", async () => {
     serve([UPLOADED]);
-    const onStateChange = vi.fn();
     const user = userEvent.setup();
-    render(<TemplatesEditor code="ET" onStateChange={onStateChange} />);
+    render(<TemplatesEditor code="ET" />);
     await user.click(
       await screen.findByRole("button", { name: "ET judgment" })
     );
@@ -630,10 +1071,6 @@ describe("TemplatesEditor", () => {
       within(fields).getByLabelText("Label of box Reference"),
       "!"
     );
-    expect(onStateChange).toHaveBeenLastCalledWith({
-      busy: false,
-      unsaved: true,
-    });
     expect(leave()).toBe(true);
   });
 
@@ -662,5 +1099,905 @@ describe("TemplatesEditor", () => {
     expect(
       await screen.findByText("Templates need the latest version of the API.")
     ).toBeTruthy();
+  });
+});
+
+describe("Switching a template on for everyone (DIAAT-347)", () => {
+  beforeEach(() => {
+    request.mockReset();
+  });
+
+  async function chooseLive(
+    user: ReturnType<typeof userEvent.setup>,
+    fields: HTMLElement
+  ) {
+    await user.click(within(fields).getByLabelText("Who can choose it"));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Live: all its judges can choose it",
+      })
+    );
+  }
+
+  it("goes live only with the service lead's sign-off, then says who gave it", async () => {
+    serve([{ ...UPLOADED, stage: "test" }]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await chooseLive(user, fields);
+    const signOff = within(fields).getByRole("group", {
+      name: "Service lead's sign-off",
+    });
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    expect(signOff.textContent).toContain(
+      "Enter the service lead's name and tick that they have signed it off."
+    );
+    expect(puts()).toEqual([]);
+
+    await user.click(
+      within(signOff).getByLabelText("Service lead who signed it off")
+    );
+    await user.paste("A Lead");
+    await user.click(
+      within(signOff).getByLabelText("The service lead has signed this off")
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0]).toMatchObject({
+      stage: "live",
+      sign_off: { service_lead: "A Lead", confirmed: true },
+    });
+    const reopened = await screen.findByRole("region", {
+      name: "Fields of ET judgment",
+    });
+    expect(reopened.textContent).toContain(
+      "Signed off by A Lead on 12 November 2026."
+    );
+    expect(
+      within(reopened).queryByRole("group", { name: "Service lead's sign-off" })
+    ).toBeNull();
+    expect(screen.getByText("Live")).toBeTruthy();
+  });
+
+  it("does not ask again when a live template is saved", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        stage: "live",
+        sign_off: {
+          service_lead: "A Lead",
+          signed_off_at: "2026-11-12T10:00:00",
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].stage).toBe("live");
+    expect(puts()[0].sign_off).toBeUndefined();
+  });
+});
+
+describe("Previewing a template (DIAAT-346)", () => {
+  let saved: { name: string; blob: Blob }[];
+  let click: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    request.mockReset();
+    saved = [];
+    const blobs = new Map<string, Blob>();
+    URL.createObjectURL = vi.fn((blob: Blob) => {
+      const url = `blob:${blobs.size}`;
+      blobs.set(url, blob);
+      return url;
+    });
+    URL.revokeObjectURL = vi.fn();
+    click = vi
+      .spyOn(HTMLAnchorElement.prototype, "click")
+      .mockImplementation(function (this: HTMLAnchorElement) {
+        saved.push({
+          name: this.download,
+          blob: blobs.get(this.href) as Blob,
+        });
+      });
+    return () => click.mockRestore();
+  });
+
+  async function openPreview(user: ReturnType<typeof userEvent.setup>) {
+    const fields = await open(user);
+    const preview = within(fields).getByRole("region", {
+      name: "Preview ET judgment",
+    });
+    await user.click(
+      within(preview).getByRole("button", { name: "Fill in sample details" })
+    );
+    await within(preview).findByRole("button", { name: "Download preview" });
+    return { fields, preview };
+  }
+
+  const previews = () =>
+    request.mock.calls.filter(([endpoint]) => endpoint.endsWith("/preview"));
+
+  it("fills the judges' form with sample details and downloads the document a judge would get", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { preview } = await openPreview(user);
+
+    expect(preview.textContent).toContain(
+      "Judges cannot choose this template yet."
+    );
+    const reference = within(preview).getByLabelText(
+      /^Reference/
+    ) as HTMLInputElement;
+    expect(reference.value).toBe("Sample Reference");
+    expect(within(preview).getByRole("combobox").textContent).toContain(
+      "Claimant"
+    );
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste("1234/2026");
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+
+    await waitFor(() => expect(saved).toHaveLength(1));
+    expect(saved[0].name).toBe("Preview - ET judgment.docx");
+    expect(document.querySelector("a[download]")).toBeNull();
+    const [[endpoint, options, as]] = previews();
+    expect(endpoint).toBe("/admin/jurisdictions/ET/templates/t1/preview");
+    expect(as).toEqual({ as: "blob" });
+    expect(JSON.parse(String(options?.body))).toEqual({
+      values: { Reference: "1234/2026", Party1Title: "Claimant" },
+      version: "v1",
+    });
+    expect(within(preview).queryByRole("alert")).toBeNull();
+  });
+
+  it.each([
+    [
+      "the API's problems with the details",
+      {
+        error: "The hearing details do not fit the template.",
+        problems: [
+          "“Party1Title” has a choice that is not one of its options.",
+        ],
+        status: 400,
+      },
+      "“Party1Title” has a choice that is not one of its options.",
+    ],
+    [
+      "the API's own message",
+      {
+        error:
+          "BenchNotes could not fill this Word file, so judges would not get a document from it either.",
+        status: 400,
+      },
+      "BenchNotes could not fill this Word file, so judges would not get a document from it either.",
+    ],
+    [
+      "a page that is not the API's (the firewall's)",
+      { error: "HTTP error! status: 403", status: 403 },
+      "BenchNotes could not make the preview (error 403). Try again, and if it keeps failing, contact the BenchNotes team.",
+    ],
+    [
+      "a method the server does not take (405)",
+      {
+        error:
+          "Method POST not allowed for /admin/jurisdictions/ET/templates/t1/preview",
+        status: 405,
+      },
+      "BenchNotes could not make the preview (error 405). Try again, and if it keeps failing, contact the BenchNotes team.",
+    ],
+    [
+      "no answer at all",
+      { error: "Failed to fetch" },
+      "BenchNotes could not be reached to make the preview. Check your connection and try again.",
+    ],
+  ])("says in plain words why it failed: %s", async (_, answer, shown) => {
+    serve([UPLOADED], undefined, answer);
+    const user = userEvent.setup();
+    const { preview } = await openPreview(user);
+
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+
+    const alert = await within(preview).findByRole("alert");
+    expect(alert.textContent).toContain("The preview could not be made.");
+    expect(alert.textContent).toContain(shown);
+    expect(saved).toEqual([]);
+  });
+
+  it("says in plain words why the sample details form could not be opened", async () => {
+    serve([UPLOADED], undefined, undefined, { error: "Failed to fetch" });
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const preview = within(fields).getByRole("region", {
+      name: "Preview ET judgment",
+    });
+
+    await user.click(
+      within(preview).getByRole("button", { name: "Fill in sample details" })
+    );
+
+    const alert = await within(preview).findByRole("alert");
+    expect(alert.textContent).toContain(
+      "BenchNotes could not be reached to make the preview. Check your connection and try again."
+    );
+  });
+
+  it("says when only the test group can choose the template", async () => {
+    serve([{ ...UPLOADED, stage: "test" }]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    expect(
+      within(fields).getByRole("region", { name: "Preview ET judgment" })
+        .textContent
+    ).toContain(
+      "Only its test group and administrators can choose this template."
+    );
+  });
+
+  it("asks for the required details before making a preview", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { preview } = await openPreview(user);
+
+    await user.clear(within(preview).getByLabelText(/^Reference/));
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+
+    expect(within(preview).getByRole("alert").textContent).toContain(
+      "Fill in the required sample details first."
+    );
+    expect(within(preview).getByText("Reference is required")).toBeTruthy();
+    expect(previews()).toEqual([]);
+  });
+
+  it("waits for edits to be saved, and keeps the sample details through the save", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { fields, preview } = await openPreview(user);
+    const reference = within(preview).getByLabelText(/^Reference/);
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste("1234/2026");
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    expect(preview.textContent).toContain(
+      "Save your changes first: the preview is made from the saved template."
+    );
+    expect(
+      within(preview)
+        .getByRole("button", { name: "Download preview" })
+        .matches(":disabled")
+    ).toBe(true);
+
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    const reopened = await screen.findByRole("region", {
+      name: "Preview ET judgment",
+    });
+    await user.click(
+      await within(reopened).findByRole("button", {
+        name: "Fill in sample details",
+      })
+    );
+    const kept = (await within(reopened).findByLabelText(
+      /^Reference/
+    )) as HTMLInputElement;
+    expect(kept.value).toBe("1234/2026");
+  });
+
+  async function saveAndReopen(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(
+      within(
+        screen.getByRole("region", { name: "Fields of ET judgment" })
+      ).getByRole("button", { name: "Save" })
+    );
+    const reopened = await screen.findByRole("region", {
+      name: "Preview ET judgment",
+    });
+    await user.click(
+      await within(reopened).findByRole("button", {
+        name: "Fill in sample details",
+      })
+    );
+    await within(reopened).findByRole("button", { name: "Download preview" });
+    return reopened;
+  }
+
+  async function chooseType(
+    user: ReturnType<typeof userEvent.setup>,
+    label: string,
+    type: string
+  ) {
+    await user.click(
+      within(
+        screen.getByRole("region", { name: "Fields of ET judgment" })
+      ).getByRole("combobox", { name: `Type of ${label}` })
+    );
+    await user.click(await screen.findByRole("option", { name: type }));
+  }
+
+  async function sentValues(
+    user: ReturnType<typeof userEvent.setup>,
+    preview: HTMLElement
+  ) {
+    await user.click(
+      within(preview).getByRole("button", { name: "Download preview" })
+    );
+    await waitFor(() => expect(previews()).toHaveLength(1));
+    return JSON.parse(String(previews()[0][1]?.body)).values;
+  }
+
+  it("gives a new sample for an answer its field's new type cannot take", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    await openPreview(user); // Reference: "Sample Reference"
+
+    await chooseType(user, "Reference", "Yes / No");
+    const preview = await saveAndReopen(user);
+
+    expect(
+      (
+        within(preview).getByRole("radio", { name: "Yes" }) as HTMLElement
+      ).getAttribute("aria-checked")
+    ).toBe("true");
+    expect(await sentValues(user, preview)).toEqual({
+      Reference: true,
+      Party1Title: "Claimant",
+    });
+  });
+
+  it.each([
+    ["not a calendar date", "2026-02-31", "today's sample"],
+    ["a date with spaces", " 2026-02-03 ", "2026-02-03"],
+  ])("keeps a text answer as a date only when it is one: %s", async (_, typed, kept) => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { preview: first } = await openPreview(user);
+    const reference = within(first).getByLabelText(/^Reference/);
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste(typed);
+
+    await chooseType(user, "Reference", "Date");
+    const preview = await saveAndReopen(user);
+
+    const today = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const sample = `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`;
+    expect((await sentValues(user, preview)).Reference).toBe(
+      kept === "today's sample" ? sample : kept
+    );
+  });
+
+  it("keeps cleared answers unanswered through a save", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const { fields, preview: first } = await openPreview(user);
+    await user.click(
+      within(first).getByRole("button", { name: "Clear answers" })
+    );
+
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    const preview = await saveAndReopen(user);
+
+    expect(
+      (within(preview).getByLabelText(/^Reference/) as HTMLInputElement).value
+    ).toBe("");
+    expect(within(preview).getByRole("combobox").textContent).toContain(
+      "Choose"
+    );
+  });
+
+  it("ignores a form that answers after the editor reopened", async () => {
+    serve([UPLOADED]);
+    const served = request.getMockImplementation();
+    let answerLate: () => void = () => undefined;
+    let held = false;
+    request.mockImplementation((endpoint, ...rest) => {
+      if (!held && endpoint.endsWith("/form")) {
+        held = true;
+        return new Promise((resolve) => {
+          answerLate = () => resolve(served?.(endpoint, ...rest) as never);
+        });
+      }
+      return served?.(endpoint, ...rest) as never;
+    });
+    const user = userEvent.setup();
+    const fields = await open(user);
+    await user.click(
+      within(
+        within(fields).getByRole("region", { name: "Preview ET judgment" })
+      ).getByRole("button", { name: "Fill in sample details" })
+    );
+
+    // Saved while the first form is on its way: the editor reopens.
+    await user.type(
+      within(fields).getByLabelText("Label of box Reference"),
+      "!"
+    );
+    const preview = await saveAndReopen(user);
+    const reference = within(preview).getByLabelText(
+      /^Reference/
+    ) as HTMLInputElement;
+    await user.clear(reference);
+    await user.click(reference);
+    await user.paste("1234/2026");
+
+    answerLate();
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(reference.value).toBe("1234/2026");
+    expect((await sentValues(user, preview)).Reference).toBe("1234/2026");
+  });
+
+  it("drops choices no longer offered, keeping the ones still offered", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        fields: UPLOADED.fields.map((f) =>
+          f.tag === "Party1Title" ? { ...f, type: "multi_select" } : f
+        ),
+      },
+    ]);
+    const user = userEvent.setup();
+    let { preview } = await openPreview(user); // Party1Title: ["Claimant"]
+    await user.click(
+      within(preview).getByRole("checkbox", { name: "Respondent" })
+    );
+
+    const options = within(
+      screen.getByRole("region", { name: "Fields of ET judgment" })
+    ).getByLabelText("Options for Party1Title");
+    await user.clear(options);
+    await user.paste("Respondent\nIntervenor");
+    preview = await saveAndReopen(user);
+
+    expect(
+      within(preview)
+        .getByRole("checkbox", { name: "Respondent" })
+        .getAttribute("aria-checked")
+    ).toBe("true");
+    expect(await sentValues(user, preview)).toEqual({
+      Reference: "Sample Reference",
+      Party1Title: ["Respondent"],
+    });
+  });
+
+  it("is not offered until every box has a complete field", async () => {
+    serve([
+      {
+        ...UPLOADED,
+        problems: ["The box “Costs” (Costs) has no field linked to it."],
+      },
+    ]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const preview = within(fields).getByRole("region", {
+      name: "Preview ET judgment",
+    });
+
+    expect(preview.textContent).toContain(
+      "Link every box to a field and save before previewing"
+    );
+    expect(
+      within(preview)
+        .getByRole("button", { name: "Fill in sample details" })
+        .matches(":disabled")
+    ).toBe(true);
+  });
+});
+
+describe("A template's history, and going back (DIAAT-348)", () => {
+  beforeEach(() => {
+    request.mockReset();
+  });
+
+  const LIVE: AdminTemplate = {
+    ...UPLOADED,
+    stage: "live",
+    sign_off: { service_lead: "A Lead", signed_off_at: "2026-11-12T10:00:00" },
+    fields: UPLOADED.fields.map((f) =>
+      f.tag === "Reference" ? { ...f, label: "Broken" } : f
+    ),
+    version: "v5",
+  };
+
+  /** The template routes, with its history and going back to version 1. */
+  function serveHistory() {
+    serve([LIVE]);
+    const templates = request.getMockImplementation();
+    if (!templates) throw new Error("serve() sets the fake API");
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if (endpoint === "/admin/jurisdictions/ET/templates/t1/history")
+          return {
+            data: {
+              versions: [
+                {
+                  number: 2,
+                  saved_at: "2026-11-12T15:00:00Z",
+                  saved_by: {
+                    id: "u1",
+                    email: "admin@example.test",
+                    name: null,
+                  },
+                  restored_from: null,
+                  first: false,
+                  content_as_now: true,
+                  changes: [
+                    {
+                      setting: "fields.Reference.label",
+                      before: "Reference",
+                      after: "Broken",
+                    },
+                  ],
+                },
+                {
+                  number: 1,
+                  saved_at: "2026-11-12T14:00:00Z",
+                  saved_by: {
+                    id: "u1",
+                    email: "admin@example.test",
+                    name: null,
+                  },
+                  restored_from: null,
+                  first: true,
+                  content_as_now: false,
+                  changes: [],
+                },
+              ],
+            },
+          };
+        if (
+          endpoint ===
+            "/admin/jurisdictions/ET/templates/t1/history/1/restore" &&
+          options?.method === "POST"
+        )
+          return { data: { ...LIVE, fields: UPLOADED.fields, version: "v6" } };
+        return templates(endpoint, options);
+      }
+    );
+  }
+
+  it("shows who changed a field and what it was, and goes back for judges at once", async () => {
+    serveHistory();
+    const user = userEvent.setup();
+    const fields = await open(user);
+    expect(within(fields).getByDisplayValue("Broken")).toBeTruthy();
+    const history = screen.getByRole("region", { name: "History" });
+
+    await user.click(
+      within(history).getByRole("button", { name: "Show who changed what" })
+    );
+    expect(
+      (await within(history).findByText(/Field Reference: question/)).closest(
+        "li"
+      )?.textContent
+    ).toBe("Field Reference: question: was Reference, now Broken");
+    await user.click(
+      within(history).getByRole("button", { name: "Go back to version 1" })
+    );
+    await user.click(
+      within(history).getByRole("button", {
+        name: "Confirm: go back to version 1",
+      })
+    );
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "ET judgment is back to version 1."
+      )
+    );
+    const reopened = await screen.findByRole("region", {
+      name: "Fields of ET judgment",
+    });
+    expect(within(reopened).queryByDisplayValue("Broken")).toBeNull();
+    const restore = request.mock.calls.find(([endpoint]) =>
+      endpoint.endsWith("/restore")
+    );
+    expect(JSON.parse(String(restore?.[1]?.body))).toEqual({ version: "v5" });
+    // Still live, with the sign-off it had: who can choose it is unchanged.
+    expect(within(reopened).getByText(/Signed off by A Lead/)).toBeTruthy();
+  });
+
+  it("locks the fields, the list and uploads until going back is done", async () => {
+    serveHistory();
+    const routes = request.getMockImplementation();
+    if (!routes) throw new Error("serveHistory() sets the fake API");
+    let answerRestore: () => void = () => undefined;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        if (endpoint.endsWith("/restore"))
+          await new Promise<void>((resolve) => {
+            answerRestore = resolve;
+          });
+        return routes(endpoint, options);
+      }
+    );
+    const user = userEvent.setup();
+    const fields = await open(user);
+    const history = screen.getByRole("region", { name: "History" });
+    await user.click(
+      within(history).getByRole("button", { name: "Show who changed what" })
+    );
+    await user.click(
+      await within(history).findByRole("button", {
+        name: "Go back to version 1",
+      })
+    );
+    await user.click(
+      within(history).getByRole("button", {
+        name: "Confirm: go back to version 1",
+      })
+    );
+
+    // Edits made now would be dropped when the field list reopens.
+    expect(
+      within(fields).getByDisplayValue("Broken").matches(":disabled")
+    ).toBe(true);
+    expect(
+      screen.getByRole("button", { name: "ET judgment" }).matches(":disabled")
+    ).toBe(true);
+    expect(
+      screen
+        .getByRole("button", { name: /Upload a Word template/ })
+        .matches(":disabled")
+    ).toBe(true);
+    answerRestore();
+
+    // The field list reopens (a new one) from the API's copy, open to edits again.
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("region", { name: "Fields of ET judgment" }))
+          .getByLabelText(/^Name judges/)
+          .matches(":disabled")
+      ).toBe(false)
+    );
+    expect(screen.queryByDisplayValue("Broken")).toBeNull();
+  });
+});
+
+describe("A template shared as a base (DIAAT-336)", () => {
+  beforeEach(() => {
+    request.mockReset();
+  });
+
+  const SHARED = {
+    id: "base1",
+    name: "Generic judgment",
+    service: null,
+    jurisdiction: "EMP",
+    jurisdiction_name: "Employment Tribunals",
+    field_count: 3,
+  };
+  const COPY: AdminTemplate = {
+    ...UPLOADED,
+    id: "copy1",
+    name: "Generic judgment",
+    shared_as_base: false,
+    started_from: {
+      template_id: "base1",
+      name: "Generic judgment",
+      jurisdiction: "EMP",
+      jurisdiction_name: "Employment Tribunals",
+      copied_at: "2026-11-23T10:00:00+00:00",
+    },
+  };
+
+  /** The list, the shared templates and starting from one. */
+  function serveShared(shared: (typeof SHARED)[]) {
+    let list: AdminTemplate[] = [];
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        const method = options?.method ?? "GET";
+        if (
+          endpoint === "/admin/jurisdictions/ET/templates" &&
+          method === "GET"
+        )
+          return { data: list };
+        if (endpoint === "/admin/jurisdictions/ET/base-templates")
+          return { data: shared };
+        if (
+          endpoint === "/admin/jurisdictions/ET/templates/from-base" &&
+          method === "POST"
+        ) {
+          list = [COPY];
+          return { data: COPY, status: 201 };
+        }
+        if (endpoint.endsWith("/history")) return { data: { versions: [] } };
+        throw new Error(`Unexpected ${method} ${endpoint}`);
+      }
+    );
+  }
+
+  it("shares a template as a base for other jurisdictions", async () => {
+    serve([{ ...UPLOADED, shared_as_base: false }]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    await user.click(
+      within(fields).getByRole("checkbox", {
+        name: "Share as a base template for other jurisdictions",
+      })
+    );
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0].shared_as_base).toBe(true);
+  });
+
+  it("offers no sharing against an API from before it, and sends none", async () => {
+    serve([UPLOADED]);
+    const user = userEvent.setup();
+    const fields = await open(user);
+
+    expect(
+      within(fields).queryByRole("checkbox", {
+        name: "Share as a base template for other jurisdictions",
+      })
+    ).toBeNull();
+    await user.click(within(fields).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(puts()).toHaveLength(1));
+    expect(puts()[0]).not.toHaveProperty("shared_as_base");
+  });
+
+  it("starts a template from a copy of a shared one, and says where it came from", async () => {
+    serveShared([SHARED]);
+    const user = userEvent.setup();
+    render(<TemplatesEditor code="ET" />);
+    await screen.findByText("No templates yet.");
+
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    const picker = await screen.findByRole("region", {
+      name: "Start from a shared template",
+    });
+    expect(
+      await within(picker).findByText(
+        "Generic judgment (Employment Tribunals), 3 fields"
+      )
+    ).toBeTruthy();
+    await user.click(
+      within(picker).getByRole("button", { name: "Start from it" })
+    );
+
+    const fields = await screen.findByRole("region", {
+      name: "Fields of Generic judgment",
+    });
+    const post = request.mock.calls.find(([, o]) => o?.method === "POST");
+    expect(post?.[0]).toBe("/admin/jurisdictions/ET/templates/from-base");
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+      template_id: "base1",
+    });
+    expect(
+      within(fields).getByText(
+        "Started from a copy of Generic judgment (Employment Tribunals) on 23 November 2026. Changes to that template do not change this one."
+      )
+    ).toBeTruthy();
+    expect(
+      screen.queryByRole("region", { name: "Start from a shared template" })
+    ).toBeNull();
+    expect(toast.success).toHaveBeenCalledWith(
+      expect.stringMatching(
+        /^Started Generic judgment from a copy of Generic judgment/
+      )
+    );
+  });
+
+  it("says when no jurisdiction shares a template yet", async () => {
+    serveShared([]);
+    const user = userEvent.setup();
+    render(<TemplatesEditor code="ET" />);
+    await screen.findByText("No templates yet.");
+
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    expect(
+      await screen.findByText("No jurisdiction shares a template yet.")
+    ).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Start from it",
+        }) as HTMLButtonElement
+      ).disabled
+    ).toBe(true);
+  });
+
+  it("loads the shared templates again when starting from one fails", async () => {
+    let lists = 0;
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        const method = options?.method ?? "GET";
+        if (endpoint === "/admin/jurisdictions/ET/templates")
+          return { data: [] };
+        if (endpoint === "/admin/jurisdictions/ET/base-templates") {
+          lists += 1;
+          return { data: lists === 1 ? [SHARED] : [] };
+        }
+        if (method === "POST")
+          return {
+            error: "That template is no longer shared as a base.",
+            status: 404,
+          };
+        throw new Error(`Unexpected ${method} ${endpoint}`);
+      }
+    );
+    const user = userEvent.setup();
+    render(<TemplatesEditor code="ET" />);
+    await screen.findByText("No templates yet.");
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Start from it" })
+    );
+
+    expect(
+      await screen.findByText("No jurisdiction shares a template yet.")
+    ).toBeTruthy();
+    expect(toast.error).toHaveBeenCalledWith(
+      "That template is no longer shared as a base."
+    );
+  });
+
+  it("locks the open field list while a copy of a shared template is made", async () => {
+    request.mockImplementation(
+      async (endpoint: string, options?: RequestInit) => {
+        const method = options?.method ?? "GET";
+        if (endpoint === "/admin/jurisdictions/ET/templates")
+          return { data: [UPLOADED] };
+        if (endpoint === "/admin/jurisdictions/ET/base-templates")
+          return { data: [SHARED] };
+        if (endpoint.endsWith("/history")) return { data: { versions: [] } };
+        if (method === "POST") return new Promise(() => undefined); // still copying
+        throw new Error(`Unexpected ${method} ${endpoint}`);
+      }
+    );
+    const user = userEvent.setup();
+    const fields = await open(user);
+    await user.click(
+      screen.getByRole("button", { name: "Start from a shared template" })
+    );
+    const picker = await screen.findByRole("region", {
+      name: "Start from a shared template",
+    });
+    await within(picker).findByText(
+      /Generic judgment \(Employment Tribunals\)/
+    );
+    await user.click(
+      within(picker).getByRole("button", { name: "Start from it" })
+    );
+
+    await waitFor(() =>
+      expect(
+        within(fields)
+          .getByLabelText("Label of box Reference")
+          .matches(":disabled")
+      ).toBe(true)
+    );
   });
 });

@@ -19,7 +19,7 @@ describe("MultistepTutorial", () => {
 
     expect(
       screen.getByText(
-        "From the home page, select Dictation to open the dictation workspace."
+        "From the home page, select Decisions, then Record a decision to open the dictation workspace."
       )
     ).toBeTruthy();
     expect(previousButton.hasAttribute("disabled")).toBe(true);
@@ -35,7 +35,7 @@ describe("MultistepTutorial", () => {
       container
         .querySelector('[data-quick-start-illustration="start-recording"]')
         ?.getAttribute("aria-label")
-    ).toBe("Illustration of the home page with the Dictation button");
+    ).toBe("Illustration of the Decisions page with the Record a decision button");
 
     fireEvent.click(nextButton);
 
@@ -54,5 +54,23 @@ describe("MultistepTutorial", () => {
         "Complete the hearing details form before you submit the hearing, and update it if anything changes while you work."
       )
     ).toBeTruthy();
+  });
+
+  it("sends the user to Decisions to download the document (DIAAT-400)", () => {
+    const { container } = render(<MultistepTutorial />);
+    for (let step = 0; step < 4; step += 1) {
+      fireEvent.click(screen.getAllByRole("button", { name: /Go to next step/ })[0]);
+    }
+
+    expect(
+      screen.getByText(
+        "After processing finishes, go to Decisions and choose Download document for the hearing you want."
+      )
+    ).toBeTruthy();
+    expect(
+      container
+        .querySelector('[data-quick-start-illustration="download"]')
+        ?.getAttribute("aria-label")
+    ).toBe("Illustration of the Decisions page with the Download document option");
   });
 });

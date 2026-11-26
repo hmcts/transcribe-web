@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { track } from "@/lib/analytics";
 import { apiClient } from "@/lib/api-client";
 import { type AudioBackup, audioBackupDB } from "@/lib/indexeddb-backup";
+import { reportXhrRefusal } from "@/lib/access/refusals";
 import { jurisdictionHeaders } from "@/lib/jurisdiction-session";
 import { useTranscripts } from "@/providers/transcripts";
 
@@ -60,6 +61,7 @@ function BackupUploader({
             if (xhr.status >= 200 && xhr.status < 300) {
               resolve(xhr.response);
             } else {
+              reportXhrRefusal(xhr); // a refusal about who the user is shows its notice
               reject(new Error("Failed to upload file to Azure Storage"));
             }
           });
@@ -207,7 +209,7 @@ function BackupUploader({
                 variant="outline"
                 className="min-h-[44px] w-auto px-6 py-2 font-medium shadow-sm transition-all duration-200 hover:shadow-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 motion-safe:hover:scale-105 motion-safe:active:scale-95 md:text-lg"
               >
-                Return to Home
+                Return to Decisions
               </Button>
               <Button
                 onClick={handleRetryUpload}

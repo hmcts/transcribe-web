@@ -10,7 +10,7 @@
 export const WORDING_DEFAULTS = {
   "home.intro":
     "Supporting judicial work through live dictation, so you can focus on the proceedings.",
-  "help.subtitle": "Getting started with Bench Notes",
+  "help.subtitle": "Getting started with BenchNotes",
   "nav.recordings": "Recordings",
   "records.column_title": "Title",
   "records.column_type": "Type",
