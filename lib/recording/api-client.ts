@@ -3,6 +3,10 @@ import type { BackendAuthContext } from "./auth-utils";
 import { multipartFileBody, type UploadFile } from "./multipart";
 import type {
   CorrectionEntry,
+  Hearing,
+  HearingDay,
+  HearingStatus,
+  HearingSummary,
   JobStatus,
   LowConfidenceSegment,
   PhraseAlternatives,
@@ -87,6 +91,7 @@ interface BackendNeedsReviewItem {
   speaker: string;
   start_time: number;
   confidence: number;
+  job_id?: string | null;
 }
 
 interface BackendJob {
@@ -103,10 +108,59 @@ interface BackendJob {
   transcription_duration_seconds: number | null;
   model_identifier: string | null;
   model_display_name: string | null;
+  hearing_id?: string | null;
+  hearing_date?: string | null;
 }
 
 interface BackendJobList {
   jobs: BackendJob[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+interface BackendHearingFields {
+  hearing_id: string;
+  created_at: string | null;
+  updated_at: string | null;
+  case_reference: string | null;
+  tribunal: string | null;
+  status: string;
+  day_count: number;
+  days_complete: number;
+  days_failed: number;
+}
+
+interface BackendHearingDay extends BackendJob {
+  hearing_id: string;
+  hearing_date: string;
+  day_number: number;
+}
+
+interface BackendHearing extends BackendHearingFields {
+  days: BackendHearingDay[];
+}
+
+interface BackendHearingDaySummary {
+  job_id: string;
+  day_number: number;
+  hearing_date: string;
+  audio_file_name: string | null;
+  status: string;
+  created_at: string;
+  audio_duration_seconds: number | null;
+  transcription_duration_seconds: number | null;
+  model_identifier: string | null;
+  model_display_name: string | null;
+  error_message: string | null;
+}
+
+interface BackendHearingSummary extends BackendHearingFields {
+  days: BackendHearingDaySummary[];
+}
+
+interface BackendHearingList {
+  hearings: BackendHearingSummary[];
   total: number;
   limit: number;
   offset: number;
@@ -403,6 +457,7 @@ function toLowConfidenceSegments(
     speakerColor: colorForSpeaker(item.speaker),
     confidence: item.confidence,
     startTime: item.start_time,
+    jobId: item.job_id ?? undefined,
   }));
 }
 
@@ -438,6 +493,76 @@ function toTranscriptionJob(job: BackendJob): TranscriptionJob {
       job.transcription_duration_seconds ?? undefined,
     modelIdentifier: job.model_identifier ?? undefined,
     modelDisplayName: job.model_display_name ?? undefined,
+    hearingId: job.hearing_id ?? undefined,
+    hearingDate: job.hearing_date ?? undefined,
+  };
+}
+
+const HEARING_STATUSES: readonly HearingStatus[] = [
+  "processing",
+  "completed",
+  "failed",
+  "partial",
+];
+
+function toHearingStatus(status: string): HearingStatus {
+  return HEARING_STATUSES.includes(status as HearingStatus)
+    ? (status as HearingStatus)
+    : "processing";
+}
+
+function toHearingDay(day: BackendHearingDay): HearingDay {
+  return {
+    ...toTranscriptionJob(day),
+    hearingId: day.hearing_id,
+    hearingDate: day.hearing_date,
+    dayNumber: day.day_number,
+  };
+}
+
+function toHearing(hearing: BackendHearing): Hearing {
+  const days = hearing.days.map(toHearingDay);
+  return {
+    id: hearing.hearing_id,
+    caseReference:
+      hearing.case_reference ?? days[0]?.caseReference ?? hearing.hearing_id,
+    tribunal:
+      hearing.tribunal ??
+      days[0]?.tribunal ??
+      "First-tier Tribunal — Immigration and Asylum Chamber",
+    status: toHearingStatus(hearing.status),
+    days,
+  };
+}
+
+function toHearingSummary(hearing: BackendHearingSummary): HearingSummary {
+  return {
+    id: hearing.hearing_id,
+    caseReference: hearing.case_reference ?? hearing.hearing_id,
+    tribunal:
+      hearing.tribunal ??
+      "First-tier Tribunal — Immigration and Asylum Chamber",
+    status: toHearingStatus(hearing.status),
+    createdAt: hearing.created_at ?? undefined,
+    updatedAt: hearing.updated_at ?? undefined,
+    dayCount: hearing.day_count,
+    daysComplete: hearing.days_complete,
+    daysFailed: hearing.days_failed,
+    days: hearing.days.map((day) => ({
+      jobId: day.job_id,
+      dayNumber: day.day_number,
+      hearingDate: day.hearing_date,
+      audioFileName: day.audio_file_name ?? "audio",
+      status: STATUS_MAP[day.status] ?? "PENDING",
+      progressPercent: PROGRESS_BY_STATUS[day.status] ?? 0,
+      uploadedAt: day.created_at,
+      audioDurationSeconds: day.audio_duration_seconds ?? undefined,
+      transcriptionDurationSeconds:
+        day.transcription_duration_seconds ?? undefined,
+      modelIdentifier: day.model_identifier ?? undefined,
+      modelDisplayName: day.model_display_name ?? undefined,
+      errorMessage: day.error_message ?? undefined,
+    })),
   };
 }
 
@@ -515,6 +640,8 @@ export interface JobHistoryEntry {
   actor_label: string;
   actor_role: string | null;
   outcome: string;
+  // DIAAT-428: in a hearing's history, the recording day the row is about.
+  job_id?: string | null;
 }
 
 export interface JobHistoryPage {
@@ -532,14 +659,117 @@ export async function getJobHistory(
   params: { page?: number; pageSize?: number } | undefined,
   auth: BackendAuthContext | null
 ): Promise<JobHistoryPage> {
+  const response = await backendFetch(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/history${historyQuery(params)}`,
+    undefined,
+    auth
+  );
+  const body: JobHistoryPage = await response.json();
+  return { items: body.items ?? [], total: body.total ?? 0 };
+}
+
+function historyQuery(
+  params: { page?: number; pageSize?: number } | undefined
+) {
   const query = new URLSearchParams();
   if (params?.page !== undefined) query.set("page", String(params.page));
   if (params?.pageSize !== undefined) {
     query.set("page_size", String(params.pageSize));
   }
   const qs = query.toString();
+  return qs ? `?${qs}` : "";
+}
+
+export async function listHearings(
+  params: { limit?: number; offset?: number } | undefined,
+  auth: BackendAuthContext | null
+): Promise<{
+  hearings: HearingSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}> {
+  const query = new URLSearchParams();
+  if (params?.limit !== undefined) query.set("limit", String(params.limit));
+  if (params?.offset !== undefined) query.set("offset", String(params.offset));
+  const qs = query.toString();
   const response = await backendFetch(
-    `/api/v1/jobs/${encodeURIComponent(jobId)}/history${qs ? `?${qs}` : ""}`,
+    `/api/v1/hearings${qs ? `?${qs}` : ""}`,
+    undefined,
+    auth
+  );
+  const body: BackendHearingList = await response.json();
+  return {
+    hearings: body.hearings.map(toHearingSummary),
+    total: body.total,
+    limit: body.limit,
+    offset: body.offset,
+  };
+}
+
+/** The hearing with every day's transcript, or null if there is none to see (as getJob). */
+export async function getHearing(
+  hearingId: string,
+  auth: BackendAuthContext | null
+): Promise<Hearing | null> {
+  try {
+    const response = await backendFetch(
+      `/api/v1/hearings/${encodeURIComponent(hearingId)}`,
+      undefined,
+      auth
+    );
+    const body: BackendHearing = await response.json();
+    return toHearing(body);
+  } catch (err) {
+    if (
+      err instanceof BackendApiError &&
+      (err.status === 404 || err.status === 422)
+    ) {
+      return null;
+    }
+    throw err;
+  }
+}
+
+/** Every day of the hearing, then the hearing. The API answers 502 if a day had to be kept. */
+export async function deleteHearing(
+  hearingId: string,
+  auth: BackendAuthContext | null
+): Promise<void> {
+  await backendFetch(
+    `/api/v1/hearings/${encodeURIComponent(hearingId)}`,
+    { method: "DELETE" },
+    auth
+  );
+}
+
+/** Changes the date of one day of a hearing (`hearingDate` is YYYY-MM-DD). */
+export async function setHearingDate(
+  jobId: string,
+  hearingDate: string,
+  auth: BackendAuthContext | null
+): Promise<HearingSummary> {
+  const response = await backendFetch(
+    `/api/v1/jobs/${encodeURIComponent(jobId)}/hearing-date`,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hearing_date: hearingDate }),
+    },
+    auth
+  );
+  const body: BackendHearingSummary = await response.json();
+  return toHearingSummary(body);
+}
+
+/** `GET /api/v1/hearings/{id}/history`: as getJobHistory, for every day of the hearing. */
+export async function getHearingHistory(
+  hearingId: string,
+  params: { page?: number; pageSize?: number } | undefined,
+  auth: BackendAuthContext | null
+): Promise<JobHistoryPage> {
+  const response = await backendFetch(
+    `/api/v1/hearings/${encodeURIComponent(hearingId)}/history${historyQuery(params)}`,
     undefined,
     auth
   );
@@ -617,12 +847,23 @@ export interface SubmitJobMetadata {
   audioFileName: string;
 }
 
+/**
+ * DIAAT-428: the hearing a recording is a day of. Without `hearingId` the
+ * recording is a new one-day hearing; without `hearingDate` the API dates the
+ * day today (in London).
+ */
+export interface HearingDayOptions {
+  hearingId?: string;
+  hearingDate?: string;
+}
+
 export async function submitJob(
   audioUrl: string,
   metadata: SubmitJobMetadata,
   blobName: string | undefined,
   audioDurationSeconds: number | undefined,
-  auth: BackendAuthContext | null
+  auth: BackendAuthContext | null,
+  hearing: HearingDayOptions = {}
 ): Promise<TranscriptionJob> {
   const response = await backendFetch(
     "/api/v1/jobs",
@@ -638,6 +879,8 @@ export async function submitJob(
           tribunal: metadata.tribunal,
           audio_file_name: metadata.audioFileName,
         },
+        hearing_id: hearing.hearingId,
+        hearing_date: hearing.hearingDate,
       }),
     },
     auth
@@ -785,7 +1028,8 @@ export async function uploadBaselineTranscript(
 export async function uploadAndSubmit(
   file: UploadFile,
   audioDurationSeconds: number | undefined,
-  auth: BackendAuthContext | null
+  auth: BackendAuthContext | null,
+  hearing: HearingDayOptions = {}
 ): Promise<TranscriptionJob> {
   const { audio_url, blob_name } = await uploadAudio(file, auth);
   const filename = file.filename;
@@ -799,6 +1043,7 @@ export async function uploadAndSubmit(
     },
     blob_name,
     audioDurationSeconds,
-    auth
+    auth,
+    hearing
   );
 }

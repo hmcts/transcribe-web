@@ -41,7 +41,7 @@
 		# themselves with the session's token (lib/recording/api-client.ts).
 		# Exact paths: a prefix such as /api/upload* would also capture the
 		# backend's /api/upload-audio.
-		@next_api path /api/jobs /api/jobs/* /api/upload /api/audio/* /api/version
+		@next_api path /api/jobs /api/jobs/* /api/hearings /api/hearings/* /api/upload /api/audio/* /api/version
 		handle @next_api {
 			reverse_proxy localhost:3001
 		}

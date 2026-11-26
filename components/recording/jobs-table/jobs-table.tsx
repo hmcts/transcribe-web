@@ -179,7 +179,7 @@ export function JobsTable({
               <td className="px-4 py-3">
                 {onDelete && (
                   <DeleteJobButton
-                    jobId={job.id}
+                    hearingId={job.id}
                     caseReference={job.caseReference}
                     onDeleted={onDelete}
                   />

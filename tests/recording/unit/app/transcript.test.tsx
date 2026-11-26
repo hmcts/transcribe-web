@@ -2,6 +2,8 @@ import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import TranscriptPage from "@/app/recording/jobs/[jobId]/page";
 import { setTabContext } from "@/lib/jurisdiction-session";
+import type { TranscriptionJob } from "@/lib/recording/types";
+import { hearingOf, oneDayHearing } from "../hearing-fixtures";
 
 // The page loads its job in the browser, in the tab's jurisdiction (DIAAT-334).
 
@@ -37,11 +39,12 @@ const COMPLETED_JOB = {
 
 let fetchMock: ReturnType<typeof vi.fn>;
 
-function serve(status: number, job?: unknown) {
+// DIAAT-428: the page reads the hearing; a recording is a hearing of one day.
+function serve(status: number, job?: TranscriptionJob) {
   fetchMock.mockResolvedValue({
     ok: status >= 200 && status < 300,
     status,
-    json: async () => ({ job }),
+    json: async () => ({ hearing: job ? oneDayHearing(job) : undefined }),
   });
 }
 
@@ -82,6 +85,7 @@ describe("TranscriptPage", () => {
     setTabContext({ jurisdiction: "IAC", role: "Judge" });
     await renderPage();
     await screen.findByText("PA/05217/2025");
+    expect(fetchMock.mock.calls[0][0]).toBe(`/api/hearings/${COMPLETED_JOB.id}`);
     expect(fetchMock.mock.calls[0][1].headers["X-Jurisdiction"]).toBe("IAC");
   });
 
@@ -131,5 +135,39 @@ describe("TranscriptPage", () => {
     expect(
       screen.getByText("Azure batch transcription submission failed")
     ).toBeDefined();
+  });
+
+  it("shows not found for a hearing with no days left", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ hearing: { ...oneDayHearing(COMPLETED_JOB), days: [] } }),
+    });
+    await renderPage();
+    expect(await screen.findByRole("heading", { name: "Transcript not found" })).toBeDefined();
+  });
+
+  it("shows every day of a hearing of several days, each under its heading", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        hearing: hearingOf([
+          COMPLETED_JOB,
+          {
+            ...COMPLETED_JOB,
+            id: "job-day-2",
+            audioFileName: "day2.wav",
+            status: "PROCESSING",
+            segments: undefined,
+          },
+        ]),
+      }),
+    });
+    await renderPage();
+    expect(await screen.findByRole("heading", { name: "Day 1" })).toBeDefined();
+    expect(screen.getByRole("heading", { name: "Day 2" })).toBeDefined();
+    expect(screen.getByText("This hearing is now in session.")).toBeDefined();
+    expect(screen.getByText(/still in progress/i)).toBeDefined();
   });
 });

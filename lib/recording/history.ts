@@ -1,7 +1,7 @@
 /**
  * A recording's audit history (DIAAT-395), as the browser reads it from this
- * app's `/api/jobs/{id}/history` route: who did what to the recording, when, in
- * which role, and how it ended. No transcript text is ever in it.
+ * app's `/api/hearings/{id}/history` route: who did what to the hearing and its
+ * days, when, in which role, and how it ended. No transcript text is ever in it.
  */
 export interface HistoryEntry {
   id: string;
@@ -10,6 +10,8 @@ export interface HistoryEntry {
   actor_label: string;
   actor_role: string | null;
   outcome: string;
+  // DIAAT-428: the recording day the row is about, if it is about one.
+  job_id?: string | null;
 }
 
 export interface HistoryPage {
@@ -38,6 +40,12 @@ export function describeHistoryAction(action: string): string {
       return "Audio exported";
     case "job.delete":
       return "Recording deleted";
+    case "hearing.add_recording":
+      return "Recording added";
+    case "hearing.edit":
+      return "Hearing date changed";
+    case "hearing.delete":
+      return "Hearing deleted";
     default:
       return action;
   }

@@ -867,3 +867,88 @@ describe("GET /api/upload", () => {
     expect(response.status).toBe(200);
   });
 });
+
+// DIAAT-428: a recording added to a hearing goes through this same route (the
+// only path Front Door's WAF lets a raw body through to), with the hearing and
+// the day's date in headers.
+describe("POST /api/upload to a hearing", () => {
+  const HEARING_ID = "22222222-2222-2222-2222-222222222222";
+
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    backendOk();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function submitted() {
+    const [, init] = jobsCall() as [string, RequestInit];
+    return JSON.parse(init.body as string);
+  }
+
+  it("submits the job to the hearing, on the date given", async () => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(
+      uploadRequest(AUDIO, {
+        "x-hearing-id": HEARING_ID,
+        "x-hearing-date": "2026-11-12",
+      })
+    );
+
+    expect(response.status).toBe(201);
+    expect(submitted()).toMatchObject({
+      hearing_id: HEARING_ID,
+      hearing_date: "2026-11-12",
+    });
+  });
+
+  it("sends a date without a hearing, for a new hearing", async () => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    await POST(uploadRequest(AUDIO, { "x-hearing-date": "2026-11-12" }));
+
+    const body = submitted();
+    expect(body.hearing_date).toBe("2026-11-12");
+    expect(body).not.toHaveProperty("hearing_id");
+  });
+
+  it.each([
+    ["a hearing id that is not a UUID", { "x-hearing-id": "../jobs" }],
+    ["a date that is not YYYY-MM-DD", { "x-hearing-date": "12/11/2026" }],
+    ["a date that does not exist", { "x-hearing-date": "2026-02-30" }],
+  ])("refuses %s (400) without calling the API", async (_label, headers) => {
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(uploadRequest(AUDIO, headers));
+
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [404, "This hearing no longer exists. Reload the page."],
+    [
+      403,
+      "Recordings cannot be added to a hearing at the moment. Upload it as a new recording instead.",
+    ],
+  ])("says why the API refused to add to the hearing (%i)", async (status, error) => {
+    fetchMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === `${BACKEND}/api/v1/uploads`
+          ? jsonResponse({ audio_url: "u", blob_name: "b" }, 201)
+          : jsonResponse({ detail: "x", request_id: "req-h" }, status)
+      )
+    );
+    const { POST } = await import("@/app/api/upload/route");
+
+    const response = await POST(
+      uploadRequest(AUDIO, { "x-hearing-id": HEARING_ID })
+    );
+
+    expect(response.status).toBe(status);
+    expect(await response.json()).toEqual({ error, request_id: "req-h" });
+  });
+});

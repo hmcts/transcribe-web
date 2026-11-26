@@ -6,14 +6,20 @@ import { useDropzone } from "react-dropzone";
 import { toast } from "sonner";
 import { Button } from "@/components/recording/ui/button";
 import { describeRecordingLimit } from "@/lib/flags/runtime-flags";
+import { isHearingDate, todayInLondon } from "@/lib/recording/hearing-date";
 import { audioTooLargeError } from "@/lib/recording/upload-limits";
 import { useMaxUploadBytes } from "@/lib/recording/use-max-upload-bytes";
 import { cn } from "@/lib/recording/utils";
 import { useMaxRecordingSeconds } from "@/providers/runtime-flags";
 
 interface AudioUploadProps {
-  onUpload: (file: File) => void;
+  // hearingDate is given only when askHearingDate is set.
+  onUpload: (file: File, hearingDate?: string) => void;
   uploading?: boolean;
+  // DIAAT-428: ask for the date of the hearing day the recording is of
+  // (today unless changed).
+  askHearingDate?: boolean;
+  submitLabel?: string;
 }
 
 const ACCEPTED_TYPES = {
@@ -24,8 +30,14 @@ const ACCEPTED_TYPES = {
   "audio/flac": [".flac"],
 };
 
-export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
+export function AudioUpload({
+  onUpload,
+  uploading = false,
+  askHearingDate = false,
+  submitLabel = "Transcribe a recording",
+}: AudioUploadProps) {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [hearingDate, setHearingDate] = useState(todayInLondon);
   const maxRecording = describeRecordingLimit(useMaxRecordingSeconds());
   const maxUploadBytes = useMaxUploadBytes();
 
@@ -73,7 +85,15 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
       setSelectedFile(null);
       return;
     }
-    onUpload(selectedFile);
+    if (!askHearingDate) {
+      onUpload(selectedFile);
+      return;
+    }
+    if (!isHearingDate(hearingDate)) {
+      toast.error("Enter the date of the hearing.");
+      return;
+    }
+    onUpload(selectedFile, hearingDate);
   };
 
   return (
@@ -110,12 +130,25 @@ export function AudioUpload({ onUpload, uploading = false }: AudioUploadProps) {
         )}
       </div>
 
+      {askHearingDate && (
+        <label className="flex flex-col gap-1 text-sm font-medium">
+          Date of the hearing
+          <input
+            type="date"
+            value={hearingDate}
+            onChange={(e) => setHearingDate(e.target.value)}
+            disabled={uploading}
+            className="w-48 rounded-md border border-border px-3 py-1.5 font-normal focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </label>
+      )}
+
       <Button
         onClick={handleSubmit}
         disabled={!selectedFile || uploading}
         className="w-full"
       >
-        {uploading ? "Uploading…" : "Transcribe a recording"}
+        {uploading ? "Uploading…" : submitLabel}
       </Button>
     </div>
   );

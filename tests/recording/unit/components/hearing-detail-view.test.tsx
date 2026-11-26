@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { JobDetailView } from "@/components/recording/transcript/job-detail-view";
+import { HearingDetailView } from "@/components/recording/transcript/hearing-detail-view";
+import { oneDayHearing } from "../hearing-fixtures";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
 import type { TranscriptionJob } from "@/lib/recording/types";
 
@@ -49,10 +50,10 @@ function makeJob(overrides: Partial<TranscriptionJob> = {}): TranscriptionJob {
   };
 }
 
-describe("JobDetailView review panel sidebar", () => {
+describe("HearingDetailView review panel sidebar", () => {
   it("renders the sidebar with sticky positioning so it stays in view while scrolling", () => {
     const job = makeJob();
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     const heading = screen.getByRole("heading", { name: /needs review/i });
     // The sidebar is the nearest <aside> ancestor of the panel.
@@ -74,7 +75,7 @@ describe("JobDetailView review panel sidebar", () => {
       accuracy: undefined,
       lowConfidenceSegments: undefined,
     });
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     expect(screen.queryByText(/needs review/i)).toBeNull();
   });
 });
@@ -84,7 +85,7 @@ describe("JobDetailView review panel sidebar", () => {
 // at least one low-confidence highlight, so clean transcripts (and ones where
 // every highlight was cleared) don't show a caption about highlights that
 // aren't there.
-describe("JobDetailView highlight caption", () => {
+describe("HearingDetailView highlight caption", () => {
   // A segment that renders word-by-word with a sub-threshold word, so a
   // low-confidence highlight actually exists (the caption's precondition).
   const HIGHLIGHTED_SEGMENT = {
@@ -103,7 +104,7 @@ describe("JobDetailView highlight caption", () => {
 
   it("shows the review caption when a low-confidence word is highlighted", () => {
     const job = makeJob({ segments: [HIGHLIGHTED_SEGMENT] });
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     expect(
       screen.getByText(/lower recognition confidence — review and confirm/i)
     ).toBeDefined();
@@ -115,7 +116,7 @@ describe("JobDetailView highlight caption", () => {
       accuracy: undefined,
       lowConfidenceSegments: undefined,
     });
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     expect(screen.queryByText(/lower recognition confidence/i)).toBeNull();
   });
 
@@ -133,14 +134,14 @@ describe("JobDetailView highlight caption", () => {
         },
       ],
     });
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     expect(screen.queryByText(/lower recognition confidence/i)).toBeNull();
   });
 });
 
 // DIAAT-246: the sync-highlight preference is owned here, defaults on, and is
 // persisted to localStorage so it survives reloads.
-describe("JobDetailView sync-highlight toggle", () => {
+describe("HearingDetailView sync-highlight toggle", () => {
   const STORAGE_KEY = "batch:syncHighlight";
 
   beforeEach(() => {
@@ -149,7 +150,7 @@ describe("JobDetailView sync-highlight toggle", () => {
 
   it("defaults the toggle on", () => {
     const job = makeJob();
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     const toggle = screen.getByRole("button", {
       name: /highlight words with audio/i,
     });
@@ -159,7 +160,7 @@ describe("JobDetailView sync-highlight toggle", () => {
   it("flips state and writes localStorage when toggled off", async () => {
     const user = userEvent.setup();
     const job = makeJob();
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     const toggle = screen.getByRole("button", {
       name: /highlight words with audio/i,
     });
@@ -173,7 +174,7 @@ describe("JobDetailView sync-highlight toggle", () => {
   it("hydrates the stored 'off' choice on mount", async () => {
     localStorage.setItem(STORAGE_KEY, "false");
     const job = makeJob();
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     const toggle = screen.getByRole("button", {
       name: /highlight words with audio/i,
     });
@@ -183,7 +184,7 @@ describe("JobDetailView sync-highlight toggle", () => {
   });
 });
 
-describe("JobDetailView back link", () => {
+describe("HearingDetailView back link", () => {
   it.each([
     ["a completed job", makeJob()],
     [
@@ -192,14 +193,14 @@ describe("JobDetailView back link", () => {
     ],
     ["a failed job", makeJob({ status: "FAILED", segments: undefined })],
   ])("returns to the recording list for %s", (_label, job) => {
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     const link = screen.getByRole("link", { name: /back to hearing list/i });
     // The list is app/recording/page.tsx; "/" is the dictation home page.
     expect(link.getAttribute("href")).toBe("/recording");
   });
 });
 
-describe("JobDetailView baseline transcript upload", () => {
+describe("HearingDetailView baseline transcript upload", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   // Front Door's WAF blocks multipart bodies from the browser, so the file
@@ -217,16 +218,20 @@ describe("JobDetailView baseline transcript upload", () => {
           })
       )
     );
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.upload(
       screen.getByLabelText(/baseline transcript file input/i),
       new File(["Judge: Good morning."], "day 2.txt", { type: "text/plain" })
     );
-    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({ step: "busy" });
+    await expect(prepareForJurisdictionSwitch()).rejects.toMatchObject({
+      step: "busy",
+    });
 
     finish({ ok: true, status: 200, json: () => Promise.resolve({ job }) });
-    await waitFor(() => expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined());
+    await waitFor(() =>
+      expect(prepareForJurisdictionSwitch()).resolves.toBeUndefined()
+    );
   });
 
   it("sends the .txt file as the raw request body, its name and size in headers", async () => {
@@ -244,7 +249,7 @@ describe("JobDetailView baseline transcript upload", () => {
       json: () => Promise.resolve({ job: updated }),
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     const file = new File(["Judge: Good morning."], "R v Smith – day 2.txt", {
       type: "text/plain",
@@ -272,7 +277,7 @@ describe("JobDetailView baseline transcript upload", () => {
   });
 });
 
-describe("JobDetailView speaker rename", () => {
+describe("HearingDetailView speaker rename", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("sends the chosen scope for that section and shows the returned job", async () => {
@@ -307,7 +312,7 @@ describe("JobDetailView speaker rename", () => {
       json: () => Promise.resolve({ job: renamed }),
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       screen.getByRole("button", { name: "Rename speaker Speaker 2" })
@@ -329,7 +334,7 @@ describe("JobDetailView speaker rename", () => {
   });
 });
 
-describe("JobDetailView combining segments", () => {
+describe("HearingDetailView combining segments", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   const segment = (id: string, text: string, startTime: number) => ({
@@ -350,7 +355,7 @@ describe("JobDetailView combining segments", () => {
   });
 
   it("offers no up arrow on the first segment and no down arrow on the last", () => {
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
     expect(
       screen.getAllByRole("button", { name: "Combine with section above" })
     ).toHaveLength(2);
@@ -362,7 +367,9 @@ describe("JobDetailView combining segments", () => {
     expect(
       first.querySelector('[aria-label="Combine with section above"]')
     ).toBeNull();
-    expect(last.querySelector('[aria-label="Combine with section below"]')).toBeNull();
+    expect(
+      last.querySelector('[aria-label="Combine with section below"]')
+    ).toBeNull();
   });
 
   it.each([
@@ -381,7 +388,7 @@ describe("JobDetailView combining segments", () => {
       json: () => Promise.resolve({ job: merged }),
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     const row = document.getElementById(id) as HTMLElement;
     await userEvent.click(
@@ -405,15 +412,13 @@ describe("JobDetailView combining segments", () => {
   it("shows an error and keeps the transcript when a combine fails", async () => {
     vi.stubGlobal(
       "fetch",
-      vi
-        .fn()
-        .mockResolvedValue({
-          ok: false,
-          status: 422,
-          json: () => Promise.resolve({}),
-        })
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 422,
+        json: () => Promise.resolve({}),
+      })
     );
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       document.querySelector(
@@ -438,7 +443,7 @@ describe("JobDetailView combining segments", () => {
           })
       )
     );
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       document.querySelector(
@@ -465,7 +470,7 @@ describe("JobDetailView combining segments", () => {
         json: () => Promise.resolve({}),
       })
     );
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       document.querySelector(
@@ -491,7 +496,7 @@ describe("JobDetailView combining segments", () => {
       )
       .mockResolvedValue(okResponse({ job }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       document.querySelector(
@@ -509,7 +514,9 @@ describe("JobDetailView combining segments", () => {
     );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0][0]).toBe(`/api/jobs/${job.id}/segments/seg-2`);
+    expect(fetchMock.mock.calls[0][0]).toBe(
+      `/api/jobs/${job.id}/segments/seg-2`
+    );
     finishEdit(okResponse({ job }));
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1][0]).toBe(
@@ -526,8 +533,11 @@ describe("JobDetailView combining segments", () => {
     const merged = makeJob({
       segments: [{ ...segment("seg-01", "Good morning.", 0), duration: 5 }],
     });
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(okResponse({ job: merged })));
-    render(<JobDetailView jobId={overlapping.id} initialJob={overlapping} />);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(okResponse({ job: merged }))
+    );
+    render(<HearingDetailView initialHearing={oneDayHearing(overlapping)} />);
 
     await userEvent.click(
       document.querySelector(
@@ -557,7 +567,7 @@ describe("JobDetailView combining segments", () => {
       )
       .mockResolvedValue(okResponse({ job }));
     vi.stubGlobal("fetch", fetchMock);
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       document.querySelector(
@@ -576,7 +586,7 @@ describe("JobDetailView combining segments", () => {
   });
   it("shows an error when a combine request cannot be sent", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("offline")));
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       document.querySelector(
@@ -598,7 +608,7 @@ describe("JobDetailView combining segments", () => {
         json: () => Promise.resolve({}),
       })
     );
-    render(<JobDetailView jobId={job.id} initialJob={job} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job)} />);
 
     await userEvent.click(
       document.querySelector(

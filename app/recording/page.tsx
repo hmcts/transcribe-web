@@ -4,32 +4,35 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AudioUpload } from "@/components/recording/audio-upload/audio-upload";
 import { FilterableJobsSection } from "@/components/recording/jobs-table/filterable-jobs-section";
-import { readAudioDurationSeconds } from "@/lib/recording/audio-duration";
 import { apiPath } from "@/lib/recording/base-path";
-import type { TranscriptionJob } from "@/lib/recording/types";
-import {
-  rawUploadHeaders,
-  SERVICE_UNAVAILABLE_ERROR,
-  UPLOAD_HEADERS,
-} from "@/lib/recording/upload-contract";
+import { hearingRow } from "@/lib/recording/hearing-rows";
+import type { HearingSummary, TranscriptionJob } from "@/lib/recording/types";
+import { uploadRecording } from "@/lib/recording/upload-recording";
 import { recordingFetch } from "@/lib/recording/browser-fetch";
 import {
   JurisdictionSwitchError,
   onBeforeJurisdictionSwitch,
 } from "@/lib/jurisdiction-switch";
+import { useMultiDayHearings } from "@/providers/runtime-flags";
 
 const POLL_INTERVAL_MS = 5000;
 
+// DIAAT-428: one row per hearing, whatever its number of days.
 async function fetchJobs(): Promise<TranscriptionJob[]> {
-  const response = await recordingFetch(apiPath("/api/jobs"), { cache: "no-store" });
+  const response = await recordingFetch(apiPath("/api/hearings"), {
+    cache: "no-store",
+  });
   if (!response.ok) {
-    throw new Error(`Failed to load jobs: ${response.status}`);
+    throw new Error(`Failed to load hearings: ${response.status}`);
   }
   const body = await response.json();
-  return body.jobs as TranscriptionJob[];
+  return (body.hearings as HearingSummary[])
+    .filter((hearing) => hearing.days.length > 0)
+    .map(hearingRow);
 }
 
 export default function DashboardPage() {
+  const multiDayHearings = useMultiDayHearings();
   const [jobs, setJobs] = useState<TranscriptionJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
@@ -79,41 +82,10 @@ export default function DashboardPage() {
   );
 
   const handleUpload = useCallback(
-    async (file: File) => {
+    async (file: File, hearingDate?: string) => {
       setUploading(true);
       try {
-        // Read duration in the browser before upload — the backend can't
-        // determine it until Azure finishes, but the progress UI needs it up
-        // front to show "Transcribing 2h 36m of audio" and estimate remaining
-        // time. For a valid file this resolves near-instantly; it's bounded by
-        // a short internal timeout so a file whose metadata won't load can't
-        // meaningfully delay the upload. Best-effort: undefined simply omits
-        // those extras.
-        const durationSeconds = await readAudioDurationSeconds(file);
-        // The file goes as the raw request body, as exactly
-        // application/octet-stream, never multipart/form-data: the only
-        // shape Front Door's WAF lets through to this path
-        // (lib/recording/upload-contract.ts). The route handler builds the
-        // multipart request to the API inside the cluster.
-        const response = await recordingFetch(apiPath("/api/upload"), {
-          method: "POST",
-          headers: rawUploadHeaders(
-            file,
-            durationSeconds === undefined
-              ? {}
-              : { [UPLOAD_HEADERS.audioDuration]: String(durationSeconds) }
-          ),
-          body: file,
-        });
-        if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          throw new Error(
-            body.error ??
-              (response.status === 503
-                ? SERVICE_UNAVAILABLE_ERROR
-                : `Upload failed: ${response.status}`)
-          );
-        }
+        await uploadRecording(file, { hearingDate });
         toast.success(`"${file.name}" submitted for transcription`);
         await refresh();
       } catch (err) {
@@ -153,7 +125,11 @@ export default function DashboardPage() {
         <section>
           <h2 className="text-lg font-semibold mb-4">Upload audio file</h2>
           <div className="max-w-xl">
-            <AudioUpload onUpload={handleUpload} uploading={uploading} />
+            <AudioUpload
+              onUpload={handleUpload}
+              uploading={uploading}
+              askHearingDate={multiDayHearings}
+            />
           </div>
         </section>
 

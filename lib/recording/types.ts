@@ -103,6 +103,8 @@ export interface LowConfidenceSegment {
   speakerColor: string;
   confidence: number;
   startTime: number;
+  // The recording day the item is in (DIAAT-428); absent from an older API.
+  jobId?: string;
 }
 
 export interface TranscriptAccuracy {
@@ -156,4 +158,56 @@ export interface TranscriptionJob {
   // "Base model — en-GB". Preferred over modelIdentifier in the UI;
   // undefined for historical jobs or when resolution failed.
   modelDisplayName?: string;
+  // DIAAT-428: the hearing this recording is a day of, and that day.
+  hearingId?: string;
+  hearingDate?: string;
+}
+
+// DIAAT-428: a hearing is what a Judge sees as one recording. Its days are
+// recordings of their own (a job each), ordered by hearing date, then upload
+// time, each transcribed separately.
+export type HearingStatus = "processing" | "completed" | "failed" | "partial";
+
+export interface HearingDay extends TranscriptionJob {
+  hearingId: string;
+  // The day the recording was made, YYYY-MM-DD, as the Judge gave it.
+  hearingDate: string;
+  dayNumber: number;
+}
+
+export interface Hearing {
+  id: string;
+  caseReference: string;
+  tribunal: string;
+  status: HearingStatus;
+  days: HearingDay[];
+}
+
+// One day of a hearing in the lists: no transcript.
+export interface HearingDaySummary {
+  jobId: string;
+  dayNumber: number;
+  hearingDate: string;
+  audioFileName: string;
+  status: JobStatus;
+  progressPercent: number;
+  uploadedAt: string;
+  audioDurationSeconds?: number;
+  transcriptionDurationSeconds?: number;
+  modelIdentifier?: string;
+  modelDisplayName?: string;
+  errorMessage?: string;
+}
+
+export interface HearingSummary {
+  id: string;
+  caseReference: string;
+  tribunal: string;
+  status: HearingStatus;
+  createdAt?: string;
+  updatedAt?: string;
+  dayCount: number;
+  daysComplete: number;
+  daysFailed: number;
+  days: HearingDaySummary[];
 }

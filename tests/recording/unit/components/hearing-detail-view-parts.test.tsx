@@ -1,7 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { JobDetailView } from "@/components/recording/transcript/job-detail-view";
+import { HearingDetailView } from "@/components/recording/transcript/hearing-detail-view";
+import { oneDayHearing } from "../hearing-fixtures";
 import { colorForSpeaker } from "@/lib/recording/api-client";
 import type {
   TranscriptionJob,
@@ -58,7 +59,7 @@ describe("a transcript in parts in the speaker editor", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("shows each part's speakers apart, with the part in the name and in the rename control", () => {
-    render(<JobDetailView jobId="job-parts" initialJob={job(PARTS)} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job(PARTS))} />);
     for (const speaker of PARTS) {
       expect(screen.getByText(speaker)).toBeDefined();
       expect(
@@ -81,7 +82,7 @@ describe("a transcript in parts in the speaker editor", () => {
       ])
     );
     vi.stubGlobal("fetch", fetchMock);
-    render(<JobDetailView jobId="job-parts" initialJob={job(PARTS)} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job(PARTS))} />);
 
     await userEvent.click(
       screen.getByRole("button", { name: "Rename speaker Part 2 · Speaker 0" })
@@ -130,7 +131,7 @@ describe("a transcript in parts in the speaker editor", () => {
         json: () => Promise.resolve({ job: afterSecond }),
       });
     vi.stubGlobal("fetch", fetchMock);
-    render(<JobDetailView jobId="job-parts" initialJob={job(PARTS)} />);
+    render(<HearingDetailView initialHearing={oneDayHearing(job(PARTS))} />);
 
     for (const from of ["Part 1 · Speaker 0", "Part 2 · Speaker 0"]) {
       await userEvent.click(
@@ -176,7 +177,7 @@ describe("a recording that is still being prepared", () => {
     const fetchMock = vi.fn().mockReturnValue(new Promise(() => undefined));
     vi.stubGlobal("fetch", fetchMock);
     const { container } = render(
-      <JobDetailView jobId="job-pending" initialJob={pending()} />
+      <HearingDetailView initialHearing={oneDayHearing(pending())} />
     );
 
     expect(screen.getByText(/being prepared for transcription/i)).toBeDefined();
@@ -189,9 +190,8 @@ describe("a recording that is still being prepared", () => {
 
   it("keeps the in-progress wording for a job that has been sent to be transcribed", () => {
     render(
-      <JobDetailView
-        jobId="job-pending"
-        initialJob={{ ...pending(), status: "PROCESSING" }}
+      <HearingDetailView
+        initialHearing={oneDayHearing({ ...pending(), status: "PROCESSING" })}
       />
     );
     expect(

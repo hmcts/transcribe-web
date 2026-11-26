@@ -11,6 +11,10 @@ import { apiClient } from "@/lib/api-client";
  * are on), for the upload page's hint. An API from before it sends none: the
  * page then says 4 hours, as it always did.
  *
+ * DIAAT-428: `multi_day_hearings` says whether a Judge can add recordings of
+ * further days to a hearing, delete one day and change a day's date. An API
+ * from before it sends none: off.
+ *
  * The deploy-time value (`NEXT_PUBLIC_DICTATION_ENABLED`, see
  * `isDictationEnabled` in lib/environment.ts) stays as the default: it is what
  * the app uses until the flags have loaded, and whenever they cannot be read
@@ -21,6 +25,7 @@ import { apiClient } from "@/lib/api-client";
 export interface RuntimeFlags {
   dictation_enabled: boolean;
   max_recording_seconds?: number;
+  multi_day_hearings?: boolean;
 }
 
 /** The body of `GET /api/flags` if it is the promised shape, else null. */
@@ -33,10 +38,15 @@ export function parseRuntimeFlags(body: unknown): RuntimeFlags | null {
   ) {
     const seconds = (body as { max_recording_seconds?: unknown })
       .max_recording_seconds;
+    const multiDay = (body as { multi_day_hearings?: unknown })
+      .multi_day_hearings;
     return {
       dictation_enabled: (body as RuntimeFlags).dictation_enabled,
       ...(typeof seconds === "number" && Number.isFinite(seconds) && seconds > 0
         ? { max_recording_seconds: seconds }
+        : {}),
+      ...(typeof multiDay === "boolean"
+        ? { multi_day_hearings: multiDay }
         : {}),
     };
   }
