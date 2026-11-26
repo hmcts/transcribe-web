@@ -19,13 +19,14 @@ import { apiPath } from "@/lib/recording/base-path";
 import { recordingFetch } from "@/lib/recording/browser-fetch";
 
 interface DeleteJobButtonProps {
-  jobId: string;
+  // DIAAT-428: the rows are hearings; deleting one deletes every day of it.
+  hearingId: string;
   caseReference: string;
-  onDeleted: (jobId: string) => void;
+  onDeleted: (hearingId: string) => void;
 }
 
 export function DeleteJobButton({
-  jobId,
+  hearingId,
   caseReference,
   onDeleted,
 }: DeleteJobButtonProps) {
@@ -35,15 +36,18 @@ export function DeleteJobButton({
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const response = await recordingFetch(apiPath(`/api/jobs/${jobId}`), {
-        method: "DELETE",
-      });
+      const response = await recordingFetch(
+        apiPath(`/api/hearings/${hearingId}`),
+        {
+          method: "DELETE",
+        }
+      );
       if (!response.ok) {
         throw new Error(`Delete failed: ${response.status}`);
       }
       toast.success(`"${caseReference}" deleted`);
       setOpen(false);
-      onDeleted(jobId);
+      onDeleted(hearingId);
     } catch (err) {
       console.error(err);
       toast.error(`Could not delete "${caseReference}"`);

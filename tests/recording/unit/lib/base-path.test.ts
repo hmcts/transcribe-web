@@ -56,6 +56,10 @@ describe("recording base path", () => {
     "/api/jobs/11111111-1111-1111-1111-111111111111/segments/0/words",
     "/api/jobs/11111111-1111-1111-1111-111111111111/baseline",
     "/api/audio/11111111-1111-1111-1111-111111111111",
+    "/api/hearings",
+    "/api/hearings/11111111-1111-1111-1111-111111111111",
+    "/api/hearings/11111111-1111-1111-1111-111111111111/history",
+    "/api/jobs/11111111-1111-1111-1111-111111111111/hearing-date",
   ])("leaves %s unprefixed and routed to Next.js by Caddy", async (p) => {
     const { apiPath } = await import("@/lib/recording/base-path");
     const url = apiPath(p);

@@ -39,6 +39,13 @@ export async function DELETE(request: NextRequest, { params }: RouteContext) {
     if (err instanceof BackendApiError && err.status === 404) {
       return NextResponse.json({ error: "Job not found" }, { status: 404 });
     }
+    // DIAAT-428: one day of a hearing with others, while multi_day_hearings is off.
+    if (err instanceof BackendApiError && err.status === 403) {
+      return NextResponse.json(
+        { error: "This day cannot be deleted at the moment." },
+        { status: 403 }
+      );
+    }
     console.error("Failed to delete job", err);
     return NextResponse.json(
       { error: "Failed to delete transcription job" },

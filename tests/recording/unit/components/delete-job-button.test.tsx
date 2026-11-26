@@ -22,7 +22,11 @@ describe("DeleteJobButton", () => {
   it("opens a confirmation dialog before deleting", async () => {
     const user = userEvent.setup();
     render(
-      <DeleteJobButton jobId="job-1" caseReference="PA/1" onDeleted={vi.fn()} />
+      <DeleteJobButton
+        hearingId="job-1"
+        caseReference="PA/1"
+        onDeleted={vi.fn()}
+      />
     );
 
     await user.click(screen.getByRole("button", { name: /delete/i }));
@@ -39,7 +43,7 @@ describe("DeleteJobButton", () => {
 
     render(
       <DeleteJobButton
-        jobId="job-1"
+        hearingId="job-1"
         caseReference="PA/1"
         onDeleted={onDeleted}
       />
@@ -50,7 +54,7 @@ describe("DeleteJobButton", () => {
 
     await waitFor(() => expect(onDeleted).toHaveBeenCalledWith("job-1"));
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe("http://localhost/api/jobs/job-1");
+    expect(url).toBe("http://localhost/api/hearings/job-1");
     expect(init.method).toBe("DELETE");
     expect(toastSuccess).toHaveBeenCalled();
     vi.unstubAllGlobals();
@@ -66,7 +70,7 @@ describe("DeleteJobButton", () => {
 
     render(
       <DeleteJobButton
-        jobId="job-1"
+        hearingId="job-1"
         caseReference="PA/1"
         onDeleted={onDeleted}
       />
@@ -89,7 +93,7 @@ describe("DeleteJobButton", () => {
     render(
       <button type="button" onClick={ancestorClick}>
         <DeleteJobButton
-          jobId="job-1"
+          hearingId="job-1"
           caseReference="PA/1"
           onDeleted={vi.fn()}
         />

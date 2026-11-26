@@ -41,6 +41,8 @@ export const UPLOAD_HEADERS = {
   size: "X-Upload-Size",
   contentType: "X-Upload-Content-Type",
   audioDuration: "X-Audio-Duration-Seconds",
+  hearingId: "X-Hearing-Id",
+  hearingDate: "X-Hearing-Date",
 } as const;
 
 /**

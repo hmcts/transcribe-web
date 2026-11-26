@@ -7,7 +7,8 @@ import {
   JobsTable,
   type SortDirection,
 } from "@/components/recording/jobs-table/jobs-table";
-import type { JobStatus, TranscriptionJob } from "@/lib/recording/types";
+import type { HearingRow } from "@/lib/recording/hearing-rows";
+import type { JobStatus } from "@/lib/recording/types";
 
 const STATUS_LABELS: Record<JobStatus, string> = {
   PENDING: "Pending",
@@ -25,7 +26,7 @@ const STATUS_ORDER: JobStatus[] = [
 
 interface FilterableJobsSectionProps {
   title: string;
-  jobs: TranscriptionJob[];
+  jobs: HearingRow[];
   onDelete?: (jobId: string) => void;
 }
 

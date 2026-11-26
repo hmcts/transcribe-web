@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
  * same: it discards whatever Authorization header the browser sent, attaches
  * the session's token and streams the request on.
  *
- * Routes with their own handler (app/api/jobs, upload, audio, version) take
+ * Routes with their own handler (app/api/jobs, hearings, upload, audio, version) take
  * precedence over this catch-all and keep their paths.
  *
  * Answers 404 unless login is off (AUTH_ENABLED is not "true") and this is not

@@ -126,6 +126,8 @@ describe("the proxy matcher", () => {
     expect(runsOn("/api/upload-audio/extra")).toBe(true);
     expect(runsOn("/api/uploads")).toBe(true);
     expect(runsOn("/api/jobs")).toBe(true);
+    expect(runsOn("/api/hearings")).toBe(true);
+    expect(runsOn("/api/hearings/h-1")).toBe(true);
     expect(runsOn("/admin")).toBe(true);
   });
 });

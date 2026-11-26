@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import DashboardPage from "@/app/recording/page";
 import { prepareForJurisdictionSwitch } from "@/lib/jurisdiction-switch";
+import type { HearingDaySummary, HearingSummary } from "@/lib/recording/types";
 
 vi.mock("next/link", () => ({
   default: ({
@@ -32,13 +33,47 @@ vi.mock("@/lib/recording/audio-duration", () => ({
   readAudioDurationSeconds: mockReadAudioDurationSeconds,
 }));
 
+function day(
+  jobId: string,
+  audioFileName: string,
+  overrides: Partial<HearingDaySummary> = {}
+): HearingDaySummary {
+  return {
+    jobId,
+    dayNumber: 1,
+    hearingDate: "2026-07-01",
+    audioFileName,
+    status: "COMPLETED",
+    progressPercent: 100,
+    uploadedAt: "2026-07-01T09:00:00Z",
+    ...overrides,
+  };
+}
+
+function hearing(
+  id: string,
+  caseReference: string,
+  days: HearingDaySummary[]
+): HearingSummary {
+  return {
+    id,
+    caseReference,
+    tribunal: "First-tier Tribunal",
+    status: "completed",
+    dayCount: days.length,
+    daysComplete: days.length,
+    daysFailed: 0,
+    days,
+  };
+}
+
 describe("DashboardPage", () => {
   beforeEach(() => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        json: () => Promise.resolve({ jobs: [] }),
+        json: () => Promise.resolve({ hearings: [] }),
       })
     );
   });
@@ -58,30 +93,16 @@ describe("DashboardPage", () => {
     expect(screen.getByText(/^uploads/i)).toBeDefined();
   });
 
-  it("shows jobs returned by the API", async () => {
+  it("shows the hearings returned by the API", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
         json: () =>
           Promise.resolve({
-            jobs: [
-              {
-                id: "job-1",
-                caseReference: "PA/05217/2025",
-                tribunal: "First-tier Tribunal",
-                audioFileName: "hearing1.wav",
-                status: "COMPLETED",
-                progressPercent: 100,
-              },
-              {
-                id: "job-2",
-                caseReference: "EA/11042/2025",
-                tribunal: "First-tier Tribunal",
-                audioFileName: "hearing2.wav",
-                status: "COMPLETED",
-                progressPercent: 100,
-              },
+            hearings: [
+              hearing("hearing-1", "PA/05217/2025", [day("hearing-1", "hearing1.wav")]),
+              hearing("hearing-2", "EA/11042/2025", [day("hearing-2", "hearing2.wav")]),
             ],
           }),
       })
@@ -95,23 +116,44 @@ describe("DashboardPage", () => {
     expect(screen.getAllByText("EA/11042/2025").length).toBeGreaterThan(0);
   });
 
-  it("removes a job from the list after it is deleted", async () => {
-    const job = {
-      id: "job-1",
-      caseReference: "PA/00001/2026",
-      tribunal: "First-tier Tribunal — Immigration and Asylum Chamber",
-      audioFileName: "hearing.wav",
-      uploadedAt: "2026-07-01T09:00:00Z",
-      status: "COMPLETED",
-      progressPercent: 100,
-    };
+  // DIAAT-428: a hearing of several days is one row, in each list.
+  it("shows a hearing of several days as one row, read from /api/hearings", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          hearings: [
+            hearing("hearing-1", "PA/00001/2026", [
+              day("hearing-1", "day1.wav"),
+              day("job-2", "day2.wav", { dayNumber: 2 }),
+            ]),
+          ],
+        }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<DashboardPage />);
+
+    await waitFor(() =>
+      expect(screen.getAllByText("PA/00001/2026")).toHaveLength(2)
+    );
+    expect(fetchMock.mock.calls.map(([url]) => url)).toContain("/api/hearings");
+    expect(
+      screen.getAllByRole("link", { name: /view transcript/i })[0].getAttribute("href")
+    ).toBe("/recording/jobs/hearing-1");
+  });
+
+  it("removes a hearing from the list after it is deleted", async () => {
     const fetchMock = vi.fn((_url: string, init?: RequestInit) => {
       if (init?.method === "DELETE") {
         return Promise.resolve({ ok: true, status: 204 });
       }
       return Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({ jobs: [job] }),
+        json: () =>
+          Promise.resolve({
+            hearings: [hearing("hearing-1", "PA/00001/2026", [day("hearing-1", "hearing.wav")])],
+          }),
       });
     });
     vi.stubGlobal("fetch", fetchMock);
@@ -127,6 +169,8 @@ describe("DashboardPage", () => {
     await user.click(screen.getByRole("button", { name: /^delete$/i }));
 
     await waitFor(() => expect(screen.queryByText("PA/00001/2026")).toBeNull());
+    const deleted = fetchMock.mock.calls.find(([, init]) => init?.method === "DELETE");
+    expect(deleted?.[0]).toBe("/api/hearings/hearing-1");
   });
 
   describe("uploading a recording", () => {
@@ -151,7 +195,7 @@ describe("DashboardPage", () => {
         }
         return Promise.resolve({
           ok: true,
-          json: () => Promise.resolve({ jobs: [] }),
+          json: () => Promise.resolve({ hearings: [] }),
         });
       });
       vi.stubGlobal("fetch", fetchMock);
@@ -182,7 +226,7 @@ describe("DashboardPage", () => {
           ? new Promise((resolve) => {
               finish = resolve;
             })
-          : Promise.resolve({ ok: true, json: () => Promise.resolve({ jobs: [] }) })
+          : Promise.resolve({ ok: true, json: () => Promise.resolve({ hearings: [] }) })
       );
       vi.stubGlobal("fetch", fetchMock);
       const user = userEvent.setup();

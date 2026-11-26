@@ -16,7 +16,8 @@ import {
   JobMetadataPopover,
 } from "@/components/recording/jobs-table/job-metadata-popover";
 import { jobPath } from "@/lib/recording/routes";
-import type { JobStatus, TranscriptionJob } from "@/lib/recording/types";
+import type { HearingRow } from "@/lib/recording/hearing-rows";
+import type { JobStatus } from "@/lib/recording/types";
 
 const TRANSCRIPT_LINK_LABEL: Record<JobStatus, string> = {
   COMPLETED: "View transcript →",
@@ -29,7 +30,7 @@ export type JobsSortKey = "caseReference" | "uploadedAt" | "status";
 export type SortDirection = "asc" | "desc";
 
 interface JobsTableProps {
-  jobs: TranscriptionJob[];
+  jobs: HearingRow[];
   sortKey?: JobsSortKey;
   sortDirection?: SortDirection;
   onSortChange?: (key: JobsSortKey) => void;
@@ -163,7 +164,7 @@ export function JobsTable({
                 <div className="flex flex-col gap-1">
                   <JobStatusBadge status={job.status} />
                   {job.status === "PROCESSING" && (
-                    <JobProgress job={job} compact />
+                    <JobProgress job={job.inFlightDay ?? job} compact />
                   )}
                 </div>
               </td>
@@ -179,7 +180,7 @@ export function JobsTable({
               <td className="px-4 py-3">
                 {onDelete && (
                   <DeleteJobButton
-                    jobId={job.id}
+                    hearingId={job.id}
                     caseReference={job.caseReference}
                     onDeleted={onDelete}
                   />

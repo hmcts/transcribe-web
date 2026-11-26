@@ -1,8 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { uploadAndSubmit } from "@/lib/recording/api-client";
+import {
+  BackendApiError,
+  type HearingDayOptions,
+  uploadAndSubmit,
+} from "@/lib/recording/api-client";
 import { getBackendAuthContext } from "@/lib/recording/auth-utils";
+import { isHearingDate } from "@/lib/recording/hearing-date";
 import {
   backendFailed,
+  badRequest,
   readRawUpload,
   tooLarge,
   unauthenticated,
@@ -19,9 +25,16 @@ import {
 // The recording page sends the audio as the raw request body, as exactly
 // application/octet-stream, with its metadata in headers
 // (lib/recording/upload-contract.ts), because Front Door's WAF blocks
-// multipart bodies from the browser. One more header here:
+// multipart bodies from the browser. More headers here:
 //
 //   X-Audio-Duration-Seconds  duration read in the browser (optional)
+//   X-Hearing-Id              the hearing to add the recording to (optional;
+//                             without it, a new hearing)
+//   X-Hearing-Date            the day's date, YYYY-MM-DD (optional; the API
+//                             dates it today in London)
+//
+// A recording added to a hearing (DIAAT-428) comes here too, not to a path of
+// its own: this is the one path the WAF lets an audio body through to.
 //
 // The body is streamed on to the API as the multipart `file` part, never
 // held in memory whole (lib/recording/multipart.ts, and redirect: "error" in
@@ -66,10 +79,53 @@ export async function GET(request: NextRequest) {
   );
 }
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function parseHearing(
+  request: NextRequest
+): { ok: true; hearing: HearingDayOptions } | { ok: false; error: string } {
+  const hearingId = request.headers.get(UPLOAD_HEADERS.hearingId) ?? undefined;
+  const hearingDate =
+    request.headers.get(UPLOAD_HEADERS.hearingDate) ?? undefined;
+  if (hearingId !== undefined && !UUID.test(hearingId)) {
+    return { ok: false, error: `Invalid ${UPLOAD_HEADERS.hearingId} header` };
+  }
+  if (hearingDate !== undefined && !isHearingDate(hearingDate)) {
+    return { ok: false, error: `Invalid ${UPLOAD_HEADERS.hearingDate} header` };
+  }
+  return { ok: true, hearing: { hearingId, hearingDate } };
+}
+
+const HEARING_GONE = "This hearing no longer exists. Reload the page.";
+const ADDING_SWITCHED_OFF =
+  "Recordings cannot be added to a hearing at the moment. Upload it as a new recording instead.";
+
+// The API's refusal to add to the hearing: 404 for one that is gone (or never
+// was the user's), 403 while multi_day_hearings is off. A 403 with a code is
+// a refusal about the user (identityRefusalResponse), not about the hearing.
+function hearingRefused(err: unknown): NextResponse | null {
+  if (!(err instanceof BackendApiError) || err.code !== undefined) return null;
+  const error =
+    err.status === 404
+      ? HEARING_GONE
+      : err.status === 403
+        ? ADDING_SWITCHED_OFF
+        : null;
+  if (error === null) return null;
+  return NextResponse.json(
+    { error, ...(err.requestId ? { request_id: err.requestId } : {}) },
+    { status: err.status }
+  );
+}
+
 export async function POST(request: NextRequest) {
   const auth = await getBackendAuthContext(request);
   const denied = unauthenticated(auth);
   if (denied) return denied;
+
+  const parsedHearing = parseHearing(request);
+  if (!parsedHearing.ok) return badRequest(parsedHearing.error);
+  const { hearing } = parsedHearing;
 
   const maxBytes = maxUploadBytes();
   const upload = readRawUpload(request, {
@@ -84,7 +140,12 @@ export async function POST(request: NextRequest) {
   );
 
   try {
-    const job = await uploadAndSubmit(upload.file, audioDurationSeconds, auth);
+    const job = await uploadAndSubmit(
+      upload.file,
+      audioDurationSeconds,
+      auth,
+      hearing
+    );
     return NextResponse.json({ job }, { status: 201 });
   } catch (err) {
     if (upload.sizeMismatch()) {
@@ -94,6 +155,10 @@ export async function POST(request: NextRequest) {
       return tooLarge();
     }
     console.error("Failed to upload and submit job", err);
+    if (hearing.hearingId !== undefined) {
+      const refused = hearingRefused(err);
+      if (refused) return refused;
+    }
     // The API's own 413 and 422 for the file (too big, too long, not
     // decodable) carry a message for the user, which backendFailed passes on.
     return backendFailed(err, "Failed to submit audio for transcription");

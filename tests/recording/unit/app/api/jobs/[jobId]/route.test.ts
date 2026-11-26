@@ -59,3 +59,17 @@ describe("DELETE /api/jobs/[jobId]", () => {
     expect(body).toEqual({ error: expect.any(String) });
   });
 });
+
+describe("DELETE /api/jobs/[jobId] of one day of a hearing", () => {
+  it("passes on the API's 403 while days cannot be deleted one at a time", async () => {
+    mockDeleteJob.mockRejectedValue(new MockBackendApiError("off", 403));
+    const { DELETE } = await import("@/app/api/jobs/[jobId]/route");
+
+    const response = await DELETE(makeRequest(), context);
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: "This day cannot be deleted at the moment.",
+    });
+  });
+});

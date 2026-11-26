@@ -33,6 +33,8 @@ interface RuntimeFlagsValue {
   dictationEnabled: boolean;
   /** DIAAT-408: the longest recording the API accepts now (4 hours until it says otherwise). */
   maxRecordingSeconds: number;
+  /** DIAAT-428: whether hearings can have days added, deleted and redated (off until read). */
+  multiDayHearings: boolean;
   /** Read the flags again now (after an administrator changes one). */
   reload: () => Promise<void>;
 }
@@ -90,6 +92,7 @@ export function RuntimeFlagsProvider({
     () => ({
       dictationEnabled: resolveDictationEnabled(flags, isDictationEnabled()),
       maxRecordingSeconds: resolveMaxRecordingSeconds(flags),
+      multiDayHearings: flags?.multi_day_hearings ?? false,
       reload,
     }),
     [flags, reload]
@@ -109,6 +112,7 @@ export function useRuntimeFlags(): RuntimeFlagsValue {
     value ?? {
       dictationEnabled: isDictationEnabled(),
       maxRecordingSeconds: DEFAULT_MAX_RECORDING_SECONDS,
+      multiDayHearings: false,
       reload: async () => undefined,
     }
   );
@@ -122,4 +126,9 @@ export function useDictationEnabled(): boolean {
 /** The longest recording, in seconds, as the API says (4 hours until it has been read). */
 export function useMaxRecordingSeconds(): number {
   return useRuntimeFlags().maxRecordingSeconds;
+}
+
+/** Whether hearings can have days added, deleted one at a time and redated (DIAAT-428). */
+export function useMultiDayHearings(): boolean {
+  return useRuntimeFlags().multiDayHearings;
 }

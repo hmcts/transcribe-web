@@ -6,6 +6,7 @@ import { parseRuntimeFlags, resolveDictationEnabled } from "@/lib/flags/runtime-
 import {
   RuntimeFlagsProvider,
   useDictationEnabled,
+  useMultiDayHearings,
 } from "@/providers/runtime-flags";
 import { ME } from "../access-helpers";
 
@@ -180,5 +181,43 @@ describe("a dictation route refused with 403 dictation_disabled", () => {
 
     expect(await screen.findByText("dictation off")).toBeTruthy();
     expect(request).toHaveBeenCalledTimes(2); // the first read, and one more however many calls were refused
+  });
+});
+
+// DIAAT-428: whether a hearing can have recordings of several days added,
+// deleted one at a time and redated. Off unless the API says it is on.
+describe("the multi_day_hearings flag", () => {
+  function MultiDayProbe() {
+    return <p>{useMultiDayHearings() ? "multi-day on" : "multi-day off"}</p>;
+  }
+
+  it("is read when the API sends it, and false when it does not or sends something else", () => {
+    expect(
+      parseRuntimeFlags({ dictation_enabled: true, multi_day_hearings: true })
+    ).toEqual({ dictation_enabled: true, multi_day_hearings: true });
+    for (const value of [undefined, "true", 1, null]) {
+      expect(
+        parseRuntimeFlags({ dictation_enabled: true, multi_day_hearings: value })
+          ?.multi_day_hearings
+      ).toBeUndefined();
+    }
+  });
+
+  it("is off until the flags load, then follows them", async () => {
+    request.mockResolvedValue({
+      data: { dictation_enabled: true, multi_day_hearings: true },
+    });
+    render(
+      <RuntimeFlagsProvider>
+        <MultiDayProbe />
+      </RuntimeFlagsProvider>
+    );
+    expect(screen.getByText("multi-day off")).toBeTruthy();
+    expect(await screen.findByText("multi-day on")).toBeTruthy();
+  });
+
+  it("is off where there is no provider", () => {
+    render(<MultiDayProbe />);
+    expect(screen.getByText("multi-day off")).toBeTruthy();
   });
 });

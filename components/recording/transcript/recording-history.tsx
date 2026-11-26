@@ -27,6 +27,14 @@ function formatTimestamp(timestamp: string): string {
   });
 }
 
+interface RecordingHistoryProps {
+  hearingId: string;
+  // DIAAT-428: for a hearing of several days, what each day's rows say it is
+  // ("Day 2"), by job id; a row about none of them (the hearing itself, or a
+  // day since deleted) says nothing. None for a one-day hearing.
+  dayLabels?: Record<string, string>;
+}
+
 /**
  * "History" of a recording (DIAAT-395): everything that was done to it, by whom,
  * in which role. It is the audit trail, separate from the per-segment edit history
@@ -34,13 +42,13 @@ function formatTimestamp(timestamp: string): string {
  * context that holds `recording.audit.read`: the API refuses anyone else, and the
  * web does not ask.
  */
-export function RecordingHistory({ jobId }: { jobId: string }) {
+export function RecordingHistory(props: RecordingHistoryProps) {
   const { can } = useAccess();
   if (!can("recording.audit.read")) return null;
-  return <HistorySection jobId={jobId} />;
+  return <HistorySection {...props} />;
 }
 
-function HistorySection({ jobId }: { jobId: string }) {
+function HistorySection({ hearingId, dayLabels }: RecordingHistoryProps) {
   const [open, setOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [data, setData] = useState<HistoryPage | null>(null);
@@ -54,7 +62,7 @@ function HistorySection({ jobId }: { jobId: string }) {
     setError(null);
     recordingFetch(
       apiPath(
-        `/api/jobs/${encodeURIComponent(jobId)}/history?page=${page}&page_size=${HISTORY_PAGE_SIZE}`
+        `/api/hearings/${encodeURIComponent(hearingId)}/history?page=${page}&page_size=${HISTORY_PAGE_SIZE}`
       )
     )
       .then(async (response) => {
@@ -73,7 +81,7 @@ function HistorySection({ jobId }: { jobId: string }) {
     return () => {
       current = false;
     };
-  }, [open, jobId, page]);
+  }, [open, hearingId, page]);
 
   const pages = data ? Math.max(1, Math.ceil(data.total / HISTORY_PAGE_SIZE)) : 1;
 
@@ -117,6 +125,9 @@ function HistorySection({ jobId }: { jobId: string }) {
                   <thead>
                     <tr className="border-b border-border bg-muted/50 text-left">
                       <th className="px-3 py-2 font-medium">When</th>
+                      {dayLabels && (
+                        <th className="px-3 py-2 font-medium">Day</th>
+                      )}
                       <th className="px-3 py-2 font-medium">What</th>
                       <th className="px-3 py-2 font-medium">Who</th>
                       <th className="px-3 py-2 font-medium">Outcome</th>
@@ -128,6 +139,11 @@ function HistorySection({ jobId }: { jobId: string }) {
                         <td className="whitespace-nowrap px-3 py-2">
                           {formatTimestamp(entry.timestamp)}
                         </td>
+                        {dayLabels && (
+                          <td className="whitespace-nowrap px-3 py-2">
+                            {entry.job_id ? dayLabels[entry.job_id] : undefined}
+                          </td>
+                        )}
                         <td className="px-3 py-2">
                           {describeHistoryAction(entry.action)}
                         </td>
