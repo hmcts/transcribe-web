@@ -71,7 +71,6 @@ export function hearingRow(hearing: HearingSummary): HearingRow {
     uploadedAt: latestUpload(hearing.days),
     status: severalDaysStatus(hearing),
     progressPercent: inFlight?.progressPercent ?? 100,
-    audioDurationSeconds: inFlight?.audioDurationSeconds,
     inFlightDay: inFlight && {
       ...identity,
       id: inFlight.jobId,

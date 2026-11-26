@@ -89,10 +89,12 @@ describe("hearingRow of a hearing of several days", () => {
       id: "hearing-1",
       status: "PROCESSING",
       progressPercent: 60,
-      audioDurationSeconds: 3600,
       audioFileName: "day1.mp3",
       uploadedAt: "2026-11-11T09:00:00Z",
     });
+    // Day 2's length is not day 1's file's: only the progress has it.
+    expect(row.audioDurationSeconds).toBeUndefined();
+    expect(row.inFlightDay?.audioDurationSeconds).toBe(3600);
   });
 
   it("takes its progress from a day being transcribed before one still being prepared", () => {
@@ -136,6 +138,7 @@ describe("hearingRow of a hearing of several days", () => {
   it("has no single run's details to show", () => {
     const row = hearingRow(hearing([day(), day2]));
     expect(row.modelDisplayName).toBeUndefined();
+    expect(row.audioDurationSeconds).toBeUndefined();
     expect(row.transcriptionDurationSeconds).toBeUndefined();
   });
 
