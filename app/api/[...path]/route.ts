@@ -82,7 +82,11 @@ async function proxy(request: NextRequest, { params }: Context) {
   if (token) headers.set("Authorization", `Bearer ${token}`);
   // As Caddy does (@submission): the browser sends the submission's JSON as
   // application/octet-stream for Front Door's WAF, and the API reads JSON.
-  if (request.method === "POST" && joined === "live-transcription/submission") {
+  // The draft's autosave likewise (@live_draft).
+  if (
+    (request.method === "POST" && joined === "live-transcription/submission") ||
+    (request.method === "PUT" && joined === "live-draft")
+  ) {
     headers.set("Content-Type", "application/json");
   }
 

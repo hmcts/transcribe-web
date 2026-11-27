@@ -50,8 +50,15 @@ export class LiveDraftError extends Error {
  * comes back with a status reached the backend and is the backend's problem,
  * including a 400 â€” telling a judge to sign in again when the client sent a
  * malformed body would send them down the wrong path entirely.
+ *
+ * Except a 403 with an HTML page, not the API's JSON: that is Front Door's WAF
+ * blocking the request. The judge is still signed in, so it is not "auth".
  */
-export function classifyLiveDraftStatus(status: number): LiveDraftFailureKind {
+export function classifyLiveDraftStatus(
+  status: number,
+  contentType?: string | null
+): LiveDraftFailureKind {
+  if (status === 403 && contentType?.includes("text/html")) return "server";
   return status === 401 || status === 403 ? "auth" : "server";
 }
 
