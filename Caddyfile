@@ -75,6 +75,13 @@
 					path /api/live-transcription/submission
 				}
 				request_header @submission Content-Type application/json
+				# The draft's autosave, likewise (lib/live-draft-api.ts): its notes
+				# are HTML too.
+				@live_draft {
+					method PUT
+					path /api/live-draft
+				}
+				request_header @live_draft Content-Type application/json
 				forward_auth localhost:3001 {
 					uri /auth/forward
 					copy_headers Authorization

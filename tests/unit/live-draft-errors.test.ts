@@ -14,6 +14,16 @@ describe("classifyLiveDraftStatus", () => {
     expect(classifyLiveDraftStatus(403)).toBe("auth");
   });
 
+  it("treats the API's JSON 403 as an auth failure", () => {
+    expect(classifyLiveDraftStatus(403, "application/json")).toBe("auth");
+  });
+
+  it("does not treat Front Door's WAF block page (HTML 403) as an auth failure", () => {
+    expect(classifyLiveDraftStatus(403, "text/html; charset=utf-8")).toBe(
+      "server"
+    );
+  });
+
   it("treats a 500 as a server failure", () => {
     expect(classifyLiveDraftStatus(500)).toBe("server");
   });

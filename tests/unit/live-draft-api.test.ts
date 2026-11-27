@@ -1,5 +1,11 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { getLiveDraft, putLiveDraft } from "@/lib/live-draft-api";
+import {
+  getLiveDraft,
+  LIVE_DRAFT_CONTENT_TYPE,
+  putLiveDraft,
+} from "@/lib/live-draft-api";
 import { LiveDraftError } from "@/lib/live-draft-errors";
 
 vi.mock("@/lib/auth-utils", () => ({
@@ -22,7 +28,11 @@ describe("getLiveDraft", () => {
   });
 
   it("throws an auth failure for a 401 rather than reporting no draft", async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 401 });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      headers: new Headers(),
+    });
     await expect(getLiveDraft()).rejects.toMatchObject({
       name: "LiveDraftError",
       kind: "auth",
@@ -31,7 +41,11 @@ describe("getLiveDraft", () => {
   });
 
   it("throws a server failure for a 500", async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 500 });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      headers: new Headers(),
+    });
     await expect(getLiveDraft()).rejects.toMatchObject({ kind: "server" });
   });
 
@@ -83,10 +97,53 @@ describe("putLiveDraft", () => {
   });
 
   it("throws an auth failure for a 401", async () => {
-    mockFetch.mockResolvedValue({ ok: false, status: 401 });
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 401,
+      headers: new Headers(),
+    });
     await expect(putLiveDraft(TRANSCRIPT, {})).rejects.toMatchObject({
       kind: "auth",
       status: 401,
+    });
+  });
+
+  it("sends the JSON body as exactly application/octet-stream, for Front Door's WAF", async () => {
+    mockFetch.mockResolvedValue({ ok: true, status: 204 });
+    await putLiveDraft(TRANSCRIPT, { notes: "<p>Hearing notes</p>" });
+
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("/api/live-draft");
+    expect(LIVE_DRAFT_CONTENT_TYPE).toBe("application/octet-stream");
+    expect(init.headers).toMatchObject({
+      "Content-Type": LIVE_DRAFT_CONTENT_TYPE,
+    });
+    expect(JSON.parse(String(init.body))).toEqual({
+      transcript: TRANSCRIPT,
+      form_data: { notes: "<p>Hearing notes</p>" },
+    });
+  });
+
+  it("does not say the judge was signed out when Front Door's WAF blocks the save", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: new Headers({ "Content-Type": "text/html; charset=utf-8" }),
+    });
+    await expect(putLiveDraft(TRANSCRIPT, {})).rejects.toMatchObject({
+      kind: "server",
+      status: 403,
+    });
+  });
+
+  it("still says so for the API's own 403", async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 403,
+      headers: new Headers({ "Content-Type": "application/json" }),
+    });
+    await expect(putLiveDraft(TRANSCRIPT, {})).rejects.toMatchObject({
+      kind: "auth",
     });
   });
 
@@ -148,5 +205,31 @@ describe("putLiveDraft", () => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+// Caddy sets the draft back to application/json for the API, for that PUT only.
+// Read from the Caddyfile itself, so the test fails if the two drift apart.
+describe("the draft's content type on its way to the API", () => {
+  it("is set back to application/json by Caddy, before the API", () => {
+    const caddyfile = readFileSync(
+      path.resolve(__dirname, "../..", "Caddyfile"),
+      "utf8"
+    );
+    const matcher = caddyfile.match(/@live_draft \{([^}]*)\}/);
+    const lines = (matcher?.[1] ?? "")
+      .split("\n")
+      .map((l) => l.trim())
+      .filter(Boolean);
+    expect(lines).toEqual(["method PUT", "path /api/live-draft"]);
+
+    const rewrite = caddyfile.indexOf(
+      "request_header @live_draft Content-Type application/json"
+    );
+    const backend = caddyfile.indexOf("handle @backend_api");
+    expect(rewrite).toBeGreaterThan(backend);
+    expect(rewrite).toBeLessThan(
+      caddyfile.indexOf("reverse_proxy {$BACKEND_INTERNAL_URL", backend)
+    );
   });
 });

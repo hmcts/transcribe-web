@@ -13,6 +13,15 @@ export interface LiveDraftApiResponse {
   saved_at: string; // ISO datetime from backend
 }
 
+/**
+ * The draft's JSON body is sent as application/octet-stream: Front Door's WAF
+ * blocks the judge's free text (the notes are HTML, and a dictated "select ...
+ * from" reads as SQL), but does not inspect this type. Caddy sets it back to
+ * application/json for the API inside the cluster (Caddyfile, @live_draft),
+ * as for the submission (lib/dictation-submission.ts).
+ */
+export const LIVE_DRAFT_CONTENT_TYPE = "application/octet-stream";
+
 async function authHeaders(): Promise<Record<string, string>> {
   const token = await getAuthToken();
   // DIAAT-322: each jurisdiction has its own draft; this tab's is the one meant.
@@ -107,7 +116,7 @@ export async function getLiveDraft(
     if (res.status === 404) return null;
     if (!res.ok) {
       throw new LiveDraftError(
-        classifyLiveDraftStatus(res.status),
+        classifyLiveDraftStatus(res.status, res.headers.get("content-type")),
         `Failed to fetch live draft: ${res.status}`,
         res.status
       );
@@ -136,7 +145,7 @@ export async function putLiveDraft(
       "/api/live-draft",
       {
         method: "PUT",
-        headers: { "Content-Type": "application/json", ...headers },
+        headers: { "Content-Type": LIVE_DRAFT_CONTENT_TYPE, ...headers },
         body: JSON.stringify({ transcript, form_data: formData }),
         signal: controller.signal,
       },
@@ -144,7 +153,7 @@ export async function putLiveDraft(
     );
     if (!res.ok) {
       throw new LiveDraftError(
-        classifyLiveDraftStatus(res.status),
+        classifyLiveDraftStatus(res.status, res.headers.get("content-type")),
         `Failed to save live draft: ${res.status}`,
         res.status
       );
@@ -163,7 +172,7 @@ export async function deleteLiveDraft(): Promise<void> {
   );
   if (!res.ok && res.status !== 404) {
     throw new LiveDraftError(
-      classifyLiveDraftStatus(res.status),
+      classifyLiveDraftStatus(res.status, res.headers.get("content-type")),
       `Failed to delete live draft: ${res.status}`,
       res.status
     );
